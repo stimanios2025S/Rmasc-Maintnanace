@@ -120,7 +120,7 @@ export async function PATCH(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
-    if (!id) throw badRequest("Alert ID is required");
+    if (!id) throw badRequest("L'identifiant de l'alerte est requis");
 
     const parsed = UpdateAlertSchema.parse(await readJson(request));
 
@@ -128,7 +128,7 @@ export async function PATCH(request: NextRequest) {
       where: { id },
       select: { id: true },
     });
-    if (!existing) throw notFound(`Alert not found: ${id}`);
+    if (!existing) throw notFound(`Alerte introuvable : ${id}`);
 
     const data: Record<string, unknown> = {};
 

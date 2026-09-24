@@ -32,11 +32,11 @@ function timeAgo(iso: string): string {
   if (Number.isNaN(then)) return "";
   const minutes = Math.floor((Date.now() - then) / 60_000);
 
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 24) return `il y a ${hours} h`;
+  return `il y a ${Math.floor(hours / 24)} j`;
 }
 
 export function NotificationBell({ enabled }: { enabled: boolean }) {
@@ -134,9 +134,15 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={
-          unread > 0 ? `${unread} unread notifications` : "Notifications"
+          unread > 0
+            ? `${unread} notification${unread > 1 ? "s" : ""} non lue${unread > 1 ? "s" : ""}`
+            : "Notifications"
         }
-        title={unread > 0 ? `${unread} unread notifications` : "Notifications"}
+        title={
+          unread > 0
+            ? `${unread} notification${unread > 1 ? "s" : ""} non lue${unread > 1 ? "s" : ""}`
+            : "Notifications"
+        }
         className="relative rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800"
       >
         <BellRing className="h-5 w-5 text-gray-500" />
@@ -169,14 +175,14 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                 ) : (
                   <CheckCheck className="h-3 w-3" aria-hidden="true" />
                 )}
-                Mark all read
+                Tout marquer comme lu
               </button>
             )}
           </div>
 
           {rows.length === 0 ? (
             <p className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
-              Nothing new.
+              Aucune nouvelle notification.
             </p>
           ) : (
             <ul className="max-h-80 overflow-y-auto">
@@ -221,7 +227,7 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
               onClick={() => setOpen(false)}
               className="text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
             >
-              View my reported faults
+              Voir mes signalements
             </Link>
           </div>
         </div>

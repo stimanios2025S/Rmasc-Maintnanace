@@ -21,14 +21,14 @@ export default function GlobalError({
     <div className="min-h-[60vh] flex items-center justify-center p-6">
       <div className="max-w-md w-full text-center">
         <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Something went wrong
+          Une erreur est survenue
         </h1>
         <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-          The page could not be displayed. This has been logged.
+          La page n&apos;a pas pu être affichée. Cet incident a été enregistré.
           {error.digest && (
             <>
               {" "}
-              Reference:{" "}
+              Référence :{" "}
               <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
                 {error.digest}
               </code>
@@ -39,7 +39,7 @@ export default function GlobalError({
           onClick={reset}
           className="mt-4 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
         >
-          Try again
+          Réessayer
         </button>
       </div>
     </div>

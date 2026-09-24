@@ -6,10 +6,11 @@
  * about how far along a fault is. Every consumer reads from here rather than
  * hard-coding percentages next to a status check.
  *
- * Bilingual by design: the client portal is French (its users are building
- * occupants), the staff screens are English. Stage *keys* are language-neutral
- * and each surface picks its own label set, so neither side has to parse the
- * other's strings.
+ * French throughout: the client portal, the technician queue and the admin
+ * board all render the `fr` set. The `en` values are retained as data — no
+ * surface reads them — because collapsing the pairs changes this module's
+ * public shape and every one of its callers, which is a refactor rather than a
+ * translation. Stage *keys* remain language-neutral either way.
  */
 
 import type { IncidentStatus } from "@/types";
@@ -124,19 +125,20 @@ export const INCIDENT_VALIDATION_LABELS: Record<
     fr: "Résolu par client",
     en: "Resolved by client",
     signal: "ok",
-    title: "Opération Validée — the occupant resolved it without a visit",
+    title:
+      "Opération validée — l'occupant a résolu la panne seul, sans intervention",
   },
   escalated: {
     fr: "Non Validé / Escaladé",
     en: "Escalated",
     signal: "alert",
-    title: "The occupant could not resolve it and asked for help",
+    title: "L'occupant n'a pas pu résoudre la panne et a demandé de l'aide",
   },
   resolved: {
     fr: "Résolu par technicien",
     en: "Resolved on site",
     signal: "neutral",
-    title: "Attended and closed by a technician",
+    title: "Panne traitée et clôturée par un technicien",
   },
 };
 

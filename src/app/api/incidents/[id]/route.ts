@@ -92,7 +92,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
       where: { id: params.id, ...incidentScopeFor(session) },
       select: INCIDENT_SELECT,
     });
-    if (!incident) throw notFound(`Incident not found: ${params.id}`);
+    if (!incident) throw notFound(`Incident introuvable : ${params.id}`);
 
     return NextResponse.json({ data: incident });
   } catch (error) {
@@ -132,15 +132,15 @@ async function dispatch(incidentId: string, technicianId: string) {
       elevator: { select: { elevatorCode: true } },
     },
   });
-  if (!incident) throw notFound(`Incident not found: ${incidentId}`);
+  if (!incident) throw notFound(`Incident introuvable : ${incidentId}`);
 
   if (incident.status === "RESOLVED_BY_CLIENT") {
     throw conflict(
-      `Incident ${incident.incidentNumber} was resolved by the client and needs no technician.`
+      `L'incident ${incident.incidentNumber} a été résolu par le client et ne nécessite aucun technicien.`
     );
   }
   if (incident.status === "CLOSED") {
-    throw conflict(`Incident ${incident.incidentNumber} is already closed.`);
+    throw conflict(`L'incident ${incident.incidentNumber} est déjà clôturé.`);
   }
 
   const technician = await prisma.user.findFirst({
@@ -152,7 +152,7 @@ async function dispatch(incidentId: string, technicianId: string) {
   });
   if (!technician) {
     throw badRequest(
-      `User ${technicianId} is not an active field technician.`
+      `L'utilisateur ${technicianId} n'est pas un technicien de terrain actif.`
     );
   }
 
@@ -166,9 +166,9 @@ async function dispatch(incidentId: string, technicianId: string) {
    * person they picked is no longer offered.
    */
   if (!DISPATCHABLE_TECHNICIAN_STATUSES.includes(technician.status)) {
-    const reason = technician.status === "ON_LEAVE" ? "on leave" : "off duty";
+    const reason = technician.status === "ON_LEAVE" ? "en congé" : "hors service";
     throw badRequest(
-      `${technician.name ?? technicianId} is ${reason} and cannot be dispatched.`
+      `${technician.name ?? technicianId} est ${reason} et ne peut pas être affecté.`
     );
   }
 
@@ -195,7 +195,7 @@ async function dispatch(incidentId: string, technicianId: string) {
 
         if (claimed.count === 0) {
           throw conflict(
-            `Incident ${incident.incidentNumber} was modified by another request.`
+            `L'incident ${incident.incidentNumber} a été modifié par une autre requête.`
           );
         }
 
@@ -232,10 +232,10 @@ async function dispatch(incidentId: string, technicianId: string) {
   // After the commit — a courtesy, never a precondition.
   await notify({
     userId: technician.id,
-    title: `Nouvel incident assigné – ${incident.elevator.elevatorCode}`,
-    message: `Incident ${incident.incidentNumber} vous a été assigné.`,
+    title: `Nouvel incident affecté – ${incident.elevator.elevatorCode}`,
+    message: `L'incident ${incident.incidentNumber} vous a été affecté.`,
     type: "incident",
-    linkUrl: "/technician",
+    linkUrl: "/technicien",
   });
 
   return NextResponse.json({ data: updated });
@@ -262,7 +262,7 @@ async function advanceStatus(
       elevator: { select: { elevatorCode: true, buildingId: true } },
     },
   });
-  if (!incident) throw notFound(`Incident not found: ${incidentId}`);
+  if (!incident) throw notFound(`Incident introuvable : ${incidentId}`);
 
   await assertMayTransition(session, incident, next);
 
@@ -270,9 +270,9 @@ async function advanceStatus(
     const allowed = allowedTransitions(incident.status);
     throw badRequest(
       allowed.length === 0
-        ? `Incident ${incident.incidentNumber} is ${incident.status} and can no longer change.`
-        : `Cannot move incident ${incident.incidentNumber} from ${incident.status} to ${next}. ` +
-          `Allowed: ${allowed.join(", ")}.`
+        ? `L'incident ${incident.incidentNumber} est ${incident.status} et ne peut plus changer de statut.`
+        : `Impossible de faire passer l'incident ${incident.incidentNumber} de ${incident.status} à ${next}. ` +
+          `Transitions autorisées : ${allowed.join(", ")}.`
     );
   }
 
@@ -344,27 +344,27 @@ async function assertMayTransition(
     // A client may only make its own single decision: confirm it fixed the
     // problem. It cannot assign, start, or close work.
     if (next !== "RESOLVED_BY_CLIENT") {
-      throw forbidden("A building owner may only mark its own incident resolved.");
+      throw forbidden("Un propriétaire d'immeuble ne peut marquer comme résolu que son propre incident.");
     }
     if (incident.clientId !== session.user.id) {
-      throw forbidden("You can only update incidents you reported.");
+      throw forbidden("Vous ne pouvez mettre à jour que les incidents que vous avez signalés.");
     }
     // Belt and braces: the incident must sit on a building they own.
     const building = await prisma.building.findFirst({
       where: { id: incident.elevator.buildingId, ...buildingScopeFor(session) },
       select: { id: true },
     });
-    if (!building) throw forbidden("Incident is outside your portfolio.");
+    if (!building) throw forbidden("Cet incident est hors de votre portefeuille.");
     return;
   }
 
   if (role === "FIELD_TECHNICIAN") {
     // A technician may progress the job they were given, and nothing else.
     if (!isSelfOrManager(session, incident.technicianId)) {
-      throw forbidden("This incident is not assigned to you.");
+      throw forbidden("Cet incident ne vous est pas affecté.");
     }
     if (next === "RESOLVED_BY_CLIENT") {
-      throw forbidden("Only the reporting client may resolve an incident themselves.");
+      throw forbidden("Seul le client à l'origine de l'incident peut le résoudre lui-même.");
     }
     return;
   }

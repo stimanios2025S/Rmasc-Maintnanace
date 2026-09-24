@@ -93,16 +93,16 @@ elevator-pulse/
 │   └── diagnose-auth.ts       # Auth/credential troubleshooting helper
 ├── src/
 │   ├── app/
-│   │   ├── (auth)/login/      # Login page with role-based demo access
+│   │   ├── (auth)/connexion/  # Login page with role-based demo access
 │   │   ├── (dashboard)/
 │   │   │   ├── layout.tsx     # App shell (sidebar, header, alert badge)
-│   │   │   ├── dashboard/     # KPIs, fleet overview, telemetry chart
+│   │   │   ├── tableau-de-bord/  # KPIs, fleet overview, telemetry chart
 │   │   │   ├── client/        # Occupant portal — French, guided troubleshooting
-│   │   │   └── admin/incidents/  # Dispatch board: escalations + technician roster
-│   │   ├── elevators/         # Fleet list + [id] detail (telemetry, RUL, specs)
-│   │   ├── work-orders/       # Kanban board + list view
-│   │   ├── technician/        # Mobile-friendly field portal
-│   │   ├── inspection-reports/[id]/  # Printable, chrome-free service report
+│   │   │   └── administration/incidents/  # Dispatch board: escalations + roster
+│   │   ├── ascenseurs/        # Fleet list + [id] detail (telemetry, RUL, specs)
+│   │   ├── bons-de-travail/   # Kanban board + list view
+│   │   ├── technicien/        # Mobile-friendly field portal
+│   │   ├── rapports-inspection/[id]/  # Printable, chrome-free service report
 │   │   ├── api/               # Route handlers (see API Reference)
 │   │   ├── layout.tsx         # Root layout + session provider
 │   │   ├── error.tsx          # Error boundary
@@ -726,9 +726,14 @@ Authorisation has two layers, and the **handler-level guards in
 
 Two screens carry their own gates in `src/middleware.ts` on top of the
 handler-level checks, because both would otherwise leak across tenants:
-`/technician` (ops roles only) and `/admin/*` (management only — a building
-owner who reached it would see every other customer's incidents and the
-company's staffing).
+`/technicien` (ops roles only) and `/administration/*` (management only — a
+building owner who reached it would see every other customer's incidents and
+the company's staffing).
+
+Page paths are French; the `/api/*` surface is not, because it is a contract
+with the IoT gateway, NextAuth's `/api/auth/[...nextauth]` and the seeded
+scripts. `next.config.js` redirects the old English page paths to the new ones
+so existing bookmarks and notification links keep working.
 
 `/client` is deliberately **not** role-gated. A building owner is its intended
 user, but an administrator has to be able to open it to see what a customer

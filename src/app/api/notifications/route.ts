@@ -84,7 +84,7 @@ export async function PATCH(request: NextRequest) {
     const body = PatchSchema.parse(await readJson(request));
 
     if (!body.id && !body.all) {
-      throw badRequest('Provide either "id" or "all": true.');
+      throw badRequest('Fournissez soit "id", soit "all": true.');
     }
 
     // `updateMany` scoped on userId rather than `update` by id: marking

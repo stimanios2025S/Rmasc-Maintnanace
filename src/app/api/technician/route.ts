@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
       where: { id: technicianId },
       select: { id: true, name: true, email: true, phone: true, role: true },
     });
-    if (!technician) throw notFound("Technician not found");
+    if (!technician) throw notFound("Technicien introuvable");
 
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);

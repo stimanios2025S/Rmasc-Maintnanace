@@ -206,7 +206,7 @@ export default function ClientPortalPage() {
 
                 {incident.technician && (
                   <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
-                    Technicien assigné :{" "}
+                    Technicien affecté :{" "}
                     <span className="font-medium text-gray-900 dark:text-white">
                       {incident.technician.name ?? "—"}
                     </span>

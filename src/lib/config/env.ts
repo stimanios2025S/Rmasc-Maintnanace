@@ -33,11 +33,11 @@ const ServerEnvSchema = z.object({
 
   DATABASE_URL: z
     .string()
-    .min(1, "DATABASE_URL is required")
+    .min(1, "DATABASE_URL est obligatoire")
     .refine(
       (value) =>
         value.startsWith("postgresql://") || value.startsWith("postgres://"),
-      "DATABASE_URL must be a PostgreSQL connection string"
+      "DATABASE_URL doit être une chaîne de connexion PostgreSQL"
     ),
 
   NEXTAUTH_URL: optionalString(z.string().url()),
@@ -83,7 +83,8 @@ export function getEnv(): ServerEnv {
       .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
       .join("\n");
     throw new Error(
-      `Invalid environment configuration:\n${issues}\n\nSee .env.example for the expected variables.`
+      `Configuration d'environnement invalide :\n${issues}\n\n` +
+        "Voir .env.example pour la liste des variables attendues."
     );
   }
 
@@ -99,25 +100,25 @@ export function getEnv(): ServerEnv {
   if (env.NODE_ENV === "production") {
     if (!env.NEXTAUTH_SECRET) {
       problems.push(
-        "NEXTAUTH_SECRET is required in production (generate with: openssl rand -base64 32)"
+        "NEXTAUTH_SECRET est obligatoire en production (à générer avec : openssl rand -base64 32)"
       );
     }
     if (!env.NEXTAUTH_URL) {
-      problems.push("NEXTAUTH_URL is required in production");
+      problems.push("NEXTAUTH_URL est obligatoire en production");
     }
     if (!env.IOT_INGEST_TOKEN) {
       // Not fatal — some deployments terminate telemetry at a gateway — but
       // an unauthenticated write endpoint on the public internet is worth
       // shouting about.
       console.warn(
-        "[env] IOT_INGEST_TOKEN is unset in production: POST /api/telemetry will accept unauthenticated writes."
+        "[env] IOT_INGEST_TOKEN n'est pas défini en production : POST /api/telemetry acceptera des écritures non authentifiées."
       );
     }
   }
 
   if (problems.length > 0) {
     throw new Error(
-      `Invalid environment configuration:\n${problems
+      `Configuration d'environnement invalide :\n${problems
         .map((p) => `  - ${p}`)
         .join("\n")}`
     );

@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
   try {
     if (!isIngestAuthorized(request)) {
       return NextResponse.json(
-        { error: "Unauthorized: valid ingest token required" },
+        { error: "Non autorisé : un jeton d'ingestion valide est requis" },
         { status: 401 }
       );
     }
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
 
     if (!elevator) {
       return NextResponse.json(
-        { error: `Elevator not found: ${parsed.elevatorCode}` },
+        { error: `Ascenseur introuvable : ${parsed.elevatorCode}` },
         { status: 404 }
       );
     }
@@ -222,7 +222,7 @@ export async function POST(request: NextRequest) {
           elevatorCode: elevator.elevatorCode,
           alertId: alert.id,
           metricName,
-          title: `EMERGENCY: ${alertTitle}`,
+          title: `URGENCE : ${alertTitle}`,
           message: breach.message,
           severity: "CRITICAL",
         });

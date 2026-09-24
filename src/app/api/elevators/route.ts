@@ -32,19 +32,22 @@ const CreateElevatorSchema = z
   .object({
     elevatorCode: z
       .string()
-      .min(1, "Elevator code is required")
+      .min(1, "Le code d'ascenseur est obligatoire")
       .max(50)
       .regex(
         /^[A-Za-z0-9_-]+$/,
-        "Code may only contain letters, numbers, - and _"
+        "Le code ne peut contenir que des lettres, des chiffres, - et _"
       ),
-    buildingId: z.string().min(1, "Building is required"),
+    buildingId: z.string().min(1, "L'immeuble est obligatoire"),
     brand: z.enum(ELEVATOR_BRANDS),
-    model: z.string().min(1, "Model is required").max(100),
+    model: z.string().min(1, "Le modèle est obligatoire").max(100),
     serialNumber: z.string().max(100).optional(),
     installationDate: z.string().datetime().optional(),
     motorType: z.enum(MOTOR_TYPES),
-    maxPayloadKg: z.number().positive("Payload must be positive").max(10000),
+    maxPayloadKg: z
+      .number()
+      .positive("La charge doit être supérieure à zéro")
+      .max(10000),
     controllerType: z.enum(CONTROLLER_TYPES),
     floorsServed: z.number().int().positive().max(200),
   })
@@ -96,7 +99,7 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
     if (!building) {
-      throw notFound(`Building not found: ${parsed.buildingId}`);
+      throw notFound(`Immeuble introuvable : ${parsed.buildingId}`);
     }
 
     const duplicate = await prisma.elevator.findUnique({
@@ -105,7 +108,7 @@ export async function POST(request: NextRequest) {
     });
     if (duplicate) {
       throw conflict(
-        `Elevator code already registered: ${parsed.elevatorCode}`
+        `Code d'ascenseur déjà enregistré : ${parsed.elevatorCode}`
       );
     }
 

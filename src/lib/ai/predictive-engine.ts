@@ -21,6 +21,7 @@ import {
   OPEN_WORK_ORDER_STATUSES,
 } from "@/lib/work-orders/service";
 import { notify, notifyRoles } from "@/lib/notifications/service";
+import { enumLabel } from "@/lib/ui/enum-labels";
 import { MANAGEMENT_ROLES } from "@/types";
 import type { WorkOrderPriority } from "@/types";
 
@@ -258,30 +259,53 @@ function generateRecommendations(
 ): string[] {
   const recs: string[] = [];
 
+  // The human-readable component name, in French, from the one label table the
+  // whole interface reads (`src/lib/ui/enum-labels.ts`). Lower-cased because it
+  // sits mid-sentence, inside « » so a French reader sees it as a term rather
+  // than as a word that disagrees with the sentence around it.
+  const part = componentLabelFor(componentType).toLowerCase();
+
+  // One decimal, French decimal comma — these strings are shown on the
+  // elevator screen and copied into work orders.
+  const rul = rulPercent.toLocaleString("fr-FR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+
   if (riskLevel === "CRITICAL") {
-    recs.push(`URGENT: Schedule immediate inspection for ${componentType.replace(/_/g, " ").toLowerCase()}`);
-    recs.push("Prepare replacement parts and schedule emergency maintenance window");
+    recs.push(`URGENT : planifier sans délai l'inspection du composant « ${part} »`);
+    recs.push(
+      "Préparer les pièces de rechange et ouvrir une fenêtre de maintenance d'urgence"
+    );
   }
 
   if (riskLevel === "HIGH") {
-    recs.push(`Schedule preventive replacement of ${componentType.replace(/_/g, " ").toLowerCase()} within 2 weeks`);
-    recs.push("Increase monitoring frequency to daily telemetry checks");
+    recs.push(
+      `Planifier le remplacement préventif du composant « ${part} » sous deux semaines`
+    );
+    recs.push("Passer à un contrôle quotidien de la télémétrie");
   }
 
   if (avgVibration > 4.0) {
-    recs.push("Vibration levels elevated — check mounting bolts and alignment");
+    recs.push("Vibrations élevées — vérifier les boulons de fixation et l'alignement");
   }
 
   if (avgTemperature > 80) {
-    recs.push("Temperature trending high — inspect cooling/ventilation system");
+    recs.push(
+      "Température en hausse — inspecter le système de refroidissement et de ventilation"
+    );
   }
 
   if (rulPercent < 50 && rulPercent > 10) {
-    recs.push(`Component at ${rulPercent.toFixed(1)}% RUL — plan replacement in next maintenance cycle`);
+    recs.push(
+      `Composant à ${rul} % de durée de vie utile restante — prévoir le remplacement au prochain cycle de maintenance`
+    );
   }
 
   if (recs.length === 0) {
-    recs.push("Component operating within normal parameters — continue routine monitoring");
+    recs.push(
+      "Composant dans les paramètres normaux — poursuivre la surveillance de routine"
+    );
   }
 
   return recs;
@@ -407,9 +431,9 @@ export async function analyzeElevator(
     // so it reads before the standing recommendations rather than after them.
     if (riskTrend === "worsening" && prior) {
       recommendations.unshift(
-        `Deteriorating: risk moved from ${prior.riskLevel} to ${riskLevel} ` +
-          `since the last analysis (score ${Math.round(prior.riskScore)} → ${Math.round(result.riskScore)}). ` +
-          "Escalate the existing work order rather than waiting for the next cycle."
+        `Dégradation : le risque est passé de ${prior.riskLevel} à ${riskLevel} ` +
+          `depuis la dernière analyse (score ${Math.round(prior.riskScore)} → ${Math.round(result.riskScore)}). ` +
+          "Traiter le bon de travail existant en priorité plutôt que d'attendre le prochain cycle."
       );
     }
 
@@ -540,23 +564,49 @@ const PRIORITY_RANK: Record<string, number> = {
   CRITICAL: 4,
 };
 
+/** `TRACTION_MOTOR` -> "Moteur de traction". */
 function componentLabelFor(componentType: string): string {
+  return enumLabel(componentType);
+}
+
+/**
+ * The spelling `componentLabelFor` used before the French pass.
+ *
+ * Kept for one purpose only: recognising work orders raised back when the title
+ * template was English. Those titles are rows in the database and did not
+ * change when this file did, so the fallback lookup below has to know both
+ * spellings or it will fail to find the order it raised and raise a duplicate.
+ */
+function legacyComponentLabelFor(componentType: string): string {
   return componentType.replace(/_/g, " ");
+}
+
+/**
+ * The title a predictive work order is raised under.
+ *
+ * Written once and used both to create the order and to find it again on the
+ * next run, so the two can never drift into two different strings.
+ */
+function predictiveOrderTitle(
+  componentType: string,
+  riskLevel: string
+): string {
+  return `Préventif : ${componentLabelFor(componentType)} — risque ${riskLevel}`;
 }
 
 function descriptionFor(component: RULResult): string {
   return [
-    `Predictive analysis detected ${component.riskLevel} risk for ${componentLabelFor(component.componentType).toLowerCase()}.`,
-    `RUL: ${component.remainingUsefulLifePercent}%. Risk score: ${component.riskScore}/100.`,
+    `L'analyse prédictive a détecté un risque ${component.riskLevel} sur le composant « ${componentLabelFor(component.componentType).toLowerCase()} ».`,
+    `Durée de vie utile restante : ${component.remainingUsefulLifePercent} %. Score de risque : ${component.riskScore}/100.`,
     ...(component.previousRiskLevel && component.riskTrend === "worsening"
       ? [
           "",
-          `This component has deteriorated since the last analysis ` +
+          `Ce composant s'est dégradé depuis la dernière analyse ` +
             `(${component.previousRiskLevel} → ${component.riskLevel}).`,
         ]
       : []),
     "",
-    "Recommendations:",
+    "Recommandations :",
     ...component.recommendations.map((r) => `• ${r}`),
   ].join("\n");
 }
@@ -623,12 +673,12 @@ function asDate(value: Date): string {
  * than staying silent — it answers the question the message raises.
  */
 function dateSentence(previous: Date | null, next: Date | null): string {
-  if (!next) return "The work order keeps its current date.";
-  if (!previous) return `It is now targeted for ${asDate(next)}.`;
+  if (!next) return "Le bon de travail garde sa date actuelle.";
+  if (!previous) return `Il est désormais planifié au ${asDate(next)}.`;
   if (previous.getTime() === next.getTime()) {
-    return `The target date is unchanged at ${asDate(next)}.`;
+    return `La date prévue reste inchangée au ${asDate(next)}.`;
   }
-  return `Its target date moves from ${asDate(previous)} to ${asDate(next)}.`;
+  return `Sa date prévue passe du ${asDate(previous)} au ${asDate(next)}.`;
 }
 
 /**
@@ -694,13 +744,18 @@ export async function generatePredictiveWorkOrders(
       OR: [
         ...(componentIds.length > 0 ? [{ componentId: { in: componentIds } }] : []),
         // Components without a tracked row fall back to matching on type.
+        //
+        // Both spellings are listed. `title` is compared against rows already
+        // in the database, and the orders raised before the French pass carry
+        // the English wording; matching only the new one would stop recognising
+        // them and raise a second order for a component that already has one.
         {
           componentId: null,
           title: {
-            in: atRisk.map(
-              (c) =>
-                `Predictive: ${componentLabelFor(c.componentType)} — ${c.riskLevel} Risk`
-            ),
+            in: atRisk.flatMap((c) => [
+              predictiveOrderTitle(c.componentType, c.riskLevel),
+              `Predictive: ${legacyComponentLabelFor(c.componentType)} — ${c.riskLevel} Risk`,
+            ]),
           },
         },
       ],
@@ -732,7 +787,10 @@ export async function generatePredictiveWorkOrders(
 
   for (const component of atRisk) {
     const key = component.componentId ?? null;
-    const title = `Predictive: ${componentLabelFor(component.componentType)} — ${component.riskLevel} Risk`;
+    const title = predictiveOrderTitle(
+      component.componentType,
+      component.riskLevel
+    );
     const open = key
       ? openByComponent.get(key)
       : openByTitle.get(title);
@@ -792,28 +850,28 @@ export async function generatePredictiveWorkOrders(
     if (!wasRaised && !dateMoved && open.assignedToId) continue;
 
     const message =
-      `The ${componentLabelFor(component.componentType).toLowerCase()} on ${analysis.elevatorCode} ` +
-      `has deteriorated to ${component.riskLevel} risk (was ${component.previousRiskLevel ?? "unscored"}). ` +
-      `RUL ${component.remainingUsefulLifePercent}%. ` +
+      `Le composant « ${componentLabelFor(component.componentType).toLowerCase()} » de ${analysis.elevatorCode} ` +
+      `est passé au niveau de risque ${component.riskLevel} (auparavant ${component.previousRiskLevel ?? "non évalué"}). ` +
+      `Durée de vie utile restante : ${component.remainingUsefulLifePercent} %. ` +
       dateSentence(previousDate, targetDate) +
-      ` Work order ${open.orderNumber} covers it.`;
+      ` Le bon de travail ${open.orderNumber} couvre cette intervention.`;
 
     if (open.assignedToId) {
       await notify({
         userId: open.assignedToId,
-        title: `Deteriorating component – ${analysis.elevatorCode}`,
+        title: `Composant en dégradation – ${analysis.elevatorCode}`,
         message,
         type: "work_order",
-        linkUrl: "/technician",
+        linkUrl: "/technicien",
       });
     } else {
       // Nobody is holding it. The people who assign work are the ones who need
       // to know it just became urgent.
       await notifyRoles([...MANAGEMENT_ROLES], {
-        title: `Unassigned urgent work – ${analysis.elevatorCode}`,
+        title: `Travail urgent non affecté – ${analysis.elevatorCode}`,
         message,
         type: "work_order",
-        linkUrl: "/work-orders",
+        linkUrl: "/bons-de-travail",
       });
     }
   }

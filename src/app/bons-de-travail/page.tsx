@@ -18,6 +18,7 @@ import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states"
 import { ValidationBadge } from "@/components/ui/validation-badge";
 import { ProgressTrack } from "@/components/ui/progress-track";
 import { formatEnum } from "@/lib/utils";
+import { enumLabel } from "@/lib/ui/enum-labels";
 import { useSession } from "next-auth/react";
 import { OPS_ROLES } from "@/types";
 import type { IncidentStatus } from "@/types";
@@ -32,10 +33,10 @@ const STATUS_CONFIG: Record<
   StatusKey,
   { label: string; icon: typeof Clock; color: string; headerColor: string }
 > = {
-  OPEN: { label: "Open", icon: Clock, color: "bg-gray-100 text-gray-600", headerColor: "bg-gray-500" },
-  ASSIGNED: { label: "Assigned", icon: User, color: "bg-blue-100 text-blue-600", headerColor: "bg-blue-500" },
-  IN_PROGRESS: { label: "In Progress", icon: Wrench, color: "bg-yellow-100 text-yellow-600", headerColor: "bg-yellow-500" },
-  COMPLETED: { label: "Completed", icon: CheckCircle2, color: "bg-green-100 text-green-600", headerColor: "bg-green-500" },
+  OPEN: { label: "Ouvert", icon: Clock, color: "bg-gray-100 text-gray-600", headerColor: "bg-gray-500" },
+  ASSIGNED: { label: "Assigné", icon: User, color: "bg-blue-100 text-blue-600", headerColor: "bg-blue-500" },
+  IN_PROGRESS: { label: "En cours", icon: Wrench, color: "bg-yellow-100 text-yellow-600", headerColor: "bg-yellow-500" },
+  COMPLETED: { label: "Terminé", icon: CheckCircle2, color: "bg-green-100 text-green-600", headerColor: "bg-green-500" },
 };
 
 interface WorkOrderRow {
@@ -129,7 +130,8 @@ export default function WorkOrdersPage() {
         fetch("/api/work-orders?limit=100"),
         fetch("/api/elevators"),
       ]);
-      if (!woRes.ok) throw new Error(`Work orders API returned ${woRes.status}`);
+      if (!woRes.ok)
+        throw new Error(`L'API des bons de travail a répondu ${woRes.status}`);
       const woJson = await woRes.json();
       setOrders(woJson.data ?? []);
       if (elRes.ok) {
@@ -141,7 +143,9 @@ export default function WorkOrdersPage() {
         }));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load work orders");
+      setError(
+        e instanceof Error ? e.message : "Échec du chargement des bons de travail"
+      );
     } finally {
       setLoading(false);
     }
@@ -161,11 +165,11 @@ export default function WorkOrdersPage() {
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? "Update failed");
+        throw new Error(json.error ?? "Échec de la mise à jour");
       }
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Update failed");
+      setError(e instanceof Error ? e.message : "Échec de la mise à jour");
     } finally {
       setBusyId(null);
     }
@@ -180,10 +184,11 @@ export default function WorkOrdersPage() {
         body: JSON.stringify({ workOrderId: id }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message ?? json.error ?? "Dispatch failed");
+      if (!res.ok)
+        throw new Error(json.message ?? json.error ?? "L'affectation a échoué");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dispatch failed");
+      setError(e instanceof Error ? e.message : "L'affectation a échoué");
     } finally {
       setBusyId(null);
     }
@@ -193,7 +198,7 @@ export default function WorkOrdersPage() {
     e.preventDefault();
     setFormError("");
     if (!form.title.trim() || !form.elevatorId) {
-      setFormError("Title and elevator are required.");
+      setFormError("Le titre et l'ascenseur sont obligatoires.");
       return;
     }
     setBusyId("create");
@@ -211,12 +216,12 @@ export default function WorkOrdersPage() {
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Creation failed");
+      if (!res.ok) throw new Error(json.error ?? "Échec de la création");
       setShowCreate(false);
       setForm({ title: "", type: "PREVENTIVE", priority: "MEDIUM", elevatorId: elevatorOptions[0]?.id ?? "", scheduledDate: "", estimatedHours: "" });
       await load();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Creation failed");
+      setFormError(err instanceof Error ? err.message : "Échec de la création");
     } finally {
       setBusyId(null);
     }
@@ -251,10 +256,11 @@ export default function WorkOrdersPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Work Orders
+            Bons de travail
           </h2>
           <p className="text-gray-500 mt-1">
-            {orders.length} total orders • {activeCount} active
+            {orders.length} {orders.length > 1 ? "bons" : "bon"} au total •{" "}
+            {activeCount} {activeCount > 1 ? "actifs" : "actif"}
           </p>
         </div>
         <div className="flex gap-2">
@@ -269,7 +275,7 @@ export default function WorkOrdersPage() {
                     : "text-gray-500"
                 }`}
               >
-                {v}
+                {v === "kanban" ? "Kanban" : "Liste"}
               </button>
             ))}
           </div>
@@ -279,7 +285,7 @@ export default function WorkOrdersPage() {
               className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              New Work Order
+              Nouveau bon de travail
             </button>
           )}
         </div>
@@ -316,10 +322,10 @@ export default function WorkOrdersPage() {
                     >
                       <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                         <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${PRIORITY_COLORS[wo.priority] ?? PRIORITY_COLORS.MEDIUM}`}>
-                          {wo.priority}
+                          {enumLabel(wo.priority)}
                         </span>
                         <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded border ${TYPE_COLORS[wo.type] ?? TYPE_COLORS.INSPECTION}`}>
-                          {wo.type}
+                          {enumLabel(wo.type)}
                         </span>
                       </div>
 
@@ -350,9 +356,9 @@ export default function WorkOrdersPage() {
                             {wo.incident.isDirectTransfer && (
                               <span
                                 className="inline-flex items-center rounded-full border border-red-300 bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
-                                title="Created by the emergency button — the occupant never worked through the error code"
+                                title="Créé par le bouton d'urgence — l'occupant n'a jamais parcouru les étapes du code d'erreur"
                               >
-                                EMERGENCY
+                                URGENCE
                               </span>
                             )}
                           </div>
@@ -376,10 +382,10 @@ export default function WorkOrdersPage() {
                             className="pt-0.5"
                           />
                           <Link
-                            href="/admin/incidents"
+                            href="/administration/incidents"
                             className="inline-block text-[10px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400"
                           >
-                            Open on the incident board →
+                            Ouvrir dans le tableau des incidents →
                           </Link>
                         </div>
                       )}
@@ -397,28 +403,34 @@ export default function WorkOrdersPage() {
                             className="flex items-center gap-1 text-blue-600 font-medium hover:text-blue-700 disabled:opacity-50"
                           >
                             <Zap className="w-3 h-3" />
-                            {busyId === wo.id ? "Dispatching…" : "Auto-dispatch"}
+                            {busyId === wo.id
+                              ? "Affectation…"
+                              : "Affectation automatique"}
                           </button>
                         ) : (
-                          <span className="text-gray-400">Unassigned</span>
+                          <span className="text-gray-400">Non affecté</span>
                         )}
                         {wo.scheduledDate && (
                           <div className="flex items-center gap-1 text-gray-400">
                             <Calendar className="w-3 h-3" />
-                            <span>{new Date(wo.scheduledDate).toLocaleDateString()}</span>
+                            <span>
+                              {new Date(wo.scheduledDate).toLocaleDateString(
+                                "fr-FR"
+                              )}
+                            </span>
                           </div>
                         )}
                       </div>
 
                       <div className="pt-2 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs text-gray-400">
-                        <span>Est. {wo.estimatedHours ?? "—"}h</span>
+                        <span>Est. {wo.estimatedHours ?? "—"} h</span>
                         {NEXT_STATUS[wo.status] && canManage ? (
                           <button
                             onClick={() => mutate(wo.id, { status: NEXT_STATUS[wo.status] })}
                             disabled={busyId === wo.id}
                             className="flex items-center gap-0.5 text-blue-600 font-medium hover:text-blue-700 disabled:opacity-50"
                           >
-                            Move to {formatEnum(NEXT_STATUS[wo.status])}
+                            Passer à {formatEnum(NEXT_STATUS[wo.status])}
                             <ChevronRight className="w-3 h-3" />
                           </button>
                         ) : !canManage ? (
@@ -426,10 +438,12 @@ export default function WorkOrdersPage() {
                             {formatEnum(wo.status)}
                           </span>
                         ) : wo.status === "OPEN" ? (
-                          <span className="text-gray-400">Awaiting assignment</span>
+                          <span className="text-gray-400">
+                            En attente d'affectation
+                          </span>
                         ) : (
                           <span className="flex items-center gap-1 text-green-600">
-                            <CheckCircle2 className="w-3 h-3" /> Done
+                            <CheckCircle2 className="w-3 h-3" /> Terminé
                           </span>
                         )}
                       </div>
@@ -438,7 +452,7 @@ export default function WorkOrdersPage() {
 
                   {col.length === 0 && (
                     <div className="text-center py-8 text-gray-400 text-sm">
-                      No orders
+                      Aucun bon
                     </div>
                   )}
                 </div>
@@ -453,14 +467,17 @@ export default function WorkOrdersPage() {
         <Card className="overflow-hidden">
           {orders.length === 0 ? (
             <div className="p-6">
-              <EmptyState title="No work orders" hint="Create your first order with the button above." />
+              <EmptyState
+                title="Aucun bon de travail"
+                hint="Créez votre premier bon avec le bouton ci-dessus."
+              />
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                    {["Order", "Title", "Elevator", "Type", "Priority", "Status", "Incident", "Assigned", "Scheduled"].map((h) => (
+                    {["N° de bon", "Titre", "Ascenseur", "Type", "Priorité", "Statut", "Incident", "Affecté à", "Planifié"].map((h) => (
                       <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">{h}</th>
                     ))}
                   </tr>
@@ -473,12 +490,12 @@ export default function WorkOrdersPage() {
                       <td className="px-6 py-4 text-xs font-mono text-gray-500">{wo.elevator.elevatorCode}</td>
                       <td className="px-6 py-4">
                         <span className={`px-2 py-0.5 text-[10px] font-medium rounded border ${TYPE_COLORS[wo.type] ?? TYPE_COLORS.INSPECTION}`}>
-                          {wo.type}
+                          {enumLabel(wo.type)}
                         </span>
                       </td>
                       <td className="px-6 py-4">
                         <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${PRIORITY_COLORS[wo.priority] ?? PRIORITY_COLORS.MEDIUM}`}>
-                          {wo.priority}
+                          {enumLabel(wo.priority)}
                         </span>
                       </td>
                       <td className="px-6 py-4">
@@ -505,7 +522,11 @@ export default function WorkOrdersPage() {
                         {wo.assignedTo?.name ?? <span className="text-gray-400 italic">—</span>}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
-                        {wo.scheduledDate ? new Date(wo.scheduledDate).toLocaleDateString() : <span className="text-gray-400 italic">—</span>}
+                        {wo.scheduledDate ? (
+                          new Date(wo.scheduledDate).toLocaleDateString("fr-FR")
+                        ) : (
+                          <span className="text-gray-400 italic">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -521,8 +542,14 @@ export default function WorkOrdersPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">New Work Order</h3>
-              <button onClick={() => setShowCreate(false)} aria-label="Close" className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Nouveau bon de travail
+              </h3>
+              <button
+                onClick={() => setShowCreate(false)}
+                aria-label="Fermer"
+                className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
                 <X className="w-4 h-4 text-gray-500" />
               </button>
             </div>
@@ -533,7 +560,7 @@ export default function WorkOrdersPage() {
               <input
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
-                placeholder="Title (e.g. Monthly Safety Inspection)"
+                placeholder="Titre (ex. : inspection de sécurité mensuelle)"
                 className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <div className="grid grid-cols-2 gap-3">
@@ -580,7 +607,7 @@ export default function WorkOrdersPage() {
                   step="0.5"
                   value={form.estimatedHours}
                   onChange={(e) => setForm({ ...form, estimatedHours: e.target.value })}
-                  placeholder="Est. hours"
+                  placeholder="Heures estimées"
                   className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white"
                 />
               </div>
@@ -589,7 +616,9 @@ export default function WorkOrdersPage() {
                 disabled={busyId === "create"}
                 className="w-full py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
-                {busyId === "create" ? "Creating…" : "Create Work Order"}
+                {busyId === "create"
+                  ? "Création…"
+                  : "Créer le bon de travail"}
               </button>
             </form>
           </div>

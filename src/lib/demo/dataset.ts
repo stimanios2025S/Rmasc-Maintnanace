@@ -237,12 +237,12 @@ const COMPONENT_BLUEPRINTS: ReadonlyArray<{
   wear: number;
   manufacturer: string;
 }> = [
-  { type: "TRACTION_MOTOR", name: "Traction Motor", life: 60000, wear: 0.0, manufacturer: "Otis" },
-  { type: "BRAKE_ASSEMBLY", name: "Brake Assembly", life: 45000, wear: 0.08, manufacturer: "Mayr" },
-  { type: "DOOR_OPERATOR", name: "Door Operator", life: 40000, wear: 0.14, manufacturer: "Selcom" },
-  { type: "STEEL_ROPES", name: "Steel Ropes", life: 50000, wear: 0.06, manufacturer: "Gustav Wolf" },
-  { type: "GUIDE_SHOES", name: "Guide Shoes", life: 35000, wear: 0.18, manufacturer: "Wittur" },
-  { type: "CONTROLLER_BOARD", name: "Controller Board", life: 80000, wear: 0.03, manufacturer: "Kone" },
+  { type: "TRACTION_MOTOR", name: "Moteur de traction", life: 60000, wear: 0.0, manufacturer: "Otis" },
+  { type: "BRAKE_ASSEMBLY", name: "Ensemble de frein", life: 45000, wear: 0.08, manufacturer: "Mayr" },
+  { type: "DOOR_OPERATOR", name: "Opérateur de porte", life: 40000, wear: 0.14, manufacturer: "Selcom" },
+  { type: "STEEL_ROPES", name: "Câbles en acier", life: 50000, wear: 0.06, manufacturer: "Gustav Wolf" },
+  { type: "GUIDE_SHOES", name: "Patins de guidage", life: 35000, wear: 0.18, manufacturer: "Wittur" },
+  { type: "CONTROLLER_BOARD", name: "Carte de commande", life: 80000, wear: 0.03, manufacturer: "Kone" },
 ];
 
 // ─── World ──────────────────────────────────────────────────
@@ -448,18 +448,18 @@ function build(): DemoWorld {
     resolvedAt: Date | null;
     minutesAgo: number;
   }> = [
-    { elevatorId: "elv_6", severity: "EMERGENCY", title: "Motor temperature critical: RBC-03", message: "Motor temperature 97.0 °C exceeds the critical limit of 90 °C. Unit stopped.", metricName: "motor_temperature_c", metricValue: 97, isAcknowledged: false, resolvedAt: null, minutesAgo: 22 },
-    { elevatorId: "elv_6", severity: "CRITICAL", title: "Motor vibration critical: RBC-03", message: "Motor vibration 9.6 mm/s exceeds the critical limit of 8.0 mm/s.", metricName: "motor_vibration_mm_s", metricValue: 9.6, isAcknowledged: false, resolvedAt: null, minutesAgo: 26 },
-    { elevatorId: "elv_3", severity: "ANOMALY", title: "Motor vibration anomaly: MPT-03", message: "Vibration trending upward at 6.4 mm/s; 156% above the unit's 90-day baseline.", metricName: "motor_vibration_mm_s", metricValue: 6.4, isAcknowledged: false, resolvedAt: null, minutesAgo: 48 },
-    { elevatorId: "elv_3", severity: "WARNING", title: "Motor temperature elevated: MPT-03", message: "Motor temperature 84.0 °C is above the 80 °C warning threshold.", metricName: "motor_temperature_c", metricValue: 84, isAcknowledged: false, resolvedAt: null, minutesAgo: 51 },
-    { elevatorId: "elv_2", severity: "WARNING", title: "Door speed deviation: MPT-02", message: "Door speed 1.42 m/s is below the 1.50 m/s minimum for this controller.", metricName: "door_speed_ms", metricValue: 1.42, isAcknowledged: false, resolvedAt: null, minutesAgo: 96 },
-    { elevatorId: "elv_2", severity: "WARNING", title: "Motor vibration elevated: MPT-02", message: "Motor vibration 4.3 mm/s is above the 4.0 mm/s warning threshold.", metricName: "motor_vibration_mm_s", metricValue: 4.3, isAcknowledged: true, resolvedAt: null, minutesAgo: 180 },
-    { elevatorId: "elv_8", severity: "CRITICAL", title: "Telemetry lost: NGM-02", message: "No readings received for 48 hours on a unit under an ENTERPRISE SLA.", metricName: null, metricValue: null, isAcknowledged: false, resolvedAt: null, minutesAgo: 2900 },
-    { elevatorId: "elv_5", severity: "INFO", title: "Maintenance due: RBC-02", message: "Scheduled preventive maintenance is due within 7 days.", metricName: null, metricValue: null, isAcknowledged: true, resolvedAt: null, minutesAgo: 420 },
-    { elevatorId: "elv_7", severity: "WARNING", title: "Cabin load near capacity: NGM-01", message: "Peak cabin load 1,510 kg reached 94% of rated capacity.", metricName: "cabin_load_kg", metricValue: 1510, isAcknowledged: true, resolvedAt: iso(300 * MINUTE), minutesAgo: 540 },
-    { elevatorId: "elv_1", severity: "INFO", title: "Door cycles nominal: MPT-01", message: "Door cycle count within expected range for the last 30 days.", metricName: "door_cycle_count", metricValue: 41200, isAcknowledged: true, resolvedAt: iso(900 * MINUTE), minutesAgo: 1000 },
-    { elevatorId: "elv_4", severity: "INFO", title: "Commissioning complete: RBC-01", message: "Baseline telemetry collected; predictive model is now calibrated.", metricName: null, metricValue: null, isAcknowledged: true, resolvedAt: iso(1400 * MINUTE), minutesAgo: 1500 },
-    { elevatorId: "elv_3", severity: "WARNING", title: "Leveling offset drift: MPT-03", message: "Leveling offset averaged 4.1 mm against a 3.0 mm tolerance.", metricName: "leveling_offset_mm", metricValue: 4.1, isAcknowledged: true, resolvedAt: iso(2000 * MINUTE), minutesAgo: 2100 },
+    { elevatorId: "elv_6", severity: "EMERGENCY", title: "Température moteur critique : RBC-03", message: "Température moteur 97,0 °C au-delà de la limite critique de 90 °C. Appareil arrêté.", metricName: "motor_temperature_c", metricValue: 97, isAcknowledged: false, resolvedAt: null, minutesAgo: 22 },
+    { elevatorId: "elv_6", severity: "CRITICAL", title: "Vibration moteur critique : RBC-03", message: "Vibration moteur 9,6 mm/s au-delà de la limite critique de 8,0 mm/s.", metricName: "motor_vibration_mm_s", metricValue: 9.6, isAcknowledged: false, resolvedAt: null, minutesAgo: 26 },
+    { elevatorId: "elv_3", severity: "ANOMALY", title: "Vibration moteur anormale : MPT-03", message: "Vibration en hausse à 6,4 mm/s, soit 156 % au-dessus de la référence sur 90 jours de l'appareil.", metricName: "motor_vibration_mm_s", metricValue: 6.4, isAcknowledged: false, resolvedAt: null, minutesAgo: 48 },
+    { elevatorId: "elv_3", severity: "WARNING", title: "Température moteur élevée : MPT-03", message: "Température moteur 84,0 °C au-dessus du seuil d'avertissement de 80 °C.", metricName: "motor_temperature_c", metricValue: 84, isAcknowledged: false, resolvedAt: null, minutesAgo: 51 },
+    { elevatorId: "elv_2", severity: "WARNING", title: "Écart de vitesse de porte : MPT-02", message: "Vitesse de porte 1,42 m/s en dessous du minimum de 1,50 m/s pour cette commande.", metricName: "door_speed_ms", metricValue: 1.42, isAcknowledged: false, resolvedAt: null, minutesAgo: 96 },
+    { elevatorId: "elv_2", severity: "WARNING", title: "Vibration moteur élevée : MPT-02", message: "Vibration moteur 4,3 mm/s au-dessus du seuil d'avertissement de 4,0 mm/s.", metricName: "motor_vibration_mm_s", metricValue: 4.3, isAcknowledged: true, resolvedAt: null, minutesAgo: 180 },
+    { elevatorId: "elv_8", severity: "CRITICAL", title: "Télémétrie perdue : NGM-02", message: "Aucun relevé reçu depuis 48 heures sur un appareil sous contrat ENTERPRISE.", metricName: null, metricValue: null, isAcknowledged: false, resolvedAt: null, minutesAgo: 2900 },
+    { elevatorId: "elv_5", severity: "INFO", title: "Entretien à prévoir : RBC-02", message: "L'entretien préventif planifié est dû dans les 7 jours.", metricName: null, metricValue: null, isAcknowledged: true, resolvedAt: null, minutesAgo: 420 },
+    { elevatorId: "elv_7", severity: "WARNING", title: "Charge cabine proche de la capacité : NGM-01", message: "Charge cabine maximale de 1 510 kg, soit 94 % de la capacité nominale.", metricName: "cabin_load_kg", metricValue: 1510, isAcknowledged: true, resolvedAt: iso(300 * MINUTE), minutesAgo: 540 },
+    { elevatorId: "elv_1", severity: "INFO", title: "Cycles de porte normaux : MPT-01", message: "Nombre de cycles de porte dans la plage attendue sur les 30 derniers jours.", metricName: "door_cycle_count", metricValue: 41200, isAcknowledged: true, resolvedAt: iso(900 * MINUTE), minutesAgo: 1000 },
+    { elevatorId: "elv_4", severity: "INFO", title: "Mise en service terminée : RBC-01", message: "Télémétrie de référence collectée ; le modèle prédictif est désormais calibré.", metricName: null, metricValue: null, isAcknowledged: true, resolvedAt: iso(1400 * MINUTE), minutesAgo: 1500 },
+    { elevatorId: "elv_3", severity: "WARNING", title: "Dérive du nivellement : MPT-03", message: "Écart de nivellement moyen de 4,1 mm pour une tolérance de 3,0 mm.", metricName: "leveling_offset_mm", metricValue: 4.1, isAcknowledged: true, resolvedAt: iso(2000 * MINUTE), minutesAgo: 2100 },
   ];
 
   const alerts: Alert[] = alertSeed.map((a, i) => ({
@@ -493,20 +493,20 @@ function build(): DemoWorld {
     scheduledInDays: number | null;
     completedHoursAgo: number | null;
   }> = [
-    { elevatorId: "elv_6", title: "EMERGENCY: Motor over-temperature shutdown", description: "Unit stopped on a CRITICAL motor temperature breach at 97 °C. Inspect cooling, winding resistance and the drive parameters before returning the car to service.", type: "EMERGENCY", priority: "EMERGENCY", status: "IN_PROGRESS", assignedToId: "usr_tech1", componentType: "TRACTION_MOTOR", estimatedHours: 6, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
-    { elevatorId: "elv_6", title: "Replace traction motor bearings", description: "Vibration at 9.6 mm/s indicates advanced bearing wear. Replace both bearings and re-align the sheave.", type: "CORRECTIVE", priority: "CRITICAL", status: "ASSIGNED", assignedToId: "usr_tech2", componentType: "TRACTION_MOTOR", estimatedHours: 8, actualHours: null, scheduledInDays: 2, completedHoursAgo: null },
-    { elevatorId: "elv_3", title: "Investigate rising vibration on MPT-03", description: "Vibration has climbed 156% above baseline over 30 days. Check guide shoe clearance and rope tension.", type: "PREDICTIVE", priority: "HIGH", status: "ASSIGNED", assignedToId: "usr_tech1", componentType: "GUIDE_SHOES", estimatedHours: 3.5, actualHours: null, scheduledInDays: 1, completedHoursAgo: null },
-    { elevatorId: "elv_2", title: "Door operator speed calibration", description: "Door speed measured at 1.42 m/s against a 1.50 m/s minimum. Recalibrate the operator and verify the safety edge.", type: "CORRECTIVE", priority: "HIGH", status: "OPEN", assignedToId: null, componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: null, scheduledInDays: 3, completedHoursAgo: null },
-    { elevatorId: "elv_8", title: "Restore telemetry on NGM-02", description: "No readings for 48 hours. Check the gateway power supply and the cellular backhaul.", type: "CORRECTIVE", priority: "HIGH", status: "ON_HOLD", assignedToId: "usr_tech2", componentType: "CONTROLLER_BOARD", estimatedHours: 2.5, actualHours: 1, scheduledInDays: null, completedHoursAgo: null },
-    { elevatorId: "elv_1", title: "Quarterly preventive maintenance", description: "Standard quarterly service: lubrication, brake gap check, rope inspection, controller diagnostics.", type: "PREVENTIVE", priority: "MEDIUM", status: "OPEN", assignedToId: null, componentType: null, estimatedHours: 4, actualHours: null, scheduledInDays: 9, completedHoursAgo: null },
-    { elevatorId: "elv_4", title: "Annual safety gear inspection", description: "Statutory annual inspection of the safety gear and governor, with drop test.", type: "INSPECTION", priority: "MEDIUM", status: "ASSIGNED", assignedToId: "usr_tech1", componentType: "SAFETY_GEAR", estimatedHours: 5, actualHours: null, scheduledInDays: 6, completedHoursAgo: null },
-    { elevatorId: "elv_5", title: "Replace steel ropes", description: "Rope wear has reached the replacement threshold. Replace all six ropes and re-tension.", type: "PREDICTIVE", priority: "HIGH", status: "ASSIGNED", assignedToId: "usr_tech2", componentType: "STEEL_ROPES", estimatedHours: 10, actualHours: null, scheduledInDays: 12, completedHoursAgo: null },
-    { elevatorId: "elv_7", title: "Hydraulic fluid analysis", description: "Sample and analyse hydraulic fluid for contamination and viscosity breakdown.", type: "PREVENTIVE", priority: "LOW", status: "OPEN", assignedToId: null, componentType: "HYDRAULIC_UNIT", estimatedHours: 2, actualHours: null, scheduledInDays: 20, completedHoursAgo: null },
-    { elevatorId: "elv_1", title: "Replace door operator belt", description: "Belt replaced and tension set; door cycle timing verified against the manufacturer specification.", type: "CORRECTIVE", priority: "MEDIUM", status: "COMPLETED", assignedToId: "usr_tech1", componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: 1.75, scheduledInDays: null, completedHoursAgo: 2 },
-    { elevatorId: "elv_5", title: "Brake assembly inspection", description: "Brake gap measured within tolerance; pads show 40% remaining life.", type: "PREVENTIVE", priority: "MEDIUM", status: "COMPLETED", assignedToId: "usr_tech2", componentType: "BRAKE_ASSEMBLY", estimatedHours: 3, actualHours: 2.5, scheduledInDays: null, completedHoursAgo: 4 },
-    { elevatorId: "elv_7", title: "Controller board firmware update", description: "Firmware updated to the current release; parameters re-verified after the flash.", type: "CORRECTIVE", priority: "LOW", status: "COMPLETED", assignedToId: "usr_tech1", componentType: "CONTROLLER_BOARD", estimatedHours: 1.5, actualHours: 1.25, scheduledInDays: null, completedHoursAgo: 26 },
-    { elevatorId: "elv_2", title: "Guide shoe replacement", description: "Cancelled at the customer's request; rescheduled into the next planned outage.", type: "CORRECTIVE", priority: "LOW", status: "CANCELLED", assignedToId: null, componentType: "GUIDE_SHOES", estimatedHours: 4, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
-    { elevatorId: "elv_4", title: "Baseline telemetry verification", description: "Post-commissioning check confirming all sensors report within expected ranges.", type: "INSPECTION", priority: "LOW", status: "COMPLETED", assignedToId: "usr_tech2", componentType: null, estimatedHours: 1, actualHours: 0.75, scheduledInDays: null, completedHoursAgo: 52 },
+    { elevatorId: "elv_6", title: "URGENCE : arrêt sur surchauffe moteur", description: "Appareil arrêté sur une température moteur critique à 97 °C. Vérifier le refroidissement, la résistance des enroulements et les paramètres du variateur avant de remettre la cabine en service.", type: "EMERGENCY", priority: "EMERGENCY", status: "IN_PROGRESS", assignedToId: "usr_tech1", componentType: "TRACTION_MOTOR", estimatedHours: 6, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
+    { elevatorId: "elv_6", title: "Remplacer les roulements du moteur de traction", description: "Une vibration de 9,6 mm/s indique une usure avancée des roulements. Remplacer les deux roulements et réaligner la poulie.", type: "CORRECTIVE", priority: "CRITICAL", status: "ASSIGNED", assignedToId: "usr_tech2", componentType: "TRACTION_MOTOR", estimatedHours: 8, actualHours: null, scheduledInDays: 2, completedHoursAgo: null },
+    { elevatorId: "elv_3", title: "Analyser la vibration croissante sur MPT-03", description: "La vibration a augmenté de 156 % par rapport à la référence en 30 jours. Contrôler le jeu des patins de guidage et la tension des câbles.", type: "PREDICTIVE", priority: "HIGH", status: "ASSIGNED", assignedToId: "usr_tech1", componentType: "GUIDE_SHOES", estimatedHours: 3.5, actualHours: null, scheduledInDays: 1, completedHoursAgo: null },
+    { elevatorId: "elv_2", title: "Étalonner la vitesse de l'opérateur de porte", description: "Vitesse de porte mesurée à 1,42 m/s pour un minimum de 1,50 m/s. Réétalonner l'opérateur et vérifier la barrière de sécurité.", type: "CORRECTIVE", priority: "HIGH", status: "OPEN", assignedToId: null, componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: null, scheduledInDays: 3, completedHoursAgo: null },
+    { elevatorId: "elv_8", title: "Rétablir la télémétrie sur NGM-02", description: "Aucun relevé depuis 48 heures. Vérifier l'alimentation de la passerelle et la liaison cellulaire.", type: "CORRECTIVE", priority: "HIGH", status: "ON_HOLD", assignedToId: "usr_tech2", componentType: "CONTROLLER_BOARD", estimatedHours: 2.5, actualHours: 1, scheduledInDays: null, completedHoursAgo: null },
+    { elevatorId: "elv_1", title: "Entretien préventif trimestriel", description: "Entretien trimestriel standard : lubrification, contrôle du jeu de frein, inspection des câbles, diagnostics de la commande.", type: "PREVENTIVE", priority: "MEDIUM", status: "OPEN", assignedToId: null, componentType: null, estimatedHours: 4, actualHours: null, scheduledInDays: 9, completedHoursAgo: null },
+    { elevatorId: "elv_4", title: "Inspection annuelle du parachute", description: "Inspection annuelle réglementaire du parachute et du limiteur de vitesse, avec essai de déclenchement.", type: "INSPECTION", priority: "MEDIUM", status: "ASSIGNED", assignedToId: "usr_tech1", componentType: "SAFETY_GEAR", estimatedHours: 5, actualHours: null, scheduledInDays: 6, completedHoursAgo: null },
+    { elevatorId: "elv_5", title: "Remplacer les câbles en acier", description: "L'usure des câbles a atteint le seuil de remplacement. Remplacer les six câbles et remettre en tension.", type: "PREDICTIVE", priority: "HIGH", status: "ASSIGNED", assignedToId: "usr_tech2", componentType: "STEEL_ROPES", estimatedHours: 10, actualHours: null, scheduledInDays: 12, completedHoursAgo: null },
+    { elevatorId: "elv_7", title: "Analyse du fluide hydraulique", description: "Prélever et analyser le fluide hydraulique : contamination et dégradation de la viscosité.", type: "PREVENTIVE", priority: "LOW", status: "OPEN", assignedToId: null, componentType: "HYDRAULIC_UNIT", estimatedHours: 2, actualHours: null, scheduledInDays: 20, completedHoursAgo: null },
+    { elevatorId: "elv_1", title: "Remplacer la courroie de l'opérateur de porte", description: "Courroie remplacée et tension réglée ; cadencement des cycles de porte vérifié selon les spécifications du constructeur.", type: "CORRECTIVE", priority: "MEDIUM", status: "COMPLETED", assignedToId: "usr_tech1", componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: 1.75, scheduledInDays: null, completedHoursAgo: 2 },
+    { elevatorId: "elv_5", title: "Inspection de l'ensemble de frein", description: "Jeu de frein mesuré dans la tolérance ; garnitures à 40 % de durée de vie restante.", type: "PREVENTIVE", priority: "MEDIUM", status: "COMPLETED", assignedToId: "usr_tech2", componentType: "BRAKE_ASSEMBLY", estimatedHours: 3, actualHours: 2.5, scheduledInDays: null, completedHoursAgo: 4 },
+    { elevatorId: "elv_7", title: "Mise à jour du micrologiciel de la carte de commande", description: "Micrologiciel mis à jour vers la version courante ; paramètres revérifiés après le flashage.", type: "CORRECTIVE", priority: "LOW", status: "COMPLETED", assignedToId: "usr_tech1", componentType: "CONTROLLER_BOARD", estimatedHours: 1.5, actualHours: 1.25, scheduledInDays: null, completedHoursAgo: 26 },
+    { elevatorId: "elv_2", title: "Remplacement des patins de guidage", description: "Annulé à la demande du client ; replanifié sur le prochain arrêt programmé.", type: "CORRECTIVE", priority: "LOW", status: "CANCELLED", assignedToId: null, componentType: "GUIDE_SHOES", estimatedHours: 4, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
+    { elevatorId: "elv_4", title: "Vérification de la télémétrie de référence", description: "Contrôle après mise en service confirmant que tous les capteurs relèvent dans les plages attendues.", type: "INSPECTION", priority: "LOW", status: "COMPLETED", assignedToId: "usr_tech2", componentType: null, estimatedHours: 1, actualHours: 0.75, scheduledInDays: null, completedHoursAgo: 52 },
   ];
 
   const workOrders: WorkOrder[] = workOrderSeed.map((w, i) => {
@@ -577,15 +577,17 @@ function build(): DemoWorld {
       recommendations:
         riskLevel === "CRITICAL"
           ? [
-              `URGENT: schedule immediate inspection for ${c.name.toLowerCase()}`,
-              "Prepare replacement parts and book an emergency maintenance window",
+              `URGENT : planifier sans délai l'inspection du composant « ${c.name.toLowerCase()} »`,
+              "Préparer les pièces de rechange et ouvrir une fenêtre de maintenance d'urgence",
             ]
           : riskLevel === "HIGH"
             ? [
-                `Schedule preventive replacement of ${c.name.toLowerCase()} within 2 weeks`,
-                "Increase monitoring frequency to daily telemetry checks",
+                `Planifier le remplacement préventif du composant « ${c.name.toLowerCase()} » sous deux semaines`,
+                "Passer à un contrôle quotidien de la télémétrie",
               ]
-            : ["Component operating within normal parameters — continue routine monitoring"],
+            : [
+                "Composant dans les paramètres normaux — poursuivre la surveillance de routine",
+              ],
       createdAt: iso(90 * MINUTE),
       updatedAt: iso(45 * MINUTE),
     };
@@ -716,28 +718,28 @@ function build(): DemoWorld {
   }> = [
     {
       userId: "usr_mgr", title: "Urgence – RBC-03",
-      message: "Emergency assistance requested for RBC-03 at Riverside Business Center. The reporter could not describe the fault — attend or call back.",
-      type: "incident", isRead: false, linkUrl: "/admin/incidents", minutesAgo: 5 * 60,
+      message: "Assistance d'urgence demandée pour RBC-03 à Riverside Business Center. Le signalant n'a pas pu décrire la panne — intervenez ou rappelez-le.",
+      type: "incident", isRead: false, linkUrl: "/administration/incidents", minutesAgo: 5 * 60,
     },
     {
       userId: "usr_admin", title: "Urgence – RBC-03",
-      message: "Emergency assistance requested for RBC-03 at Riverside Business Center. The reporter could not describe the fault — attend or call back.",
-      type: "incident", isRead: false, linkUrl: "/admin/incidents", minutesAgo: 5 * 60,
+      message: "Assistance d'urgence demandée pour RBC-03 à Riverside Business Center. Le signalant n'a pas pu décrire la panne — intervenez ou rappelez-le.",
+      type: "incident", isRead: false, linkUrl: "/administration/incidents", minutesAgo: 5 * 60,
     },
     {
       userId: "usr_mgr", title: "Incident escaladé – MPT-02",
-      message: "A reported fault at MPT-02 at Metro Plaza Tower could not be resolved by the client and needs a technician.",
-      type: "incident", isRead: false, linkUrl: "/admin/incidents", minutesAgo: 2 * 60,
+      message: "Une panne signalée pour MPT-02 à Metro Plaza Tower n'a pas pu être résolue par le client et nécessite un technicien.",
+      type: "incident", isRead: false, linkUrl: "/administration/incidents", minutesAgo: 2 * 60,
     },
     {
       userId: "usr_tech1", title: "Nouvel incident assigné – RBC-03",
       message: "Incident INC-2026-2002 vous a été assigné.",
-      type: "incident", isRead: false, linkUrl: "/technician", minutesAgo: 4 * 60,
+      type: "incident", isRead: false, linkUrl: "/technicien", minutesAgo: 4 * 60,
     },
     {
       userId: "usr_tech1", title: "Nouvel incident assigné – MPT-03",
       message: "Incident INC-2026-2003 vous a été assigné.",
-      type: "incident", isRead: true, linkUrl: "/technician", minutesAgo: 23 * 60,
+      type: "incident", isRead: true, linkUrl: "/technicien", minutesAgo: 23 * 60,
     },
     {
       userId: "usr_owner2", title: "Incident INC-2026-2005 clôturé",

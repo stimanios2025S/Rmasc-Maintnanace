@@ -123,6 +123,84 @@ const RISK_COLORS: Record<string, string> = {
   CRITICAL: "#ef4444",
 };
 
+/**
+ * French labels for the enum values this screen renders. The keys stay the
+ * API's identifiers — only the text the user reads is translated.
+ */
+const STATUS_LABELS: Record<string, string> = {
+  OPERATIONAL: "En service",
+  SERVICE_REQUIRED: "Entretien requis",
+  ANOMALY_DETECTED: "Anomalie détectée",
+  CRITICAL_SHUTDOWN: "Arrêt critique",
+  OFFLINE: "Hors ligne",
+};
+
+/** Brand names are proper nouns and stay as they are; only `OTHER` translates. */
+const BRAND_LABELS: Record<string, string> = {
+  OTIS: "OTIS",
+  SCHINDLER: "SCHINDLER",
+  THYSSENKRUPP: "THYSSENKRUPP",
+  MITSUBISHI: "MITSUBISHI",
+  HITACHI: "HITACHI",
+  KONE: "KONE",
+  OTHER: "Autre",
+};
+
+const MOTOR_TYPE_LABELS: Record<string, string> = {
+  AC_GEARED: "Alternatif avec réducteur",
+  AC_GEARDLESS: "Alternatif sans réducteur",
+  DC_GEARED: "Continu avec réducteur",
+  HYDRAULIC: "Hydraulique",
+  OTHER: "Autre",
+};
+
+const CONTROLLER_TYPE_LABELS: Record<string, string> = {
+  MICROPROCESSOR: "Microprocesseur",
+  PLC: "Automate programmable",
+  RELAY_LOGIC: "Logique à relais",
+  FULLY_DIGITAL: "Entièrement numérique",
+  OTHER: "Autre",
+};
+
+const COMPONENT_TYPE_LABELS: Record<string, string> = {
+  TRACTION_MOTOR: "Moteur de traction",
+  BRAKE_ASSEMBLY: "Ensemble de frein",
+  DOOR_OPERATOR: "Opérateur de porte",
+  STEEL_ROPES: "Câbles en acier",
+  GUIDE_SHOES: "Patins de guidage",
+  CONTROLLER_BOARD: "Carte de commande",
+  COUNTERWEIGHT: "Contrepoids",
+  CABIN: "Cabine",
+  HYDRAULIC_UNIT: "Groupe hydraulique",
+  SAFETY_GEAR: "Parachute",
+  BUFFER: "Amortisseur",
+  OTHER: "Autre",
+};
+
+const RISK_LABELS: Record<string, string> = {
+  LOW: "Faible",
+  MEDIUM: "Moyen",
+  HIGH: "Élevé",
+  CRITICAL: "Critique",
+};
+
+const WORK_ORDER_STATUS_LABELS: Record<string, string> = {
+  OPEN: "Ouvert",
+  ASSIGNED: "Assigné",
+  IN_PROGRESS: "En cours",
+  ON_HOLD: "En attente",
+  COMPLETED: "Terminé",
+  CANCELLED: "Annulé",
+};
+
+const ALERT_SEVERITY_LABELS: Record<string, string> = {
+  INFO: "Information",
+  WARNING: "Avertissement",
+  ANOMALY: "Anomalie",
+  CRITICAL: "Critique",
+  EMERGENCY: "Urgence",
+};
+
 function riskOf(rul: number): string {
   if (rul <= 10) return "CRITICAL";
   if (rul <= 25) return "HIGH";
@@ -147,12 +225,14 @@ export default function ElevatorDetailPage() {
     setError("");
     try {
       const res = await fetch(`/api/elevators/${id}`);
-      if (res.status === 404) throw new Error("Elevator not found");
-      if (!res.ok) throw new Error(`Detail API returned ${res.status}`);
+      if (res.status === 404) throw new Error("Ascenseur introuvable");
+      if (!res.ok) throw new Error(`L'API de détail a renvoyé ${res.status}`);
       const json = await res.json();
       setData(json.data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load elevator");
+      setError(
+        e instanceof Error ? e.message : "Impossible de charger l'ascenseur"
+      );
     } finally {
       setLoading(false);
     }
@@ -172,13 +252,17 @@ export default function ElevatorDetailPage() {
         body: JSON.stringify({ elevatorId: id }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Prediction failed");
+      if (!res.ok) throw new Error(json.error ?? "Échec de l'analyse prédictive");
+      const riskLabel =
+        RISK_LABELS[json.analysis.overallRisk] ?? json.analysis.overallRisk;
+      const generatedSuffix = json.workOrdersGenerated > 1 ? "s" : "";
       setActionMsg(
-        `Analysis complete — health ${json.analysis.overallHealth}%, risk ${json.analysis.overallRisk}, ${json.workOrdersGenerated} work order(s) generated.`
+        `Analyse terminée — santé ${json.analysis.overallHealth} %, risque ${riskLabel}, ` +
+          `${json.workOrdersGenerated} bon${generatedSuffix} de travail généré${generatedSuffix}.`
       );
       await load();
     } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : "Prediction failed");
+      setActionMsg(e instanceof Error ? e.message : "Échec de l'analyse prédictive");
     } finally {
       setRunningPrediction(false);
     }
@@ -194,18 +278,21 @@ export default function ElevatorDetailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: `Inspection — ${data.elevatorCode}`,
-          description: `Manual inspection request for ${data.elevatorCode} (${data.brand} ${data.model}).`,
+          description: `Demande d'inspection manuelle pour ${
+            data.elevatorCode
+          } (${BRAND_LABELS[data.brand] ?? data.brand} ${data.model}).`,
           type: "INSPECTION",
           priority: data.status === "CRITICAL_SHUTDOWN" ? "EMERGENCY" : "MEDIUM",
           elevatorId: data.id,
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Work order creation failed");
-      setActionMsg(`Work order ${json.data.orderNumber} created.`);
+      if (!res.ok)
+        throw new Error(json.error ?? "Échec de la création du bon de travail");
+      setActionMsg(`Bon de travail ${json.data.orderNumber} créé.`);
       await load();
     } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : "Creation failed");
+      setActionMsg(e instanceof Error ? e.message : "Échec de la création");
     } finally {
       setCreatingOrder(false);
     }
@@ -222,17 +309,20 @@ export default function ElevatorDetailPage() {
   if (error || !data) {
     return (
       <div className="space-y-4">
-        <Link href="/elevators" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
-          <ArrowLeft className="w-4 h-4" /> Back to Fleet
+        <Link href="/ascenseurs" className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+          <ArrowLeft className="w-4 h-4" /> Retour au parc
         </Link>
-        <ErrorState message={error || "Elevator not found"} onRetry={load} />
+        <ErrorState message={error || "Ascenseur introuvable"} onRetry={load} />
       </div>
     );
   }
 
   const el = data;
   const telemetry = [...el.telemetryStreams].reverse().map((t) => ({
-    time: new Date(t.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+    time: new Date(t.timestamp).toLocaleTimeString("fr-FR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
     vibration: t.motorVibrationMmS,
     temperature: t.motorTemperatureC,
     load: t.cabinLoadKg,
@@ -257,10 +347,10 @@ export default function ElevatorDetailPage() {
       {/* Back + Header */}
       <div>
         <Link
-          href="/elevators"
+          href="/ascenseurs"
           className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-3"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to Fleet
+          <ArrowLeft className="w-4 h-4" /> Retour au parc
         </Link>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -278,11 +368,12 @@ export default function ElevatorDetailPage() {
                     elevatorStatusStyle(el.status).dot
                   }`}
                 />
-                {formatEnum(el.status)}
+                {STATUS_LABELS[el.status] ?? formatEnum(el.status)}
               </span>
             </div>
             <p className="text-gray-500 mt-1">
-              {formatEnum(el.brand)} {el.model} — {el.building.name} ({el.building.address}, {el.building.city})
+              {BRAND_LABELS[el.brand] ?? el.brand} {el.model} —{" "}
+              {el.building.name} ({el.building.address}, {el.building.city})
             </p>
           </div>
           <div className="flex gap-2">
@@ -293,7 +384,7 @@ export default function ElevatorDetailPage() {
                 className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 <Wrench className="w-4 h-4 inline mr-1.5" />
-                {creatingOrder ? "Creating…" : "Create Work Order"}
+                {creatingOrder ? "Création…" : "Créer un bon de travail"}
               </button>
             )}
             {/* POST /api/predictive is restricted to management roles; showing
@@ -305,7 +396,9 @@ export default function ElevatorDetailPage() {
                 disabled={runningPrediction}
                 className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
               >
-                {runningPrediction ? "Analyzing…" : "Run Prediction"}
+                {runningPrediction
+                  ? "Analyse en cours…"
+                  : "Lancer l'analyse prédictive"}
               </button>
             )}
           </div>
@@ -318,12 +411,46 @@ export default function ElevatorDetailPage() {
       {/* Quick Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         {[
-          { icon: Shield, label: "Health", value: `${el.overallHealth}%`, color: "text-green-600" },
-          { icon: Gauge, label: "Motor Hours", value: el.operatingHours.toLocaleString(), color: "text-blue-600" },
-          { icon: DoorOpen, label: "Door Cycles", value: el.doorCycleCount.toLocaleString(), color: "text-purple-600" },
-          { icon: Zap, label: "Brake Acts", value: el.brakeActuations.toLocaleString(), color: "text-orange-600" },
-          { icon: Clock, label: "Last Service", value: el.lastMaintenance ? new Date(el.lastMaintenance).toLocaleDateString() : "—", color: "text-gray-600" },
-          { icon: AlertTriangle, label: "Next Service", value: el.nextMaintenance ? new Date(el.nextMaintenance).toLocaleDateString() : "—", color: "text-yellow-600" },
+          {
+            icon: Shield,
+            label: "Santé",
+            value: `${el.overallHealth}%`,
+            color: "text-green-600",
+          },
+          {
+            icon: Gauge,
+            label: "Heures moteur",
+            value: el.operatingHours.toLocaleString("fr-FR"),
+            color: "text-blue-600",
+          },
+          {
+            icon: DoorOpen,
+            label: "Cycles de porte",
+            value: el.doorCycleCount.toLocaleString("fr-FR"),
+            color: "text-purple-600",
+          },
+          {
+            icon: Zap,
+            label: "Actionnements de frein",
+            value: el.brakeActuations.toLocaleString("fr-FR"),
+            color: "text-orange-600",
+          },
+          {
+            icon: Clock,
+            label: "Dernier entretien",
+            value: el.lastMaintenance
+              ? new Date(el.lastMaintenance).toLocaleDateString("fr-FR")
+              : "—",
+            color: "text-gray-600",
+          },
+          {
+            icon: AlertTriangle,
+            label: "Prochain entretien",
+            value: el.nextMaintenance
+              ? new Date(el.nextMaintenance).toLocaleDateString("fr-FR")
+              : "—",
+            color: "text-yellow-600",
+          },
         ].map((stat) => (
           <Card key={stat.label} className="p-4">
             <stat.icon className={`w-4 h-4 ${stat.color} mb-2`} />
@@ -336,10 +463,14 @@ export default function ElevatorDetailPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg w-fit flex-wrap">
         {[
-          { key: "telemetry", label: "Live Telemetry", icon: Activity },
-          { key: "rul", label: "Predictive RUL", icon: TrendingDown },
-          { key: "components", label: "Components", icon: BarChart3 },
-          { key: "history", label: "Orders & Alerts", icon: Clock },
+          { key: "telemetry", label: "Télémétrie en direct", icon: Activity },
+          {
+            key: "rul",
+            label: "Prédictif — durée de vie restante",
+            icon: TrendingDown,
+          },
+          { key: "components", label: "Composants", icon: BarChart3 },
+          { key: "history", label: "Bons de travail et alertes", icon: Clock },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -360,14 +491,14 @@ export default function ElevatorDetailPage() {
       {activeTab === "telemetry" && (
         !hasTelemetry ? (
           <EmptyState
-            title="No telemetry yet"
-            hint="Run the IoT simulator (npm run simulate-iot) to stream live sensor data for this unit."
+            title="Aucune télémétrie pour le moment"
+            hint="Lancez le simulateur IoT (npm run simulate-iot) pour diffuser les données des capteurs de cet ascenseur."
           />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-gray-900 dark:text-white">Motor Vibration</h3>
+                <h3 className="font-semibold text-gray-900 dark:text-white">Vibrations du moteur</h3>
                 <span className="text-xs text-gray-500">mm/s</span>
               </div>
               <ResponsiveContainer width="100%" height={220}>
@@ -388,14 +519,15 @@ export default function ElevatorDetailPage() {
                 </AreaChart>
               </ResponsiveContainer>
               <p className="text-xs text-gray-500 mt-2">
-                <span className="text-yellow-500">— —</span> Warning (4.0 mm/s) &nbsp;
-                <span className="text-red-500">— —</span> Critical (7.0 mm/s)
+                <span className="text-yellow-500">— —</span> Avertissement (4,0
+                mm/s) &nbsp;
+                <span className="text-red-500">— —</span> Critique (7,0 mm/s)
               </p>
             </Card>
 
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-gray-900 dark:text-white">Motor Temperature</h3>
+                <h3 className="font-semibold text-gray-900 dark:text-white">Température du moteur</h3>
                 <span className="text-xs text-gray-500">°C</span>
               </div>
               <ResponsiveContainer width="100%" height={220}>
@@ -418,7 +550,7 @@ export default function ElevatorDetailPage() {
             </Card>
 
             <Card className="p-6">
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Cabin Load</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Charge de la cabine</h3>
               <ResponsiveContainer width="100%" height={220}>
                 <AreaChart data={telemetry}>
                   <defs>
@@ -429,21 +561,42 @@ export default function ElevatorDetailPage() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="#9ca3af" />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" tickFormatter={(v: number) => `${(v / 1000).toFixed(1)}t`} />
-                  <Tooltip formatter={(v: number) => [`${v} kg`, "Load"]} />
+                  <YAxis
+                    tick={{ fontSize: 10 }}
+                    stroke="#9ca3af"
+                    tickFormatter={(v: number) =>
+                      `${(v / 1000).toLocaleString("fr-FR", {
+                        maximumFractionDigits: 1,
+                      })} t`
+                    }
+                  />
+                  <Tooltip
+                    formatter={(v: number) => [
+                      `${v.toLocaleString("fr-FR")} kg`,
+                      "Charge",
+                    ]}
+                  />
                   <Area type="monotone" dataKey="load" stroke="#8b5cf6" fill="url(#loadGrad)" strokeWidth={2} dot={false} connectNulls />
                 </AreaChart>
               </ResponsiveContainer>
             </Card>
 
             <Card className="p-6">
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Leveling Offset</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Décalage de nivellement</h3>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={telemetry}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="#9ca3af" />
                   <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" domain={[-15, 15]} />
-                  <Tooltip formatter={(v: number) => [`${v.toFixed(1)} mm`, "Offset"]} />
+                  <Tooltip
+                    formatter={(v: number) => [
+                      `${v.toLocaleString("fr-FR", {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })} mm`,
+                      "Décalage",
+                    ]}
+                  />
                   <Line type="monotone" dataKey="levelingOffset" stroke="#06b6d4" strokeWidth={2} dot={false} connectNulls />
                   <Line type="monotone" dataKey={() => 8} stroke="#eab308" strokeDasharray="5 5" dot={false} strokeWidth={1} />
                   <Line type="monotone" dataKey={() => -8} stroke="#eab308" strokeDasharray="5 5" dot={false} strokeWidth={1} />
@@ -459,8 +612,8 @@ export default function ElevatorDetailPage() {
         <div className="space-y-6">
           {el.predictiveScores.length === 0 && components.length === 0 ? (
             <EmptyState
-              title="No predictions yet"
-              hint="Click “Run Prediction” to analyze this elevator with the AI degradation engine."
+              title="Aucune prédiction pour le moment"
+              hint="Cliquez sur « Lancer l'analyse prédictive » pour analyser cet ascenseur avec le moteur de dégradation IA."
             />
           ) : (
             <>
@@ -468,7 +621,9 @@ export default function ElevatorDetailPage() {
                 {(el.predictiveScores.length > 0
                   ? el.predictiveScores.map((s) => ({
                       key: s.id,
-                      name: formatEnum(s.componentType),
+                      name:
+                        COMPONENT_TYPE_LABELS[s.componentType] ??
+                        formatEnum(s.componentType),
                       rul: s.remainingUsefulLifePercent,
                       risk: s.riskLevel,
                     }))
@@ -488,9 +643,15 @@ export default function ElevatorDetailPage() {
                       />
                     </div>
                     <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                      {comp.rul.toFixed(1)}%
+                      {comp.rul.toLocaleString("fr-FR", {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })}
+                      %
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">Remaining Life</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Durée de vie restante
+                    </p>
                     <div className="mt-2 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full"
@@ -504,7 +665,7 @@ export default function ElevatorDetailPage() {
                       className="text-[10px] font-bold mt-1.5"
                       style={{ color: RISK_COLORS[comp.risk] ?? "#6b7280" }}
                     >
-                      Risk: {comp.risk}
+                      Risque : {RISK_LABELS[comp.risk] ?? comp.risk}
                     </p>
                   </Card>
                 ))}
@@ -513,7 +674,7 @@ export default function ElevatorDetailPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card className="p-6">
                   <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                    Component Health Radar
+                    Radar de santé des composants
                   </h3>
                   <ResponsiveContainer width="100%" height={300}>
                     <RadarChart
@@ -526,14 +687,20 @@ export default function ElevatorDetailPage() {
                       <PolarGrid />
                       <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10 }} />
                       <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 9 }} />
-                      <Radar name="RUL %" dataKey="health" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.3} />
+                      <Radar
+                        name="Durée de vie restante (%)"
+                        dataKey="health"
+                        stroke="#3b82f6"
+                        fill="#3b82f6"
+                        fillOpacity={0.3}
+                      />
                     </RadarChart>
                   </ResponsiveContainer>
                 </Card>
 
                 <Card className="p-6">
                   <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                    Usage vs Expected Life
+                    Usage et durée de vie attendue
                   </h3>
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart
@@ -545,11 +712,36 @@ export default function ElevatorDetailPage() {
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                       <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#9ca3af" />
-                      <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
-                      <Tooltip formatter={(v: number) => [`${(v / 1000).toFixed(1)}k hrs`]} />
+                      <YAxis
+                        tick={{ fontSize: 10 }}
+                        stroke="#9ca3af"
+                        tickFormatter={(v: number) =>
+                          `${(v / 1000).toLocaleString("fr-FR", {
+                            maximumFractionDigits: 0,
+                          })} k`
+                        }
+                      />
+                      <Tooltip
+                        formatter={(v: number) => [
+                          `${(v / 1000).toLocaleString("fr-FR", {
+                            minimumFractionDigits: 1,
+                            maximumFractionDigits: 1,
+                          })} k h`,
+                        ]}
+                      />
                       <Legend />
-                      <Bar dataKey="hours" fill="#3b82f6" name="Current Hours" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="maxHours" fill="#e5e7eb" name="Expected Life" radius={[4, 4, 0, 0]} />
+                      <Bar
+                        dataKey="hours"
+                        fill="#3b82f6"
+                        name="Heures actuelles"
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar
+                        dataKey="maxHours"
+                        fill="#e5e7eb"
+                        name="Durée de vie attendue"
+                        radius={[4, 4, 0, 0]}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </Card>
@@ -558,13 +750,16 @@ export default function ElevatorDetailPage() {
               {el.predictiveScores.length > 0 && (
                 <Card className="p-6">
                   <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                    AI Recommendations
+                    Recommandations de l&apos;IA
                   </h3>
                   <div className="space-y-3">
                     {el.predictiveScores.map((s) => (
                       <div key={s.id} className="border-l-4 pl-4" style={{ borderColor: RISK_COLORS[s.riskLevel] ?? "#6b7280" }}>
                         <p className="text-sm font-medium text-gray-900 dark:text-white">
-                          {formatEnum(s.componentType)} — {s.riskLevel} (confidence {(s.confidence * 100).toFixed(0)}%)
+                          {COMPONENT_TYPE_LABELS[s.componentType] ??
+                            formatEnum(s.componentType)}{" "}
+                          — {RISK_LABELS[s.riskLevel] ?? s.riskLevel} (confiance{" "}
+                          {(s.confidence * 100).toFixed(0)} %)
                         </p>
                         <ul className="mt-1 space-y-0.5">
                           {s.recommendations.map((r, i) => (
@@ -586,19 +781,29 @@ export default function ElevatorDetailPage() {
         <Card>
           <div className="p-6 border-b border-gray-200 dark:border-gray-800">
             <h3 className="font-semibold text-gray-900 dark:text-white">
-              Component Breakdown
+              Détail des composants
             </h3>
           </div>
           {components.length === 0 ? (
             <div className="p-6">
-              <EmptyState title="No components tracked" hint="Components are created at registration and by the seed script." />
+              <EmptyState
+                title="Aucun composant suivi"
+                hint="Les composants sont créés à l'enregistrement et par le script de peuplement."
+              />
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-gray-800">
-                    {["Component", "Type", "Current Hours", "Expected Life", "RUL %", "Risk"].map((h) => (
+                    {[
+                      "Composant",
+                      "Type",
+                      "Heures actuelles",
+                      "Durée de vie attendue",
+                      "Durée de vie restante (%)",
+                      "Risque",
+                    ].map((h) => (
                       <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">{h}</th>
                     ))}
                   </tr>
@@ -607,9 +812,16 @@ export default function ElevatorDetailPage() {
                   {components.map((comp) => (
                     <tr key={comp.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
                       <td className="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">{comp.name}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500 font-mono">{comp.componentType}</td>
-                      <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">{comp.currentLifeHours.toLocaleString()} hrs</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{comp.expectedLifeHours?.toLocaleString() ?? "—"} hrs</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {COMPONENT_TYPE_LABELS[comp.componentType] ??
+                          formatEnum(comp.componentType)}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
+                        {comp.currentLifeHours.toLocaleString("fr-FR")} h
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {comp.expectedLifeHours?.toLocaleString("fr-FR") ?? "—"} h
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
                           <div className="w-20 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
@@ -632,7 +844,7 @@ export default function ElevatorDetailPage() {
                             color: RISK_COLORS[comp.risk],
                           }}
                         >
-                          {comp.risk}
+                          {RISK_LABELS[comp.risk] ?? comp.risk}
                         </span>
                       </td>
                     </tr>
@@ -648,34 +860,52 @@ export default function ElevatorDetailPage() {
       {activeTab === "history" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="p-6">
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Recent Work Orders</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
+              Bons de travail récents
+            </h3>
             {el.workOrders.length === 0 ? (
-              <EmptyState title="No work orders" hint="Create one from the header button." />
+              <EmptyState
+                title="Aucun bon de travail"
+                hint="Créez-en un depuis le bouton en haut de page."
+              />
             ) : (
               <div className="space-y-2">
                 {el.workOrders.map((wo) => (
                   <div key={wo.id} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                     <div>
                       <p className="text-sm font-medium text-gray-900 dark:text-white">{wo.title}</p>
-                      <p className="text-xs text-gray-500 font-mono">{wo.orderNumber} • {wo.assignedTo?.name ?? "Unassigned"}</p>
+                      <p className="text-xs text-gray-500 font-mono">
+                        {wo.orderNumber} •{" "}
+                        {wo.assignedTo?.name ?? "Non affecté"}
+                      </p>
                     </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">{wo.status}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                      {WORK_ORDER_STATUS_LABELS[wo.status] ??
+                        formatEnum(wo.status)}
+                    </span>
                   </div>
                 ))}
               </div>
             )}
           </Card>
           <Card className="p-6">
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Recent Alerts</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
+              Alertes récentes
+            </h3>
             {el.alerts.length === 0 ? (
-              <EmptyState title="No alerts" hint="Threshold breaches from telemetry will appear here." />
+              <EmptyState
+                title="Aucune alerte"
+                hint="Les dépassements de seuil issus de la télémétrie apparaîtront ici."
+              />
             ) : (
               <div className="space-y-2">
                 {el.alerts.map((a) => (
                   <div key={a.id} className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-medium text-gray-900 dark:text-white">{a.title}</p>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-orange-100 text-orange-700">{a.severity}</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-orange-100 text-orange-700">
+                        {ALERT_SEVERITY_LABELS[a.severity] ?? a.severity}
+                      </span>
                     </div>
                     <p className="text-xs text-gray-500 mt-1">{a.message}</p>
                   </div>
@@ -688,17 +918,32 @@ export default function ElevatorDetailPage() {
 
       {/* Specifications */}
       <Card className="p-6">
-        <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Specifications</h3>
+        <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
+          Caractéristiques techniques
+        </h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {[
-            { label: "Brand", value: formatEnum(el.brand) },
-            { label: "Model", value: el.model },
-            { label: "Serial No.", value: el.serialNumber ?? "—" },
-            { label: "Installation", value: el.installationDate ? new Date(el.installationDate).toLocaleDateString() : "—" },
-            { label: "Motor Type", value: formatEnum(el.motorType) },
-            { label: "Max Payload", value: `${el.maxPayloadKg} kg` },
-            { label: "Controller", value: formatEnum(el.controllerType) },
-            { label: "Floors Served", value: String(el.floorsServed) },
+            { label: "Marque", value: BRAND_LABELS[el.brand] ?? el.brand },
+            { label: "Modèle", value: el.model },
+            { label: "N° de série", value: el.serialNumber ?? "—" },
+            {
+              label: "Mise en service",
+              value: el.installationDate
+                ? new Date(el.installationDate).toLocaleDateString("fr-FR")
+                : "—",
+            },
+            {
+              label: "Type de moteur",
+              value: MOTOR_TYPE_LABELS[el.motorType] ?? formatEnum(el.motorType),
+            },
+            { label: "Charge maximale", value: `${el.maxPayloadKg} kg` },
+            {
+              label: "Commande",
+              value:
+                CONTROLLER_TYPE_LABELS[el.controllerType] ??
+                formatEnum(el.controllerType),
+            },
+            { label: "Niveaux desservis", value: String(el.floorsServed) },
           ].map((spec) => (
             <div key={spec.label}>
               <p className="text-xs text-gray-500 mb-0.5">{spec.label}</p>

@@ -2,11 +2,11 @@
  * Local "open access" mode — browse the app with no sign-in.
  *
  * WHAT THIS DOES
- * Every request is treated as a signed-in ADMIN, so `/dashboard`, `/elevators`,
- * `/work-orders` and `/technician` open straight away and the whole `/api/*`
- * surface answers without a session cookie. Credentials, the login form and the
- * NextAuth flow are all still present and untouched — this short-circuits the
- * *session lookup*, it does not delete the auth system.
+ * Every request is treated as a signed-in ADMIN, so `/tableau-de-bord`,
+ * `/ascenseurs`, `/bons-de-travail` and `/technicien` open straight away and the
+ * whole `/api/*` surface answers without a session cookie. Credentials, the login
+ * form and the NextAuth flow are all still present and untouched — this
+ * short-circuits the *session lookup*, it does not delete the auth system.
  *
  * IT CANNOT REACH PRODUCTION
  * Two independent conditions must hold, and `NODE_ENV === "production"` forces
@@ -52,7 +52,9 @@ export const OPEN_ACCESS_USER: {
   role: UserRole;
 } = {
   id: "open-access-local",
-  name: "Local Access",
+  // Shown in the app shell as the signed-in user, so it is French like the rest
+  // of the interface.
+  name: "Accès local",
   email: "local@elevatorpulse.dev",
   role: "ADMIN",
 };
@@ -80,8 +82,9 @@ export function openAccessSession(): Session {
 
 if (isOpenAccessEnabled()) {
   console.warn(
-    "[auth] OPEN ACCESS IS ON — every request is treated as ADMIN and no " +
-      "sign-in is required. Development only; set OPEN_ACCESS=\"false\" in " +
-      ".env to restore the login screen."
+    "[auth] ACCÈS LIBRE ACTIVÉ — toute requête est traitée comme ADMIN et " +
+      "aucune connexion n'est requise. Développement uniquement ; mettez " +
+      'OPEN_ACCESS="false" dans .env pour rétablir l' +
+      "écran de connexion."
   );
 }

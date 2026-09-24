@@ -10,9 +10,9 @@ import {
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ElevatorPulse — Predictive Maintenance Platform",
+  title: "ElevatorPulse — Plateforme de maintenance prédictive",
   description:
-    "Production-ready predictive and preventive maintenance platform for elevator service companies. Real-time IoT telemetry, AI-powered failure prediction, and field technician dispatch.",
+    "Plateforme de maintenance prédictive et préventive prête pour la production, destinée aux entreprises de maintenance d'ascenseurs. Télémétrie IoT en temps réel, prédiction des pannes assistée par IA et affectation des techniciens de terrain.",
 };
 
 export default function RootLayout({
@@ -27,7 +27,7 @@ export default function RootLayout({
   const initialSession = isOpenAccessEnabled() ? openAccessSession() : undefined;
 
   return (
-    <html lang="en">
+    <html lang="fr">
       <body className={inter.className}>
         <SessionProvider initialSession={initialSession}>
           {children}

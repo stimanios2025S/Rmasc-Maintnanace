@@ -44,7 +44,7 @@ export interface NotifyInput {
   title: string;
   message: string;
   type: NotificationType;
-  /** In-app path the notification should open, e.g. `/admin/incidents`. */
+  /** In-app path the notification should open, e.g. `/administration/incidents`. */
   linkUrl?: string;
 }
 

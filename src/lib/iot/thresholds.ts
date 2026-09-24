@@ -46,12 +46,12 @@ export interface ThresholdDefinition {
  * data at best — see the note on `payloadThresholds`.
  */
 export const DEFAULT_THRESHOLDS: readonly ThresholdDefinition[] = [
-  { id: null, metricName: "motor_vibration_mm_s", title: "High Vibration", unit: "mm/s", description: "Motor vibration level", warningMin: null, warningMax: 4.0, criticalMin: null, criticalMax: 7.0 },
-  { id: null, metricName: "motor_temperature_c", title: "Motor Temperature", unit: "°C", description: "Motor winding temperature", warningMin: null, warningMax: 85, criticalMin: null, criticalMax: 105 },
-  { id: null, metricName: "door_speed_ms", title: "Door Speed", unit: "m/s", description: "Door open/close speed", warningMin: 0.3, warningMax: 1.5, criticalMin: 0.1, criticalMax: 2.0 },
-  { id: null, metricName: "leveling_offset_mm", title: "Leveling Offset", unit: "mm", description: "Floor leveling offset", warningMin: -8, warningMax: 8, criticalMin: -15, criticalMax: 15 },
-  { id: null, metricName: "supply_voltage_v", title: "Supply Voltage", unit: "V", description: "Supply voltage", warningMin: 360, warningMax: 440, criticalMin: 340, criticalMax: 460 },
-  { id: null, metricName: "current_draw_a", title: "Motor Current", unit: "A", description: "Motor current draw", warningMin: null, warningMax: 60, criticalMin: null, criticalMax: 80 },
+  { id: null, metricName: "motor_vibration_mm_s", title: "Vibration élevée", unit: "mm/s", description: "Niveau de vibration du moteur", warningMin: null, warningMax: 4.0, criticalMin: null, criticalMax: 7.0 },
+  { id: null, metricName: "motor_temperature_c", title: "Température moteur", unit: "°C", description: "Température des enroulements du moteur", warningMin: null, warningMax: 85, criticalMin: null, criticalMax: 105 },
+  { id: null, metricName: "door_speed_ms", title: "Vitesse de porte", unit: "m/s", description: "Vitesse d'ouverture et de fermeture des portes", warningMin: 0.3, warningMax: 1.5, criticalMin: 0.1, criticalMax: 2.0 },
+  { id: null, metricName: "leveling_offset_mm", title: "Écart de nivellement", unit: "mm", description: "Écart de nivellement à l'étage", warningMin: -8, warningMax: 8, criticalMin: -15, criticalMax: 15 },
+  { id: null, metricName: "supply_voltage_v", title: "Tension d'alimentation", unit: "V", description: "Tension d'alimentation", warningMin: 360, warningMax: 440, criticalMin: 340, criticalMax: 460 },
+  { id: null, metricName: "current_draw_a", title: "Courant moteur", unit: "A", description: "Courant absorbé par le moteur", warningMin: null, warningMax: 60, criticalMin: null, criticalMax: 80 },
 ];
 
 const CACHE_TTL_MS = 30_000;
@@ -143,9 +143,13 @@ export function evaluateThreshold(
   value: number
 ): ThresholdBreach | null {
   // Alert messages are shown to operators, so use the human-readable title
-  // ("High Vibration") rather than the raw metric key
+  // ("Vibration élevée") rather than the raw metric key
   // ("motor_vibration_mm_s"). The metric key is still recorded on the Alert
   // row's own `metricName` column.
+  //
+  // These strings are persisted on the Alert row when the breach is recorded,
+  // so translating them changes what future alerts store. Alerts written before
+  // the change keep their original wording.
   const { title, unit } = definition;
   const suffix = unit ? ` ${unit}` : "";
 
@@ -153,28 +157,28 @@ export function evaluateThreshold(
     return {
       severity: "CRITICAL",
       limit: definition.criticalMax,
-      message: `${title} at ${value}${suffix} exceeds critical maximum of ${definition.criticalMax}${suffix}`,
+      message: `${title} : ${value}${suffix} dépasse le maximum critique de ${definition.criticalMax}${suffix}`,
     };
   }
   if (definition.criticalMin !== null && value < definition.criticalMin) {
     return {
       severity: "CRITICAL",
       limit: definition.criticalMin,
-      message: `${title} at ${value}${suffix} is below critical minimum of ${definition.criticalMin}${suffix}`,
+      message: `${title} : ${value}${suffix} est en dessous du minimum critique de ${definition.criticalMin}${suffix}`,
     };
   }
   if (definition.warningMax !== null && value > definition.warningMax) {
     return {
       severity: "WARNING",
       limit: definition.warningMax,
-      message: `${title} at ${value}${suffix} exceeds warning maximum of ${definition.warningMax}${suffix}`,
+      message: `${title} : ${value}${suffix} dépasse le maximum d'avertissement de ${definition.warningMax}${suffix}`,
     };
   }
   if (definition.warningMin !== null && value < definition.warningMin) {
     return {
       severity: "WARNING",
       limit: definition.warningMin,
-      message: `${title} at ${value}${suffix} is below warning minimum of ${definition.warningMin}${suffix}`,
+      message: `${title} : ${value}${suffix} est en dessous du minimum d'avertissement de ${definition.warningMin}${suffix}`,
     };
   }
   return null;
@@ -200,9 +204,9 @@ export function payloadThresholds(maxPayloadKg: number): ThresholdDefinition {
   return {
     id: null,
     metricName: "cabin_load_kg",
-    title: "Cabin Overload",
+    title: "Surcharge de la cabine",
     unit: "kg",
-    description: `Cabin payload relative to ${maxPayloadKg} kg rated capacity`,
+    description: `Charge de la cabine par rapport à la capacité nominale de ${maxPayloadKg} kg`,
     warningMin: null,
     warningMax: round(maxPayloadKg),
     criticalMin: null,

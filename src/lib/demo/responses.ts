@@ -187,12 +187,14 @@ export function demoDashboard() {
       emergencyWorkOrders,
       avgHealth,
     },
+    // Same labels and colours as the live branch in /api/dashboard, so the
+    // fixture cannot show a vocabulary the real screen does not use.
     statusBreakdown: [
-      { name: "Operational", value: countByStatus("OPERATIONAL"), color: "#22c55e" },
-      { name: "Service Required", value: countByStatus("SERVICE_REQUIRED"), color: "#eab308" },
-      { name: "Anomaly", value: countByStatus("ANOMALY_DETECTED"), color: "#f97316" },
-      { name: "Critical", value: countByStatus("CRITICAL_SHUTDOWN"), color: "#ef4444" },
-      { name: "Offline", value: countByStatus("OFFLINE"), color: "#6b7280" },
+      { name: "En service", value: countByStatus("OPERATIONAL"), color: "#22c55e" },
+      { name: "Entretien requis", value: countByStatus("SERVICE_REQUIRED"), color: "#eab308" },
+      { name: "Anomalie", value: countByStatus("ANOMALY_DETECTED"), color: "#f97316" },
+      { name: "Arrêt critique", value: countByStatus("CRITICAL_SHUTDOWN"), color: "#ef4444" },
+      { name: "Hors ligne", value: countByStatus("OFFLINE"), color: "#6b7280" },
     ],
     buildingHealth,
     recentAlerts,
@@ -761,14 +763,18 @@ export function demoTechnicianRoster() {
  * bug the product does not have.
  */
 
+/**
+ * The same seven lines as the field portal's `DEFAULT_CHECKLIST`, in French, so
+ * a fixture report and a real one are not two different documents.
+ */
 const DEMO_CHECKLIST = [
-  "Visual inspection of motor housing",
-  "Temperature sensor calibration check",
-  "Motor winding resistance test",
-  "Cooling system inspection",
-  "Brake assembly thermal check",
-  "Controller error log extraction",
-  "Test run after corrective action",
+  "Inspection visuelle du carter moteur",
+  "Contrôle de l'étalonnage du capteur de température",
+  "Mesure de la résistance des enroulements moteur",
+  "Inspection du système de refroidissement",
+  "Contrôle thermique du système de freinage",
+  "Extraction du journal d'erreurs de la commande",
+  "Essai de fonctionnement après action corrective",
 ] as const;
 
 type DemoCheckResult = "PASS" | "FAIL" | "NEEDS_ATTENTION" | "NOT_APPLICABLE";
@@ -820,7 +826,7 @@ function buildInspectionReports() {
             : "PASS") as DemoCheckResult,
         notes:
           isFindingLine && finding !== "PASS"
-            ? "Recorded during the visit — see the attached photo."
+            ? "Relevé lors de la visite — voir la photo jointe."
             : null,
         measuredValue: i === 2 ? 11.2 + (index % 5) * 0.35 : null,
         unit: i === 2 ? "Ω" : null,
@@ -869,10 +875,10 @@ function buildInspectionReports() {
         title: `Inspection – ${order.title}`,
         summary:
           finding === "PASS"
-            ? "All checks within tolerance. Unit returned to service."
+            ? "Tous les contrôles sont dans les tolérances. Appareil remis en service."
             : finding === "FAIL"
-              ? "A failed check was recorded and corrective work has been raised."
-              : "One check needs attention; monitoring recommended at the next visit.",
+              ? "Un contrôle non conforme a été relevé et une intervention corrective a été ouverte."
+              : "Un contrôle est à surveiller ; surveillance recommandée lors de la prochaine visite.",
         overallResult: worstResult(checkItems.map((c) => c.result)),
         submittedAt,
         workOrderId: order.id,

@@ -202,7 +202,7 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
     if (!elevator) {
-      throw notFound(`Elevator not found: ${parsed.elevatorId}`);
+      throw notFound(`Ascenseur introuvable : ${parsed.elevatorId}`);
     }
 
     if (parsed.componentId) {
@@ -212,7 +212,7 @@ export async function POST(request: NextRequest) {
       });
       if (!component) {
         throw notFound(
-          `Component not found on this elevator: ${parsed.componentId}`
+          `Composant introuvable sur cet ascenseur : ${parsed.componentId}`
         );
       }
     }
@@ -224,7 +224,7 @@ export async function POST(request: NextRequest) {
       });
       if (!tech) {
         throw notFound(
-          `Assignee not found or not assignable: ${parsed.assignedToId}`
+          `Personne à affecter introuvable ou non affectable : ${parsed.assignedToId}`
         );
       }
     }
@@ -266,7 +266,7 @@ export async function PATCH(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
-    if (!id) throw badRequest("Work order ID is required");
+    if (!id) throw badRequest("L'identifiant du bon de travail est requis");
 
     const parsed = UpdateWorkOrderSchema.parse(await readJson(request));
 
@@ -274,13 +274,13 @@ export async function PATCH(request: NextRequest) {
       where: { id },
       select: { id: true, status: true, assignedToId: true, startedAt: true },
     });
-    if (!current) throw notFound(`Work order not found: ${id}`);
+    if (!current) throw notFound(`Bon de travail introuvable : ${id}`);
 
     // A field technician may only touch work assigned to them, and may not
     // reassign it. Without this, any authenticated user — including a
     // building owner — could reassign or close any order in the system.
     if (!isSelfOrManager(session, current.assignedToId)) {
-      throw forbidden("This work order is not assigned to you");
+      throw forbidden("Ce bon de travail ne vous est pas affecté");
     }
 
     const updateData: Record<string, unknown> = {};
@@ -289,7 +289,7 @@ export async function PATCH(request: NextRequest) {
       const allowed = ALLOWED_TRANSITIONS[current.status] ?? [];
       if (!allowed.includes(parsed.status)) {
         throw conflict(
-          `Cannot move a work order from ${current.status} to ${parsed.status}`
+          `Impossible de faire passer le bon de travail de ${current.status} à ${parsed.status}`
         );
       }
       updateData.status = parsed.status;
@@ -309,7 +309,7 @@ export async function PATCH(request: NextRequest) {
     if (parsed.assignedToId !== undefined) {
       // Only managers and admins may reassign work.
       if (session.user.role === "FIELD_TECHNICIAN") {
-        throw badRequest("Only managers can reassign work orders");
+        throw badRequest("Seuls les responsables peuvent réaffecter des bons de travail");
       }
 
       if (parsed.assignedToId) {
@@ -319,7 +319,7 @@ export async function PATCH(request: NextRequest) {
         });
         if (!tech) {
           throw notFound(
-            `Assignee not found or not assignable: ${parsed.assignedToId}`
+            `Personne à affecter introuvable ou non affectable : ${parsed.assignedToId}`
           );
         }
       }
@@ -356,8 +356,8 @@ export async function PATCH(request: NextRequest) {
       parsed.assignedToId !== undefined ? parsed.assignedToId : current.assignedToId;
     if (nextStatus === "ASSIGNED" && !nextAssignee) {
       throw badRequest(
-        "A work order cannot be marked ASSIGNED without an assignee. " +
-          "Set `assignedToId`, or use POST /api/work-orders/dispatch."
+        "Un bon de travail ne peut pas être marqué ASSIGNED sans personne affectée. " +
+          "Renseignez `assignedToId`, ou utilisez POST /api/work-orders/dispatch."
       );
     }
 

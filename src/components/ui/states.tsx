@@ -4,7 +4,7 @@ import { AlertTriangle, Inbox } from "lucide-react";
 
 export function LoadingSkeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="space-y-3" aria-label="Loading">
+    <div className="space-y-3" aria-label="Chargement">
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
@@ -33,7 +33,7 @@ export function ErrorState({
           onClick={onRetry}
           className="mt-3 px-4 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
         >
-          Retry
+          Réessayer
         </button>
       )}
     </div>

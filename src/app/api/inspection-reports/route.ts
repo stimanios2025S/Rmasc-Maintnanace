@@ -79,7 +79,7 @@ const SignatureSchema = z
       .max(200_000)
       .regex(
         /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/,
-        "Signature images must be a base64 PNG or JPEG data URL"
+        "L'image de signature doit être une URL de données base64 PNG ou JPEG"
       )
       .optional(),
   })
@@ -197,7 +197,7 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      if (!report) throw notFound(`Inspection report not found: ${reportId}`);
+      if (!report) throw notFound(`Rapport d'inspection introuvable : ${reportId}`);
       return jsonOk(report);
     }
 
@@ -257,7 +257,7 @@ export async function GET(request: NextRequest) {
         // a response. A bare `throw` here would escape the catch unhandled.
         if (!report) {
           return handleRouteError(
-            notFound(`Inspection report not found: ${reportId}`)
+            notFound(`Rapport d'inspection introuvable : ${reportId}`)
           );
         }
         return jsonOk(report);
@@ -307,25 +307,25 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (!workOrder) throw notFound(`Work order not found: ${body.workOrderId}`);
+    if (!workOrder) throw notFound(`Bon de travail introuvable : ${body.workOrderId}`);
 
     // A FIELD_TECHNICIAN may only file a report against their own assignment.
     const isManager =
       session.user.role === "ADMIN" || session.user.role === "MAINTENANCE_MANAGER";
     if (!isManager && workOrder.assignedToId !== session.user.id) {
-      throw forbidden("You can only file a report for a work order assigned to you.");
+      throw forbidden("Vous ne pouvez déposer un rapport que pour un bon de travail qui vous est affecté.");
     }
 
     const existing = workOrder.inspectionReports[0];
     if (existing) {
       throw conflict(
-        `A report (${existing.reportNumber}) already exists for this work order.`
+        `Un rapport (${existing.reportNumber}) existe déjà pour ce bon de travail.`
       );
     }
 
     // A report on a cancelled order would be meaningless.
     if (workOrder.status === "CANCELLED") {
-      throw badRequest("Cannot file an inspection report for a cancelled work order.");
+      throw badRequest("Impossible de déposer un rapport d'inspection pour un bon de travail annulé.");
     }
 
     // A signature names who signed. A drawn signature with no name attached is
@@ -389,7 +389,7 @@ export async function POST(request: NextRequest) {
           `(${workOrder.elevator.building.name}) est disponible. ` +
           `Résultat : ${report.overallResult}.`,
         type: "inspection",
-        linkUrl: `/inspection-reports/${report.id}`,
+        linkUrl: `/rapports-inspection/${report.id}`,
       });
     }
 
@@ -402,12 +402,12 @@ export async function POST(request: NextRequest) {
     // order raised by a departed colleague would notify nobody at all.
     if (report.overallResult === "FAIL") {
       const notice = {
-        title: `Inspection failed – ${workOrder.orderNumber}`,
+        title: `Inspection en échec – ${workOrder.orderNumber}`,
         message:
-          `${workOrder.elevator.elevatorCode} failed inspection (${report.reportNumber}). ` +
-          "Review the report and raise corrective work.",
+          `${workOrder.elevator.elevatorCode} a échoué à l'inspection (${report.reportNumber}). ` +
+          "Consultez le rapport et ouvrez une intervention corrective.",
         type: "inspection" as const,
-        linkUrl: `/inspection-reports/${report.id}`,
+        linkUrl: `/rapports-inspection/${report.id}`,
       };
 
       if (workOrder.createdById) {

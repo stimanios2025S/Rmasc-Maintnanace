@@ -59,8 +59,9 @@ export function warnDemoFallbackOnce(endpoint: string): void {
   if (warned) return;
   warned = true;
   console.warn(
-    `[demo] database unreachable — ${endpoint} and other read endpoints are ` +
-      "serving fixture data (DEMO_DATA=true). Set DEMO_DATA=\"false\" in .env " +
-      "to get 503s instead, or start PostgreSQL for real data."
+    `[demo] base de données injoignable — ${endpoint} et les autres points ` +
+      'de lecture servent des données fictives (DEMO_DATA="true"). Mettez ' +
+      'DEMO_DATA="false" dans .env pour obtenir des 503 à la place, ou ' +
+      "démarrez PostgreSQL pour de vraies données."
   );
 }

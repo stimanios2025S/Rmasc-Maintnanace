@@ -27,9 +27,9 @@ export class ApiError extends Error {
 
 export const badRequest = (message: string, details?: unknown) =>
   new ApiError(400, message, details);
-export const unauthorized = (message = "Authentication required") =>
+export const unauthorized = (message = "Authentification requise") =>
   new ApiError(401, message);
-export const forbidden = (message = "Insufficient permissions") =>
+export const forbidden = (message = "Autorisations insuffisantes") =>
   new ApiError(403, message);
 export const notFound = (message: string) => new ApiError(404, message);
 export const conflict = (message: string) => new ApiError(409, message);
@@ -78,7 +78,7 @@ export function handleRouteError(error: unknown): NextResponse {
   }
 
   if (error instanceof ZodError) {
-    return jsonError(400, "Validation failed", {
+    return jsonError(400, "Données invalides", {
       issues: error.issues.map((issue) => ({
         path: issue.path.join("."),
         message: issue.message,
@@ -103,11 +103,11 @@ export function handleRouteError(error: unknown): NextResponse {
       "[api] database unreachable:",
       (error as { message?: string }).message ?? error
     );
-    return jsonError(503, "Database unavailable", {
+    return jsonError(503, "Base de données indisponible", {
       code: "DATABASE_UNAVAILABLE",
       hint:
-        "Start PostgreSQL, then run `npm run db:push` and `npm run db:seed`. " +
-        "For a UI-only preview with no database, set DEMO_DATA=\"true\" in .env.",
+        "Démarrez PostgreSQL, puis lancez `npm run db:push` et `npm run db:seed`. " +
+        "Pour un aperçu de l'interface sans base de données, définissez DEMO_DATA=\"true\" dans .env.",
     });
   }
 
@@ -115,19 +115,19 @@ export function handleRouteError(error: unknown): NextResponse {
   if (typeof prismaCode === "string" && prismaCode.startsWith("P")) {
     switch (prismaCode) {
       case "P2025":
-        return jsonError(404, "Resource not found");
+        return jsonError(404, "Ressource introuvable");
       case "P2002":
-        return jsonError(409, "Resource already exists");
+        return jsonError(409, "La ressource existe déjà");
       case "P2003":
-        return jsonError(409, "Referenced resource does not exist");
+        return jsonError(409, "La ressource référencée n'existe pas");
       default:
         console.error("[api] prisma error", prismaCode, error);
-        return jsonError(500, "Database error");
+        return jsonError(500, "Erreur de base de données");
     }
   }
 
   console.error("[api] unhandled error:", error);
-  return jsonError(500, "Internal server error");
+  return jsonError(500, "Erreur interne du serveur");
 }
 
 // ─── Query parameter parsing ────────────────────────────────
@@ -176,7 +176,7 @@ export function parseEnumParam<T extends string>(
   const raw = searchParams.get(key);
   if (!raw) return undefined;
   if (!allowed.includes(raw as T)) {
-    throw badRequest(`Invalid ${key}: ${raw}`, { allowed });
+    throw badRequest(`Valeur invalide pour ${key} : ${raw}`, { allowed });
   }
   return raw as T;
 }
@@ -190,7 +190,7 @@ export function parseBooleanParam(
   if (raw === "true") return true;
   if (raw === "false") return false;
   if (raw === null) return undefined;
-  throw badRequest(`Invalid ${key}: expected "true" or "false"`);
+  throw badRequest(`Valeur invalide pour ${key} : « true » ou « false » attendu`);
 }
 
 /**
@@ -201,6 +201,6 @@ export async function readJson(request: Request): Promise<unknown> {
   try {
     return await request.json();
   } catch {
-    throw badRequest("Request body must be valid JSON");
+    throw badRequest("Le corps de la requête doit être un JSON valide");
   }
 }

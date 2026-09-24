@@ -172,11 +172,11 @@ export async function GET() {
           avgHealth,
         },
         statusBreakdown: [
-          { name: "Operational", value: countByStatus("OPERATIONAL"), color: "#22c55e" },
-          { name: "Service Required", value: countByStatus("SERVICE_REQUIRED"), color: "#eab308" },
-          { name: "Anomaly", value: countByStatus("ANOMALY_DETECTED"), color: "#f97316" },
-          { name: "Critical", value: countByStatus("CRITICAL_SHUTDOWN"), color: "#ef4444" },
-          { name: "Offline", value: countByStatus("OFFLINE"), color: "#6b7280" },
+          { name: "En service", value: countByStatus("OPERATIONAL"), color: "#22c55e" },
+          { name: "Entretien requis", value: countByStatus("SERVICE_REQUIRED"), color: "#eab308" },
+          { name: "Anomalie", value: countByStatus("ANOMALY_DETECTED"), color: "#f97316" },
+          { name: "Arrêt critique", value: countByStatus("CRITICAL_SHUTDOWN"), color: "#ef4444" },
+          { name: "Hors ligne", value: countByStatus("OFFLINE"), color: "#6b7280" },
         ],
         buildingHealth,
         recentAlerts: recentAlerts.map((a) => ({

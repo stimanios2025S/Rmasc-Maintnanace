@@ -161,14 +161,14 @@ export async function POST(request: NextRequest) {
         building: { select: { name: true, address: true } },
       },
     });
-    if (!elevator) throw notFound(`Elevator not found: ${body.elevatorId}`);
+    if (!elevator) throw notFound(`Ascenseur introuvable : ${body.elevatorId}`);
 
     if (body.errorCodeId) {
       const code = await prisma.errorCode.findFirst({
         where: { id: body.errorCodeId, isActive: true },
         select: { id: true },
       });
-      if (!code) throw badRequest(`Unknown error code: ${body.errorCodeId}`);
+      if (!code) throw badRequest(`Code d'erreur inconnu : ${body.errorCodeId}`);
     }
 
     const isEscalation = body.status === "ESCALATED";
@@ -239,7 +239,7 @@ export async function POST(request: NextRequest) {
           : `Incident escaladé – ${elevator.elevatorCode}`,
         message: buildNotificationMessage(elevator, body),
         type: "incident",
-        linkUrl: "/admin/incidents",
+        linkUrl: "/administration/incidents",
       });
     }
 
@@ -277,13 +277,20 @@ function incidentScopeFor(session: Session): Prisma.IncidentReportWhereInput {
 
 // ─── Copy builders ──────────────────────────────────────────
 
+/**
+ * The title the work order raised from a client report is stored under.
+ *
+ * Persisted on the row, so translating it changes what future orders record.
+ * Nothing looks a work order up by this string — the incident links to its
+ * order by id — so the change cannot orphan an existing record.
+ */
 function buildWorkOrderTitle(
   elevatorCode: string,
   body: CreateIncidentInput
 ): string {
   const prefix = body.isDirectTransfer
-    ? "Emergency client report"
-    : "Client report";
+    ? "Signalement client urgent"
+    : "Signalement client";
   return `${prefix} – ${elevatorCode}`;
 }
 
@@ -295,17 +302,17 @@ function buildWorkOrderDescription(
   body: CreateIncidentInput
 ): string {
   const lines = [
-    "Reported by the building through the client portal.",
-    `Elevator: ${elevator.elevatorCode}`,
-    `Site: ${elevator.building.name}, ${elevator.building.address}`,
+    "Signalé par l'immeuble via l'espace client.",
+    `Ascenseur : ${elevator.elevatorCode}`,
+    `Site : ${elevator.building.name}, ${elevator.building.address}`,
   ];
   if (body.isDirectTransfer) {
     lines.push(
-      "Submitted via the emergency button (direct transfer, no triage)."
+      "Déposé via le bouton d'urgence (transfert direct, sans tri préalable)."
     );
   }
   if (body.notes) {
-    lines.push("", "Reporter's description:", body.notes);
+    lines.push("", "Description du signalant :", body.notes);
   }
   return lines.join("\n");
 }
@@ -314,11 +321,11 @@ function buildNotificationMessage(
   elevator: { elevatorCode: string; building: { name: string } },
   body: CreateIncidentInput
 ): string {
-  const where = `${elevator.elevatorCode} at ${elevator.building.name}`;
+  const where = `${elevator.elevatorCode} à ${elevator.building.name}`;
   if (body.isDirectTransfer) {
-    return `Emergency assistance requested for ${where}. The reporter could not describe the fault — attend or call back.`;
+    return `Assistance d'urgence demandée pour ${where}. Le signalant n'a pas pu décrire la panne — intervenez ou rappelez-le.`;
   }
-  return `A reported fault at ${where} could not be resolved by the client and needs a technician.`;
+  return `Une panne signalée pour ${where} n'a pas pu être résolue par le client et nécessite un technicien.`;
 }
 
 // ─── Retry ──────────────────────────────────────────────────

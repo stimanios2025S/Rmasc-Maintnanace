@@ -26,6 +26,7 @@ import {
   Legend,
 } from "recharts";
 import { formatDistanceToNow } from "date-fns";
+import { fr } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/states";
 
@@ -89,7 +90,7 @@ interface TelemetryFeed {
 const LIVE_WINDOW_MS = 5 * 60 * 1000;
 
 const formatPointTime = (timestamp: string): string =>
-  new Date(timestamp).toLocaleTimeString("en-US", {
+  new Date(timestamp).toLocaleTimeString("fr-FR", {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -100,6 +101,18 @@ const SEVERITY_COLORS: Record<string, string> = {
   ANOMALY: "bg-orange-100 text-orange-800 border-orange-200",
   WARNING: "bg-yellow-100 text-yellow-800 border-yellow-200",
   INFO: "bg-blue-100 text-blue-800 border-blue-200",
+};
+
+/**
+ * French labels for the severity enum. The enum *value* stays as stored and as
+ * the API sends it (`CRITICAL`, …) — only what the reader sees changes.
+ */
+const SEVERITY_LABELS: Record<string, string> = {
+  CRITICAL: "Critique",
+  EMERGENCY: "Urgence",
+  ANOMALY: "Anomalie",
+  WARNING: "Avertissement",
+  INFO: "Information",
 };
 
 // ─── Dashboard Page ─────────────────────────────────────────
@@ -119,7 +132,8 @@ export default function DashboardPage() {
     setError("");
     try {
       const res = await fetch("/api/dashboard");
-      if (!res.ok) throw new Error(`Dashboard API returned ${res.status}`);
+      if (!res.ok)
+        throw new Error(`L'API du tableau de bord a répondu ${res.status}`);
       const json = await res.json();
       setStats(json.data.stats);
       setStatusBreakdown(json.data.statusBreakdown);
@@ -128,7 +142,9 @@ export default function DashboardPage() {
       setTelemetryFeed(json.data.telemetryFeed ?? null);
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Failed to load dashboard data"
+        e instanceof Error
+          ? e.message
+          : "Échec du chargement des données du tableau de bord"
       );
     } finally {
       setLoading(false);
@@ -181,35 +197,46 @@ export default function DashboardPage() {
   }
 
   if (error || !stats) {
-    return <ErrorState message={error || "No dashboard data"} onRetry={load} />;
+    return (
+      <ErrorState
+        message={error || "Aucune donnée du tableau de bord"}
+        onRetry={load}
+      />
+    );
   }
 
   const statCards = [
     {
-      label: "Total Elevators",
+      label: "Ascenseurs au total",
       value: String(stats.totalElevators),
-      sub: `${stats.totalBuildings} buildings`,
+      sub: `${stats.totalBuildings} ${
+        stats.totalBuildings > 1 ? "immeubles" : "immeuble"
+      }`,
       icon: Activity,
       color: "text-blue-600 bg-blue-100 dark:bg-blue-900/30",
     },
     {
-      label: "Operational",
+      label: "Opérationnels",
       value: String(stats.operationalCount),
-      sub: `${stats.avgHealth}% avg health`,
+      sub: `${stats.avgHealth} % de santé moyenne`,
       icon: CheckCircle2,
       color: "text-green-600 bg-green-100 dark:bg-green-900/30",
     },
     {
-      label: "Open Work Orders",
+      label: "Bons de travail ouverts",
       value: String(stats.openWorkOrders),
-      sub: `${stats.emergencyWorkOrders} emergency`,
+      sub: `${stats.emergencyWorkOrders} ${
+        stats.emergencyWorkOrders > 1 ? "urgences" : "urgence"
+      }`,
       icon: ClipboardList,
       color: "text-yellow-600 bg-yellow-100 dark:bg-yellow-900/30",
     },
     {
-      label: "Critical Units",
+      label: "Unités critiques",
       value: String(stats.criticalCount),
-      sub: `${stats.anomalyCount} anomalies`,
+      sub: `${stats.anomalyCount} ${
+        stats.anomalyCount > 1 ? "anomalies" : "anomalie"
+      }`,
       icon: XCircle,
       color: "text-red-600 bg-red-100 dark:bg-red-900/30",
     },
@@ -249,12 +276,12 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Telemetry
+                Télémétrie
               </h3>
               <p className="text-sm text-gray-500">
                 {telemetryFeed
-                  ? `Latest readings from ${telemetryFeed.elevatorCode}`
-                  : "No telemetry received yet"}
+                  ? `Derniers relevés de ${telemetryFeed.elevatorCode}`
+                  : "Aucune télémétrie reçue pour le moment"}
               </p>
             </div>
             {lastReadingAt && (
@@ -266,15 +293,17 @@ export default function DashboardPage() {
                 />
                 <span className="text-xs text-gray-500">
                   {isLive
-                    ? "LIVE"
-                    : `LAST SEEN ${formatDistanceToNow(lastReadingAt)} AGO`}
+                    ? "EN DIRECT"
+                    : `DERNIER RELEVÉ ${formatDistanceToNow(lastReadingAt, {
+                        locale: fr,
+                      }).toUpperCase()}`}
                 </span>
               </div>
             )}
           </div>
           {telemetryData.length === 0 ? (
             <div className="h-[300px] flex items-center justify-center text-sm text-gray-500">
-              No sensor readings have been ingested for this fleet yet.
+              Aucun relevé de capteur n'a encore été reçu pour ce parc.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
@@ -306,7 +335,7 @@ export default function DashboardPage() {
                   stroke="#ef4444"
                   strokeWidth={2}
                   dot={false}
-                  name="Temperature (°C)"
+                  name="Température (°C)"
                   connectNulls
                 />
               </LineChart>
@@ -317,7 +346,7 @@ export default function DashboardPage() {
         {/* Status Breakdown Pie */}
         <Card className="p-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Fleet Status
+            État du parc
           </h3>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
@@ -361,11 +390,11 @@ export default function DashboardPage() {
         {/* Building Health */}
         <Card className="p-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Building Health Overview
+            Vue d'ensemble de la santé des immeubles
           </h3>
           {buildingHealth.length === 0 ? (
             <p className="text-sm text-gray-500">
-              No buildings registered yet.
+              Aucun immeuble enregistré pour le moment.
             </p>
           ) : (
             <ResponsiveContainer width="100%" height={250}>
@@ -386,7 +415,7 @@ export default function DashboardPage() {
                   stroke="#9ca3af"
                 />
                 <Tooltip
-                  formatter={(value: number) => [`${value}%`, "Health"]}
+                  formatter={(value: number) => [`${value}%`, "Santé"]}
                   contentStyle={{
                     backgroundColor: "white",
                     border: "1px solid #e5e7eb",
@@ -403,17 +432,17 @@ export default function DashboardPage() {
         <Card className="p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Recent Alerts
+              Alertes récentes
             </h3>
             <span className="text-xs text-gray-500 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
-              {alerts.length} shown
+              {alerts.length} {alerts.length > 1 ? "affichées" : "affichée"}
             </span>
           </div>
           {alerts.length === 0 ? (
             <p className="text-sm text-gray-500 flex items-center gap-2">
               <Building2 className="w-4 h-4" />
-              No alerts — fleet telemetry is nominal.
+              Aucune alerte — la télémétrie du parc est nominale.
             </p>
           ) : (
             <div className="space-y-3">
@@ -430,17 +459,18 @@ export default function DashboardPage() {
                         {alert.elevator}
                       </span>
                       <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-black/10">
-                        {alert.severity}
+                        {SEVERITY_LABELS[alert.severity] ?? alert.severity}
                       </span>
                       {alert.acknowledged && (
                         <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-black/10">
-                          ACKED
+                          ACQUITTÉE
                         </span>
                       )}
                     </div>
                     <span className="text-xs opacity-60">
                       {formatDistanceToNow(new Date(alert.createdAt), {
                         addSuffix: true,
+                        locale: fr,
                       })}
                     </span>
                   </div>

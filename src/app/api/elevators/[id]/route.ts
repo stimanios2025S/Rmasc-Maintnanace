@@ -54,7 +54,7 @@ export async function GET(
       },
     });
 
-    if (!elevator) throw notFound(`Elevator not found: ${params.id}`);
+    if (!elevator) throw notFound(`Ascenseur introuvable : ${params.id}`);
 
     return NextResponse.json({ data: elevator });
   } catch (error) {
@@ -63,7 +63,7 @@ export async function GET(
       const detail = demoElevatorDetail(params.id);
       // A real 404 for an id that is not in the fixture either, so the demo
       // data does not invent units the caller asked for by name.
-      if (!detail) return handleRouteError(notFound(`Elevator not found: ${params.id}`));
+      if (!detail) return handleRouteError(notFound(`Ascenseur introuvable : ${params.id}`));
       return NextResponse.json({ data: detail });
     }
     return handleRouteError(error);

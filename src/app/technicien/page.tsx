@@ -20,6 +20,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { SignaturePad } from "@/components/technician/signature-pad";
 import type { SignatureValue } from "@/components/technician/signature-pad";
+import { enumLabel } from "@/lib/ui/enum-labels";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -103,14 +104,25 @@ interface CompletedJob {
   actualHours: number | null;
 }
 
+/**
+ * The standard checklist, in French.
+ *
+ * These strings are not only displayed: each one is written into
+ * `InspectionCheck.checkName` when a report is filed, and the restore pass
+ * above matches a saved report back to this list *by name*. Translating them
+ * therefore changes what new reports store, and a report filed before this
+ * change (whose lines are in English) will no longer re-match and will come
+ * back unset. The deployment holds no such report today; if one is restored
+ * from a backup, re-file it or add the old spellings as aliases here.
+ */
 const DEFAULT_CHECKLIST = [
-  "Visual inspection of motor housing",
-  "Temperature sensor calibration check",
-  "Motor winding resistance test",
-  "Cooling system inspection",
-  "Brake assembly thermal check",
-  "Controller error log extraction",
-  "Test run after corrective action",
+  "Inspection visuelle du carter moteur",
+  "Contrôle de l'étalonnage du capteur de température",
+  "Mesure de la résistance des enroulements moteur",
+  "Inspection du système de refroidissement",
+  "Contrôle thermique du système de freinage",
+  "Extraction du journal d'erreurs de la commande",
+  "Essai de fonctionnement après action corrective",
 ];
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -122,7 +134,7 @@ const PRIORITY_STYLES: Record<string, string> = {
 };
 
 export default function TechnicianPage() {
-  const [techName, setTechName] = useState("Field Technician");
+  const [techName, setTechName] = useState("Technicien de terrain");
   const [jobs, setJobs] = useState<ActiveJob[]>([]);
   const [completed, setCompleted] = useState<CompletedJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,7 +161,8 @@ export default function TechnicianPage() {
     setError("");
     try {
       const res = await fetch("/api/technician");
-      if (!res.ok) throw new Error(`Technician API returned ${res.status}`);
+      if (!res.ok)
+        throw new Error(`L'API technicien a répondu ${res.status}`);
       const json = await res.json();
       // Typed here rather than left as `any`: the checklist restore below
       // reads nested arrays, and an untyped payload made every callback
@@ -157,7 +170,7 @@ export default function TechnicianPage() {
       const activeJobs: ActiveJob[] = json.data.active ?? [];
       const completedJobs: CompletedJob[] = json.data.completedToday ?? [];
 
-      setTechName(json.data.technician?.name ?? "Field Technician");
+      setTechName(json.data.technician?.name ?? "Technicien de terrain");
       setJobs(activeJobs);
       setCompleted(completedJobs);
       // Restore each checklist. Previously this always reset to all-unchecked,
@@ -204,7 +217,9 @@ export default function TechnicianPage() {
         return next;
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load assignments");
+      setError(
+        e instanceof Error ? e.message : "Échec du chargement des affectations"
+      );
     } finally {
       setLoading(false);
     }
@@ -252,11 +267,11 @@ export default function TechnicianPage() {
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? "Update failed");
+        throw new Error(json.error ?? "Échec de la mise à jour");
       }
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Update failed");
+      setError(e instanceof Error ? e.message : "Échec de la mise à jour");
     } finally {
       setBusyId(null);
     }
@@ -283,7 +298,9 @@ export default function TechnicianPage() {
   const completeJob = async (job: ActiveJob) => {
     const checks = checklist[job.id] ?? DEFAULT_CHECKLIST.map(() => null);
     if (checks.some((c) => c === null)) {
-      setError("Record a result for every checklist item before closing the job.");
+      setError(
+        "Renseignez un résultat pour chaque point de contrôle avant de clôturer l'intervention."
+      );
       return;
     }
 
@@ -312,7 +329,9 @@ export default function TechnicianPage() {
         });
         if (!res.ok) {
           const json = await res.json().catch(() => ({}));
-          throw new Error(json.error ?? "Failed to save the inspection report");
+          throw new Error(
+            json.error ?? "Échec de l'enregistrement du rapport d'inspection"
+          );
         }
       }
 
@@ -323,12 +342,16 @@ export default function TechnicianPage() {
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? "Failed to complete the work order");
+        throw new Error(
+          json.error ?? "Échec de la clôture du bon de travail"
+        );
       }
 
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to complete the job");
+      setError(
+        e instanceof Error ? e.message : "Échec de la clôture de l'intervention"
+      );
     } finally {
       setBusyId(null);
     }
@@ -355,9 +378,11 @@ export default function TechnicianPage() {
       {/* Header */}
       <div className="text-center">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-          Technician Portal
+          Espace technicien
         </h2>
-        <p className="text-sm text-gray-500 mt-1">{techName} — Field Technician</p>
+        <p className="text-sm text-gray-500 mt-1">
+          {techName} — Technicien de terrain
+        </p>
       </div>
 
       {/* Status Banner */}
@@ -365,10 +390,11 @@ export default function TechnicianPage() {
         <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
         <div>
           <p className="text-sm font-medium text-green-800 dark:text-green-300">
-            On Duty — {jobs.length} active assignment(s)
+            En service — {jobs.length}{" "}
+            {jobs.length > 1 ? "affectations actives" : "affectation active"}
           </p>
           <p className="text-xs text-green-600 dark:text-green-400">
-            Last sync: {new Date().toLocaleTimeString()}
+            Dernière synchro : {new Date().toLocaleTimeString("fr-FR")}
           </p>
         </div>
       </div>
@@ -382,8 +408,8 @@ export default function TechnicianPage() {
       {/* Active Assignments */}
       {jobs.length === 0 ? (
         <EmptyState
-          title="No active assignments"
-          hint="New dispatches from the work-orders board will appear here."
+          title="Aucune affectation active"
+          hint="Les nouvelles affectations du tableau des bons de travail apparaîtront ici."
         />
       ) : (
         jobs.map((job) => {
@@ -429,7 +455,7 @@ export default function TechnicianPage() {
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-mono text-gray-500">{job.orderNumber}</span>
                   <span className={`px-2 py-0.5 text-[10px] font-bold rounded border ${PRIORITY_STYLES[job.priority] ?? PRIORITY_STYLES.MEDIUM}`}>
-                    {job.priority}
+                    {enumLabel(job.priority)}
                   </span>
                 </div>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">
@@ -450,9 +476,12 @@ export default function TechnicianPage() {
                   <p className="text-sm text-gray-500 flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5" />
                     {job.scheduledDate
-                      ? `Scheduled: ${new Date(job.scheduledDate).toLocaleString()}`
-                      : "Not scheduled"}
-                    {job.estimatedHours != null && ` • Est. ${job.estimatedHours}h`}
+                      ? `Planifié : ${new Date(job.scheduledDate).toLocaleString(
+                          "fr-FR"
+                        )}`
+                      : "Non planifié"}
+                    {job.estimatedHours != null &&
+                      ` • Est. ${job.estimatedHours} h`}
                     {job.component && ` • ${job.component}`}
                   </p>
                 </div>
@@ -462,7 +491,9 @@ export default function TechnicianPage() {
                     disabled={busyId === job.id}
                     className="mt-3 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {busyId === job.id ? "Starting…" : "Start Job"}
+                    {busyId === job.id
+                      ? "Démarrage…"
+                      : "Démarrer l'intervention"}
                   </button>
                 )}
               </div>
@@ -471,22 +502,22 @@ export default function TechnicianPage() {
               <div className="px-5 py-4">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                    Inspection Checklist
+                    Points de contrôle
                   </h4>
                   <span className="text-xs font-medium text-gray-500">
-                    {done}/{checks.length} recorded
+                    {done}/{checks.length} renseignés
                     {failures > 0 && (
                       <span className="ml-1.5 font-semibold text-red-600 dark:text-red-400">
-                        · {failures} failed
+                        · {failures} en échec
                       </span>
                     )}
                   </span>
                 </div>
                 {job.inspection && (
                   <p className="text-xs text-green-600 dark:text-green-400 mb-2 font-mono">
-                    Saved as{" "}
+                    Enregistré sous{" "}
                     <Link
-                      href={`/inspection-reports/${job.inspection.id}`}
+                      href={`/rapports-inspection/${job.inspection.id}`}
                       className="underline decoration-dotted underline-offset-2 hover:text-green-700"
                     >
                       {job.inspection.reportNumber}
@@ -521,8 +552,10 @@ export default function TechnicianPage() {
                           <button
                             onClick={() => cycleCheck(job.id, i)}
                             aria-label={`${item} — ${
-                              result ? `currently ${result.replace(/_/g, " ").toLowerCase()}` : "not yet recorded"
-                            }. Press to change.`}
+                              result
+                                ? `actuellement ${enumLabel(result).toLowerCase()}`
+                                : "pas encore renseigné"
+                            }. Appuyez pour changer.`}
                             className="flex flex-1 items-center gap-3 rounded-md p-2 text-left hover:bg-black/5"
                           >
                             <Icon
@@ -542,7 +575,7 @@ export default function TechnicianPage() {
                             </span>
                             {result && (
                               <span className="whitespace-nowrap text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                {result.replace(/_/g, " ")}
+                                {enumLabel(result)}
                               </span>
                             )}
                           </button>
@@ -560,10 +593,10 @@ export default function TechnicianPage() {
                             }}
                             aria-label={
                               photo
-                                ? `Photo attached to ${item}. Press to edit.`
-                                : `Attach a photo to ${item}`
+                                ? `Photo jointe à ${item}. Appuyez pour modifier.`
+                                : `Joindre une photo à ${item}`
                             }
-                            title={photo ? "Photo attached" : "Attach photo"}
+                            title={photo ? "Photo jointe" : "Joindre une photo"}
                             className={`rounded-md p-2 hover:bg-black/5 ${
                               photo
                                 ? "text-blue-600 dark:text-blue-400"
@@ -585,7 +618,7 @@ export default function TechnicianPage() {
                                 htmlFor={`photo-${job.id}-${i}`}
                                 className="text-xs font-medium text-gray-600 dark:text-gray-400"
                               >
-                                Photo URL for “{item}”
+                                URL de la photo pour « {item} »
                               </label>
                               <div className="mt-1 flex gap-2">
                                 <input
@@ -602,7 +635,7 @@ export default function TechnicianPage() {
                                   disabled={!photoDraft.trim()}
                                   className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                                 >
-                                  Attach
+                                  Joindre
                                 </button>
                                 {photo && (
                                   <button
@@ -613,13 +646,14 @@ export default function TechnicianPage() {
                                     }}
                                     className="rounded-md px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
                                   >
-                                    Remove
+                                    Retirer
                                   </button>
                                 )}
                               </div>
                               <p className="mt-1 text-[11px] text-gray-400">
-                                Uploads are not configured on this deployment —
-                                attach a URL from your photo storage.
+                                Le téléversement n'est pas configuré sur ce
+                                déploiement — joignez une URL depuis votre
+                                stockage de photos.
                               </p>
                             </div>
                           )}
@@ -633,7 +667,7 @@ export default function TechnicianPage() {
               {job.partsReplaced && job.partsReplaced.length > 0 && (
                 <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-800">
                   <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
-                    Parts Replaced
+                    Pièces remplacées
                   </h4>
                   <div className="space-y-1.5">
                     {job.partsReplaced.map((part, i) => (
@@ -661,7 +695,7 @@ export default function TechnicianPage() {
                     value={notes[job.id] ?? ""}
                     onChange={(e) => setNotes({ ...notes, [job.id]: e.target.value })}
                     rows={3}
-                    placeholder="Field notes, findings, measurements…"
+                    placeholder="Notes de terrain, constats, mesures…"
                     className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="flex gap-2 mt-2">
@@ -670,13 +704,13 @@ export default function TechnicianPage() {
                       disabled={busyId === job.id}
                       className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >
-                      Save Notes
+                      Enregistrer les notes
                     </button>
                     <button
                       onClick={() => setShowNotes(null)}
                       className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300"
                     >
-                      Cancel
+                      Annuler
                     </button>
                   </div>
                 </div>
@@ -687,7 +721,7 @@ export default function TechnicianPage() {
               {signingJob === job.id && (
                 <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-800">
                   <SignaturePad
-                    label={`Technician signature — ${job.orderNumber}`}
+                    label={`Signature du technicien — ${job.orderNumber}`}
                     onCancel={() => setSigningJob(null)}
                     onSave={(value) => {
                       setSignatures((prev) => ({ ...prev, [job.id]: value }));
@@ -712,14 +746,16 @@ export default function TechnicianPage() {
                   className="flex items-center justify-center gap-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 disabled:opacity-50 transition-colors"
                 >
                   <Camera className="w-4 h-4" />
-                  {attached > 0 ? `Photo Evidence (${attached})` : "Photo Evidence"}
+                  {attached > 0
+                    ? `Preuves photo (${attached})`
+                    : "Preuves photo"}
                 </button>
                 <button
                   onClick={() => setShowNotes(showNotes === job.id ? null : job.id)}
                   className="flex items-center justify-center gap-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-200 transition-colors"
                 >
                   <FileText className="w-4 h-4" />
-                  {notes[job.id] ? "Edit Notes" : "Add Notes"}
+                  {notes[job.id] ? "Modifier les notes" : "Ajouter des notes"}
                 </button>
                 <button
                   onClick={() => setSigningJob(signingJob === job.id ? null : job.id)}
@@ -728,10 +764,12 @@ export default function TechnicianPage() {
                       ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
                       : "bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200"
                   }`}
-                  title={signature ? `Signed by ${signature.name}` : undefined}
+                  title={signature ? `Signé par ${signature.name}` : undefined}
                 >
                   <PenTool className="w-4 h-4" />
-                  {signature ? `Signed: ${signature.name}` : "Digital Signature"}
+                  {signature
+                    ? `Signé : ${signature.name}`
+                    : "Signature numérique"}
                 </button>
                 <button
                   onClick={() => completeJob(job)}
@@ -743,7 +781,9 @@ export default function TechnicianPage() {
                   disabled={progress < 100 || busyId === job.id}
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  {busyId === job.id ? "Saving…" : "Complete Job"}
+                  {busyId === job.id
+                    ? "Enregistrement…"
+                    : "Clôturer l'intervention"}
                 </button>
               </div>
             </Card>
@@ -754,10 +794,12 @@ export default function TechnicianPage() {
       {/* Completed Today */}
       <Card className="p-5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
-          Completed Today
+          Terminées aujourd'hui
         </h3>
         {completed.length === 0 ? (
-          <p className="text-sm text-gray-500">Nothing completed yet today.</p>
+          <p className="text-sm text-gray-500">
+            Aucune intervention terminée aujourd'hui.
+          </p>
         ) : (
           completed.map((job) => (
             <div
@@ -773,9 +815,13 @@ export default function TechnicianPage() {
               </div>
               <div className="text-right">
                 <p className="text-xs text-gray-500">
-                  {job.completedAt ? new Date(job.completedAt).toLocaleTimeString() : "—"}
+                  {job.completedAt
+                    ? new Date(job.completedAt).toLocaleTimeString("fr-FR")
+                    : "—"}
                 </p>
-                <p className="text-xs text-gray-400">{job.actualHours ?? "—"}h</p>
+                <p className="text-xs text-gray-400">
+                  {job.actualHours ?? "—"} h
+                </p>
               </div>
             </div>
           ))

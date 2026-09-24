@@ -105,14 +105,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (!body.elevatorId) {
-      throw badRequest("elevatorId (string) is required, or pass batch: true");
+      throw badRequest("elevatorId (chaîne) est requis, ou passez batch: true");
     }
 
     const exists = await prisma.elevator.findUnique({
       where: { id: body.elevatorId },
       select: { id: true },
     });
-    if (!exists) throw notFound(`Elevator not found: ${body.elevatorId}`);
+    if (!exists) throw notFound(`Ascenseur introuvable : ${body.elevatorId}`);
 
     const analysis = await analyzeElevator(body.elevatorId);
     const generated = body.dryRun

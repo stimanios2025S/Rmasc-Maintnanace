@@ -125,7 +125,7 @@ export function EmergencyButton({
         ) : (
           <PhoneCall className="h-7 w-7" aria-hidden="true" />
         )}
-        Aide Immédiate / Urgence
+        Aide immédiate / Urgence
       </button>
 
       {supported && (

@@ -73,17 +73,37 @@ const RESULT_STYLE: Record<string, string> = {
 };
 
 const RESULT_LABEL: Record<string, string> = {
-  PASS: "Pass",
-  FAIL: "Fail",
-  NEEDS_ATTENTION: "Needs attention",
-  NOT_APPLICABLE: "N/A",
+  PASS: "Conforme",
+  FAIL: "Non conforme",
+  NEEDS_ATTENTION: "À surveiller",
+  NOT_APPLICABLE: "Sans objet",
+};
+
+/**
+ * How a signature was produced, as the report prints it.
+ *
+ * The stored values (`DRAWN` / `TYPED`) are the API's; these are what the
+ * sheet says.
+ */
+const METHOD_LABEL: Record<string, string> = {
+  DRAWN: "manuscrite",
+  TYPED: "saisie",
+};
+
+/** The signature roles the API writes. `TECHNICIAN` is the only one in use. */
+const SIGNATURE_ROLE_LABEL: Record<string, string> = {
+  TECHNICIAN: "Technicien",
+  CLIENT: "Client",
+  SUPERVISOR: "Responsable",
 };
 
 function formatDateTime(value: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(undefined, {
+  // Explicit locale rather than the runtime default: the report is printed and
+  // filed, so its date format must not depend on the machine that opened it.
+  return date.toLocaleString("fr-FR", {
     dateStyle: "long",
     timeStyle: "short",
   });
@@ -107,14 +127,16 @@ export default function InspectionReportPage() {
       if (!res.ok) {
         throw new Error(
           res.status === 404
-            ? "This report does not exist, or is not yours to read."
-            : `Could not load the report (${res.status}).`
+            ? "Ce rapport n'existe pas, ou ne vous est pas accessible."
+            : `Impossible de charger le rapport (${res.status}).`
         );
       }
       const json = await res.json();
       setReport(json.data ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the report.");
+      setError(
+        e instanceof Error ? e.message : "Impossible de charger le rapport."
+      );
     } finally {
       setLoading(false);
     }
@@ -135,7 +157,7 @@ export default function InspectionReportPage() {
   if (error || !report) {
     return (
       <div className="mx-auto max-w-2xl p-6">
-        <ErrorState message={error || "Report not found"} onRetry={load} />
+        <ErrorState message={error || "Rapport introuvable"} onRetry={load} />
       </div>
     );
   }
@@ -157,7 +179,7 @@ export default function InspectionReportPage() {
             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Back
+            Retour
           </button>
           <button
             type="button"
@@ -165,7 +187,7 @@ export default function InspectionReportPage() {
             className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             <Printer className="h-4 w-4" aria-hidden="true" />
-            Print / Save as PDF
+            Imprimer / Enregistrer en PDF
           </button>
         </div>
       </div>
@@ -173,7 +195,7 @@ export default function InspectionReportPage() {
       <article className="mx-auto my-6 max-w-3xl bg-white p-8 shadow-sm print:my-0 print:max-w-none print:p-0 print:shadow-none">
         <header className="border-b border-gray-300 pb-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-            ElevatorPulse · Inspection Report
+            ElevatorPulse · Rapport d&apos;inspection
           </p>
           <h1 className="mt-2 text-2xl font-bold text-gray-900">
             {report.title}
@@ -185,13 +207,13 @@ export default function InspectionReportPage() {
 
         <dl className="mt-6 grid grid-cols-2 gap-x-8 gap-y-3 text-sm sm:grid-cols-3">
           <div>
-            <dt className="text-gray-500">Elevator</dt>
+            <dt className="text-gray-500">Ascenseur</dt>
             <dd className="font-semibold text-gray-900">
               {report.elevator.elevatorCode}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Brand / model</dt>
+            <dt className="text-gray-500">Marque / modèle</dt>
             <dd className="text-gray-900">
               {report.elevator.brand} {report.elevator.model}
             </dd>
@@ -201,38 +223,38 @@ export default function InspectionReportPage() {
             <dd className="text-gray-900">{report.elevator.building.name}</dd>
           </div>
           <div>
-            <dt className="text-gray-500">Address</dt>
+            <dt className="text-gray-500">Adresse</dt>
             <dd className="text-gray-900">
               {report.elevator.building.address},{" "}
               {report.elevator.building.city}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Work order</dt>
+            <dt className="text-gray-500">Bon de travail</dt>
             <dd className="font-mono text-gray-900">
               {report.workOrder.orderNumber}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Technician</dt>
+            <dt className="text-gray-500">Technicien</dt>
             <dd className="text-gray-900">
               {report.technician.name ?? "—"}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Submitted</dt>
+            <dt className="text-gray-500">Transmis le</dt>
             <dd className="text-gray-900">
               {formatDateTime(report.submittedAt)}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Job completed</dt>
+            <dt className="text-gray-500">Intervention terminée le</dt>
             <dd className="text-gray-900">
               {formatDateTime(report.workOrder.completedAt)}
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Overall result</dt>
+            <dt className="text-gray-500">Résultat global</dt>
             <dd className="mt-0.5">
               <span
                 className={`inline-block rounded border px-2 py-0.5 text-xs font-bold ${
@@ -248,7 +270,7 @@ export default function InspectionReportPage() {
         {report.summary && (
           <section className="mt-6">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
-              Summary
+              Synthèse
             </h2>
             <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-gray-800">
               {report.summary}
@@ -258,19 +280,20 @@ export default function InspectionReportPage() {
 
         <section className="mt-6">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
-            Checklist
+            Points de contrôle
           </h2>
           <p className="mt-1 text-xs text-gray-500">
-            {report.checkItems.length} items · {failures} failed · {attention}{" "}
-            needing attention
+            {report.checkItems.length}{" "}
+            {report.checkItems.length > 1 ? "points" : "point"} · {failures} non
+            conforme{failures > 1 ? "s" : ""} · {attention} à surveiller
           </p>
 
           <table className="mt-3 w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-gray-300 text-left text-xs uppercase tracking-wide text-gray-500">
-                <th className="py-2 pr-3 font-semibold">Item</th>
-                <th className="py-2 pr-3 font-semibold">Result</th>
-                <th className="py-2 pr-3 font-semibold">Measured</th>
+                <th className="py-2 pr-3 font-semibold">Point de contrôle</th>
+                <th className="py-2 pr-3 font-semibold">Résultat</th>
+                <th className="py-2 pr-3 font-semibold">Mesuré</th>
                 <th className="py-2 font-semibold">Notes</th>
               </tr>
             </thead>
@@ -300,7 +323,7 @@ export default function InspectionReportPage() {
                       // useless at print resolution anyway. The reference
                       // survives the paper.
                       <span className="mt-1 block text-xs text-blue-700">
-                        Photo: {item.photoUrl}
+                        Photo : {item.photoUrl}
                       </span>
                     )}
                   </td>
@@ -317,7 +340,7 @@ export default function InspectionReportPage() {
 
           {!report.signatures || report.signatures.length === 0 ? (
             <p className="mt-2 text-sm text-gray-500">
-              No signature was recorded with this report.
+              Aucune signature n&apos;a été enregistrée avec ce rapport.
             </p>
           ) : (
             <div className="mt-3 grid gap-6 sm:grid-cols-2">
@@ -327,13 +350,13 @@ export default function InspectionReportPage() {
                   className="break-inside-avoid"
                 >
                   <p className="text-xs uppercase tracking-wide text-gray-500">
-                    {signature.role.toLowerCase()}
+                    {SIGNATURE_ROLE_LABEL[signature.role] ?? signature.role}
                   </p>
                   {signature.imageDataUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={signature.imageDataUrl}
-                      alt={`Signature of ${signature.name}`}
+                      alt={`Signature de ${signature.name}`}
                       className="mt-1 h-16 w-full max-w-[16rem] border-b border-gray-400 object-contain object-left"
                     />
                   ) : (
@@ -342,8 +365,11 @@ export default function InspectionReportPage() {
                     </p>
                   )}
                   <p className="mt-1 text-xs text-gray-600">
-                    {signature.name} · signed {formatDateTime(signature.signedAt)}{" "}
-                    ({signature.method.toLowerCase()})
+                    {signature.name} · signé le{" "}
+                    {formatDateTime(signature.signedAt)} (
+                    {METHOD_LABEL[signature.method] ??
+                      signature.method.toLowerCase()}
+                    )
                   </p>
                 </div>
               ))}
@@ -352,9 +378,9 @@ export default function InspectionReportPage() {
         </section>
 
         <footer className="mt-10 border-t border-gray-300 pt-3 text-xs text-gray-500">
-          Generated by ElevatorPulse. This report documents the state of the
-          equipment at the time of inspection and does not certify fitness for
-          use beyond the items listed.
+          Document généré par ElevatorPulse. Ce rapport constate l&apos;état de
+          l&apos;équipement au moment de l&apos;inspection et n&apos;atteste pas
+          de son aptitude à l&apos;usage au-delà des points listés ci-dessus.
         </footer>
       </article>
     </div>

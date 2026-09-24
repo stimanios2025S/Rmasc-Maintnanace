@@ -65,11 +65,11 @@ export async function POST(request: NextRequest) {
         elevator: { include: { building: { select: { name: true } } } },
       },
     });
-    if (!workOrder) throw notFound(`Work order not found: ${workOrderId}`);
+    if (!workOrder) throw notFound(`Bon de travail introuvable : ${workOrderId}`);
 
     if (!isOpenStatus(workOrder.status)) {
       throw conflict(
-        `Work order ${workOrder.orderNumber} is ${workOrder.status} and cannot be dispatched`
+        `Le bon de travail ${workOrder.orderNumber} est ${workOrder.status} et ne peut pas être affecté`
       );
     }
 
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
         });
         if (!eligible) {
           throw badRequest(
-            `Technician ${technicianId} is not available for dispatch.`
+            `Le technicien ${technicianId} n'est pas disponible pour une affectation.`
           );
         }
       }
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
 
       if (!assignedToId) {
         throw conflict(
-          "No available technicians — all field technicians are currently assigned to jobs."
+          "Aucun technicien disponible — tous les techniciens de terrain sont actuellement affectés."
         );
       }
 
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
 
       if (result.count === 0) {
         throw conflict(
-          `Work order ${workOrder.orderNumber} was modified by another request`
+          `Le bon de travail ${workOrder.orderNumber} a été modifié par une autre requête`
         );
       }
 
@@ -144,10 +144,10 @@ export async function POST(request: NextRequest) {
       await prisma.notification.create({
         data: {
           userId: claimed,
-          title: `New Work Order: ${workOrder.orderNumber}`,
-          message: `${workOrder.title} — ${workOrder.elevator.elevatorCode} at ${workOrder.elevator.building.name}`,
+          title: `Nouveau bon de travail : ${workOrder.orderNumber}`,
+          message: `${workOrder.title} — ${workOrder.elevator.elevatorCode} à ${workOrder.elevator.building.name}`,
           type: "work_order",
-          linkUrl: `/work-orders`,
+          linkUrl: `/bons-de-travail`,
         },
       });
     } catch (error) {

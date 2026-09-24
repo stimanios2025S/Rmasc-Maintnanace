@@ -7,15 +7,20 @@ import { MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
  * Route protection.
  *
  * Public:
- *   - `/login`                  (redirects to /dashboard when signed in)
+ *   - `/connexion`              (redirects to /tableau-de-bord when signed in)
  *   - `/api/auth/*`             (NextAuth handlers)
  *   - `/api/health`             (liveness/readiness probes)
  *   - `POST /api/telemetry`     (IoT devices; separately guarded by the
  *                                `IOT_INGEST_TOKEN` bearer check inside the
  *                                handler)
  *
- * Everything else requires a signed-in user. `/technician` additionally
+ * Everything else requires a signed-in user. `/technicien` additionally
  * requires an ops role.
+ *
+ * Page paths are French, matching the rest of the interface; the `/api/*`
+ * surface is not, because it is a contract with the IoT gateway, the Prisma
+ * seed and NextAuth's own `/api/auth/[...nextauth]` route. The two sets are
+ * independent — nothing derives a page path from an endpoint name.
  *
  * Note on the telemetry exemption: it is deliberately limited to POST. The
  * previous check was `pathname.startsWith("/api/telemetry")` with no method
@@ -39,23 +44,23 @@ export default withAuth(
     // synthetic session in `getSession()` supplies the ADMIN identity that the
     // route handlers authorise against.
     if (isOpenAccessEnabled()) {
-      if (pathname === "/login") {
-        return NextResponse.redirect(new URL("/dashboard", req.url));
+      if (pathname === "/connexion") {
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
       }
       return NextResponse.next();
     }
 
-    // Signed-in users hitting /login go straight to the dashboard
-    if (pathname === "/login" && token) {
-      return NextResponse.redirect(new URL("/dashboard", req.url));
+    // Signed-in users hitting /connexion go straight to the dashboard
+    if (pathname === "/connexion" && token) {
+      return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
     }
 
     // Field portal is restricted to ops roles. The list is imported rather
     // than re-typed, so it cannot drift from the server-side guard.
-    if (pathname === "/technician" || pathname.startsWith("/technician/")) {
+    if (pathname === "/technicien" || pathname.startsWith("/technicien/")) {
       const role = token?.role;
       if (!role || !OPS_ROLES.includes(role)) {
-        return NextResponse.redirect(new URL("/dashboard", req.url));
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
       }
     }
 
@@ -63,10 +68,13 @@ export default withAuth(
     // technician roster. A building owner who reaches it would see every
     // other customer's incidents and the company's staffing, so it is gated
     // here as well as in the route handlers.
-    if (pathname === "/admin" || pathname.startsWith("/admin/")) {
+    if (
+      pathname === "/administration" ||
+      pathname.startsWith("/administration/")
+    ) {
       const role = token?.role;
       if (!role || !MANAGEMENT_ROLES.includes(role)) {
-        return NextResponse.redirect(new URL("/dashboard", req.url));
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
       }
     }
 
@@ -90,7 +98,7 @@ export default withAuth(
           return true;
         }
 
-        if (pathname === "/login" || pathname.startsWith("/api/auth")) {
+        if (pathname === "/connexion" || pathname.startsWith("/api/auth")) {
           return true;
         }
 
@@ -114,20 +122,20 @@ export default withAuth(
         return !!token;
       },
     },
-    pages: { signIn: "/login" },
+    pages: { signIn: "/connexion" },
   }
 );
 
 export const config = {
   matcher: [
-    "/dashboard/:path*",
-    "/elevators/:path*",
-    "/work-orders/:path*",
-    "/technician/:path*",
+    "/tableau-de-bord/:path*",
+    "/ascenseurs/:path*",
+    "/bons-de-travail/:path*",
+    "/technicien/:path*",
     "/client/:path*",
-    "/admin/:path*",
-    "/inspection-reports/:path*",
-    "/login",
+    "/administration/:path*",
+    "/rapports-inspection/:path*",
+    "/connexion",
     "/api/:path*",
   ],
 };

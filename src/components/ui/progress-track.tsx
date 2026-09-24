@@ -36,7 +36,7 @@ const TONE = {
 
 export function ProgressTrack({
   status,
-  locale = "en",
+  locale = "fr",
   showLabels = true,
   className = "",
 }: {

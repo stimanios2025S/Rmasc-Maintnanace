@@ -69,7 +69,8 @@ export function DispatchModal({
         if (rows.length > 0) setSelected(rows[0].id);
       })
       .catch(() => {
-        if (!cancelled) setError("Could not load the technician roster.");
+        if (!cancelled)
+          setError("Impossible de charger la liste des techniciens.");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -108,13 +109,13 @@ export function DispatchModal({
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(
-          payload?.error ?? payload?.message ?? "Dispatch failed."
+          payload?.error ?? payload?.message ?? "L'affectation a échoué."
         );
       }
 
       onDispatched();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dispatch failed.");
+      setError(e instanceof Error ? e.message : "L'affectation a échoué.");
     } finally {
       setSubmitting(false);
     }
@@ -140,7 +141,7 @@ export function DispatchModal({
               id="dispatch-heading"
               className="text-lg font-bold text-gray-900 dark:text-white"
             >
-              Dispatch technician
+              Affecter un technicien
             </h2>
             <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
               <span className="font-mono">{incident.incidentNumber}</span> ·{" "}
@@ -150,7 +151,7 @@ export function DispatchModal({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label="Fermer"
             className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -161,14 +162,14 @@ export function DispatchModal({
           {loading && (
             <p className="flex items-center gap-2 text-sm text-gray-500">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Loading roster…
+              Chargement de la liste…
             </p>
           )}
 
           {!loading && roster.length === 0 && !error && (
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              No active field technicians are registered. Add one before
-              dispatching.
+              Aucun technicien de terrain actif n'est enregistré. Ajoutez-en un
+              avant de procéder à une affectation.
             </p>
           )}
 
@@ -207,7 +208,7 @@ export function DispatchModal({
                       <span className="flex shrink-0 flex-col items-end gap-1">
                         {technician.status === "ON_JOB" && (
                           <span className="whitespace-nowrap rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
-                            On a job
+                            En intervention
                           </span>
                         )}
                         <span
@@ -221,9 +222,9 @@ export function DispatchModal({
                         >
                           {load === 0
                             ? technician.status === "ON_JOB"
-                              ? "No queue"
-                              : "Free"
-                            : `${load} open`}
+                              ? "Aucune file"
+                              : "Disponible"
+                            : `${load} en cours`}
                         </span>
                       </span>
                     </label>
@@ -243,8 +244,8 @@ export function DispatchModal({
           )}
 
           <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-            Assigning also moves the linked work order to ASSIGNED and notifies
-            the technician.
+            L'affectation fait aussi passer le bon de travail lié au statut
+            « Assigné » et notifie le technicien.
           </p>
         </div>
 
@@ -254,7 +255,7 @@ export function DispatchModal({
             onClick={onClose}
             className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
           >
-            Cancel
+            Annuler
           </button>
           <button
             type="button"
@@ -267,7 +268,7 @@ export function DispatchModal({
             ) : (
               <UserCheck className="h-4 w-4" aria-hidden="true" />
             )}
-            Assign
+            Affecter
           </button>
         </footer>
       </div>

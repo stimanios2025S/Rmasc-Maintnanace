@@ -25,9 +25,9 @@ import { NotificationBell } from "./notification-bell";
  *
  * Extracted from the `(dashboard)` route-group layout so that every protected
  * screen can render it explicitly. The group layout alone was not enough: the
- * `/elevators`, `/work-orders` and `/technician` trees live outside that group,
- * so those three screens rendered their pages with no navigation, no header and
- * no way to sign out.
+ * `/ascenseurs`, `/bons-de-travail` and `/technicien` trees live outside that
+ * group, so those three screens rendered their pages with no navigation, no
+ * header and no way to sign out.
  */
 
 type NavItem = {
@@ -39,30 +39,39 @@ type NavItem = {
 };
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/elevators", label: "Elevators", icon: Activity },
-  { href: "/work-orders", label: "Work Orders", icon: ClipboardList },
-  // Mirrors the middleware rule for /technician. Without the filter a building
+  { href: "/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard },
+  { href: "/ascenseurs", label: "Ascenseurs", icon: Activity },
+  { href: "/bons-de-travail", label: "Bons de travail", icon: ClipboardList },
+  // Mirrors the middleware rule for /technicien. Without the filter a building
   // owner would see a link that silently bounces them back to the dashboard.
-  { href: "/technician", label: "Technician", icon: Wrench, roles: OPS_ROLES },
+  { href: "/technicien", label: "Technicien", icon: Wrench, roles: OPS_ROLES },
   // The dispatch board for escalated client faults. Same reasoning as above:
   // the middleware redirects anyone below management, so the link is filtered
   // to exactly those roles.
   {
-    href: "/admin/incidents",
+    href: "/administration/incidents",
     label: "Incidents",
     icon: AlertOctagon,
     roles: MANAGEMENT_ROLES,
   },
-  // Deliberately unrestricted — an administrator needs to be able to open the
-  // customer's view to see what they see. `Client` is spelled the same in
-  // French and English, which is why it needs no translation: this one label
-  // sits in a sidebar shared by both audiences.
-  { href: "/client", label: "Client", icon: HelpCircle },
+  // The customer's own view of their equipment. Deliberately unrestricted — an
+  // administrator needs to be able to open it to see what a customer sees.
+  { href: "/client", label: "Espace client", icon: HelpCircle },
 ];
 
+/** Display labels for the role identifiers. The identifiers themselves are
+ *  unchanged — only how they read on screen. */
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: "Administrateur",
+  MAINTENANCE_MANAGER: "Responsable maintenance",
+  FIELD_TECHNICIAN: "Technicien de terrain",
+  BUILDING_OWNER: "Propriétaire d'immeuble",
+};
+
 function formatRole(role?: string): string {
-  if (!role) return "User";
+  if (!role) return "Utilisateur";
+  const known = ROLE_LABELS[role];
+  if (known) return known;
   return role
     .split("_")
     .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
@@ -80,7 +89,7 @@ function initials(name?: string | null, email?: string | null): string {
   return "EP";
 }
 
-/** Longest matching href wins, so `/work-orders` is not shadowed by `/`. */
+/** Longest matching href wins, so `/bons-de-travail` is not shadowed by `/`. */
 function activeItem(pathname: string, items: readonly NavItem[]): NavItem | undefined {
   return items
     .filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
@@ -97,9 +106,9 @@ export function AppShell({
    * server, because `isOpenAccessEnabled()` reads a non-`NEXT_PUBLIC_` variable
    * and would inline as `undefined` in this client bundle.
    *
-   * When set, the sign-out control is replaced by an "Open" badge: there is no
+   * When set, the sign-out control is replaced by an "Ouvert" badge: there is no
    * session cookie to clear, so `signOut()` would only bounce back through
-   * `/login` to the dashboard and look broken.
+   * `/connexion` to the dashboard and look broken.
    */
   openAccess?: boolean;
 }) {
@@ -115,6 +124,15 @@ export function AppShell({
     (item) => !item.roles || (role !== undefined && item.roles.includes(role))
   );
   const current = activeItem(pathname, navItems);
+
+  // "1 alerte ouverte" / "3 alertes ouvertes" — spelled out so the singular
+  // does not read like a machine translation.
+  const alertLabel =
+    unreadCount > 0
+      ? `${unreadCount} alerte${unreadCount > 1 ? "s" : ""} ouverte${
+          unreadCount > 1 ? "s" : ""
+        }`
+      : "Aucune alerte ouverte";
 
   // Unread-alert indicator. Best effort: a failure here must never break the
   // chrome, so errors are swallowed and the badge simply stays hidden.
@@ -153,7 +171,7 @@ export function AppShell({
       >
         <div className="h-16 flex items-center px-4 border-b border-gray-200 dark:border-gray-800">
           {sidebarOpen && (
-            <Link href="/dashboard" className="flex items-center gap-2">
+            <Link href="/tableau-de-bord" className="flex items-center gap-2">
               <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                 <Activity className="w-5 h-5 text-white" />
               </div>
@@ -164,7 +182,11 @@ export function AppShell({
           )}
           <button
             onClick={() => setSidebarOpen((open) => !open)}
-            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            aria-label={
+              sidebarOpen
+                ? "Réduire le menu latéral"
+                : "Développer le menu latéral"
+            }
             aria-expanded={sidebarOpen}
             className="ml-auto p-1.5 rounded-md text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
@@ -202,7 +224,7 @@ export function AppShell({
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                  {user?.name ?? "Signed in"}
+                  {user?.name ?? "Connecté"}
                 </p>
                 <p className="text-xs text-gray-500 truncate">
                   {user?.email ?? formatRole(user?.role)}
@@ -210,16 +232,16 @@ export function AppShell({
               </div>
               {openAccess ? (
                 <span
-                  title='Local open access — sign-in is disabled. Set OPEN_ACCESS="false" in .env to restore it.'
+                  title='Accès libre local — la connexion est désactivée. Définissez OPEN_ACCESS="false" dans .env pour la rétablir.'
                   className="px-1.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/30"
                 >
-                  Open
+                  Ouvert
                 </span>
               ) : (
                 <button
-                  onClick={() => signOut({ callbackUrl: "/login" })}
-                  title="Sign out"
-                  aria-label="Sign out"
+                  onClick={() => signOut({ callbackUrl: "/connexion" })}
+                  title="Se déconnecter"
+                  aria-label="Se déconnecter"
                   className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
                 >
                   <LogOut className="w-4 h-4 text-gray-400" />
@@ -230,14 +252,14 @@ export function AppShell({
             <div className="mx-auto flex justify-center">
               {openAccess ? (
                 <span
-                  title='Local open access — sign-in is disabled. Set OPEN_ACCESS="false" in .env to restore it.'
+                  title='Accès libre local — la connexion est désactivée. Définissez OPEN_ACCESS="false" dans .env pour la rétablir.'
                   className="w-2.5 h-2.5 rounded-full bg-amber-400"
                 />
               ) : (
                 <button
-                  onClick={() => signOut({ callbackUrl: "/login" })}
-                  title="Sign out"
-                  aria-label="Sign out"
+                  onClick={() => signOut({ callbackUrl: "/connexion" })}
+                  title="Se déconnecter"
+                  aria-label="Se déconnecter"
                   className="block p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
                 >
                   <LogOut className="w-4 h-4 text-gray-400" />
@@ -269,11 +291,9 @@ export function AppShell({
             <NotificationBell enabled={status === "authenticated"} />
 
             <Link
-              href="/work-orders"
-              title={unreadCount > 0 ? `${unreadCount} open alerts` : "No open alerts"}
-              aria-label={
-                unreadCount > 0 ? `${unreadCount} open alerts` : "No open alerts"
-              }
+              href="/bons-de-travail"
+              title={alertLabel}
+              aria-label={alertLabel}
               className="relative p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
             >
               <Bell className="w-5 h-5 text-gray-500" />

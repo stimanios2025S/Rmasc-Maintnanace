@@ -39,7 +39,7 @@ const PRESENTATION = {
 
 export function ValidationBadge({
   status,
-  locale = "en",
+  locale = "fr",
   size = "default",
 }: {
   status: IncidentStatus;

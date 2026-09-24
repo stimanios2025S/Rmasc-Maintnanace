@@ -156,7 +156,7 @@ export function SignaturePad({
         onPointerUp={end}
         onPointerLeave={end}
         onPointerCancel={end}
-        aria-label="Signature drawing area"
+        aria-label="Zone de signature manuscrite"
         className="mt-2 h-32 w-full touch-none rounded border border-gray-300 bg-white"
       />
 
@@ -167,10 +167,10 @@ export function SignaturePad({
           className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
         >
           <Eraser className="h-3.5 w-3.5" aria-hidden="true" />
-          Clear
+          Effacer
         </button>
         <span className="text-xs text-gray-400">
-          {hasStroke ? "Drawing captured" : "or type your name below"}
+          {hasStroke ? "Signature capturée" : "ou saisissez votre nom ci-dessous"}
         </span>
       </div>
 
@@ -178,7 +178,7 @@ export function SignaturePad({
         htmlFor={`signature-name-${label.replace(/\s+/g, "-").toLowerCase()}`}
         className="mt-3 block text-xs font-medium text-gray-600 dark:text-gray-400"
       >
-        Full name
+        Nom complet
       </label>
       <div className="relative mt-1">
         <Type
@@ -190,7 +190,7 @@ export function SignaturePad({
           type="text"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="e.g. Priya Nair"
+          placeholder="ex. : Ahmed Benali"
           autoComplete="name"
           className="w-full rounded-md border border-gray-300 bg-white py-2 pl-8 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:ring-blue-900"
         />
@@ -208,14 +208,14 @@ export function SignaturePad({
           ) : (
             <PenLine className="h-4 w-4" aria-hidden="true" />
           )}
-          Save signature
+          Enregistrer la signature
         </button>
         <button
           type="button"
           onClick={onCancel}
           className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
         >
-          Cancel
+          Annuler
         </button>
       </div>
     </div>

@@ -384,7 +384,7 @@ export function IncidentWizard({
               ) : (
                 <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
               )}
-              Problème Résolu
+              Problème résolu
             </button>
 
             <button
@@ -398,7 +398,7 @@ export function IncidentWizard({
               ) : (
                 <XCircle className="h-5 w-5" aria-hidden="true" />
               )}
-              Non Résolu
+              Non résolu
             </button>
           </div>
 

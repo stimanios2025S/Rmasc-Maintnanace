@@ -23,14 +23,17 @@ import { OWNER_ELIGIBLE_ROLES, SLA_TIERS } from "@/types";
 
 const CreateBuildingSchema = z
   .object({
-    name: z.string().min(1, "Name is required").max(200),
-    address: z.string().min(1, "Address is required").max(300),
-    city: z.string().min(1, "City is required").max(100),
+    name: z.string().min(1, "Le nom est obligatoire").max(200),
+    address: z.string().min(1, "L'adresse est obligatoire").max(300),
+    city: z.string().min(1, "La ville est obligatoire").max(100),
     state: z.string().max(100).optional(),
     zipCode: z.string().max(20).optional(),
-    country: z.string().max(100).default("US"),
-    contactPerson: z.string().min(1, "Contact person is required").max(200),
-    contactEmail: z.string().email("Invalid email").optional(),
+    country: z.string().max(100).default("DZ"),
+    contactPerson: z
+      .string()
+      .min(1, "Le nom du contact est obligatoire")
+      .max(200),
+    contactEmail: z.string().email("Adresse e-mail invalide").optional(),
     contactPhone: z.string().max(50).optional(),
     slaTier: z.enum(SLA_TIERS).default("STANDARD"),
     latitude: z.number().min(-90).max(90).optional(),
@@ -114,7 +117,7 @@ export async function POST(request: NextRequest) {
       });
       if (!owner) {
         throw notFound(
-          `Owner not found or not eligible to own a building: ${parsed.ownerId}`
+          `Propriétaire introuvable ou non éligible pour posséder un immeuble : ${parsed.ownerId}`
         );
       }
     }

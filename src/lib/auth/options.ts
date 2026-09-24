@@ -37,8 +37,12 @@ export const authOptions: NextAuthOptions = {
     CredentialsProvider({
       name: "credentials",
       credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
+        // Only ever rendered by NextAuth's built-in sign-in page, which this
+        // application does not use — `/connexion` posts these fields itself.
+        // Translated anyway so the fallback page is not the one English screen
+        // left in the product.
+        email: { label: "Adresse e-mail", type: "email" },
+        password: { label: "Mot de passe", type: "password" },
       },
       async authorize(credentials) {
         try {
@@ -105,7 +109,10 @@ export const authOptions: NextAuthOptions = {
     },
   },
   pages: {
-    signIn: "/login",
+    // Must match `pages.signIn` in `src/middleware.ts` and the `/connexion`
+    // folder under `src/app/(auth)/`: NextAuth sends an unauthenticated visitor
+    // here, and a mismatch would land them on the built-in English form.
+    signIn: "/connexion",
   },
   debug: process.env.NODE_ENV === "development",
   secret: process.env.NEXTAUTH_SECRET,

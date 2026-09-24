@@ -82,7 +82,7 @@ export async function createWorkOrderWithUniqueNumber(
       console.warn("[work-orders] order number collision, retrying");
     }
   }
-  throw new Error("Failed to allocate a unique work order number");
+  throw new Error("Impossible d'attribuer un numéro de bon de travail unique");
 }
 
 export interface EmergencyWorkOrderInput {
@@ -140,7 +140,7 @@ export async function raiseEmergencyWorkOrder({
   const workOrder = await createWorkOrderWithUniqueNumber(
     {
       title,
-      description: `${message} (Elevator: ${elevatorCode})`,
+      description: `${message} (Ascenseur : ${elevatorCode})`,
       type: "EMERGENCY",
       priority: severity === "EMERGENCY" ? "CRITICAL" : "EMERGENCY",
       elevatorId,

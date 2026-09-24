@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { formatDistanceToNow } from "date-fns";
+import { fr } from "date-fns/locale";
 import {
   AlertOctagon,
   Loader2,
@@ -18,6 +19,7 @@ import { ProgressTrack } from "@/components/ui/progress-track";
 import { ValidationBadge } from "@/components/ui/validation-badge";
 import { DispatchModal } from "@/components/admin/dispatch-modal";
 import { allowedTransitions } from "@/lib/incidents/progress";
+import { enumLabel } from "@/lib/ui/enum-labels";
 import type { IncidentStatus } from "@/types";
 
 /**
@@ -61,11 +63,11 @@ interface IncidentRow {
 
 /** Labels for the status an action moves an incident *to*. */
 const TRANSITION_LABELS: Record<IncidentStatus, string> = {
-  ESCALATED: "Return to queue",
-  TECHNICIAN_ASSIGNED: "Assign",
-  IN_PROGRESS: "Start work",
-  CLOSED: "Close",
-  RESOLVED_BY_CLIENT: "Resolved by client",
+  ESCALATED: "Renvoyer en file",
+  TECHNICIAN_ASSIGNED: "Affecter",
+  IN_PROGRESS: "Démarrer l'intervention",
+  CLOSED: "Clôturer",
+  RESOLVED_BY_CLIENT: "Résolu par le client",
 };
 
 const TRANSITION_ICONS: Record<IncidentStatus, typeof PlayCircle> = {
@@ -77,13 +79,13 @@ const TRANSITION_ICONS: Record<IncidentStatus, typeof PlayCircle> = {
 };
 
 const FILTERS: { key: "open" | IncidentStatus | "all"; label: string }[] = [
-  { key: "open", label: "Needs attention" },
-  { key: "ESCALATED", label: "Awaiting dispatch" },
-  { key: "TECHNICIAN_ASSIGNED", label: "Assigned" },
-  { key: "IN_PROGRESS", label: "In progress" },
-  { key: "CLOSED", label: "Closed" },
-  { key: "RESOLVED_BY_CLIENT", label: "Self-resolved" },
-  { key: "all", label: "All" },
+  { key: "open", label: "À traiter" },
+  { key: "ESCALATED", label: "En attente d'affectation" },
+  { key: "TECHNICIAN_ASSIGNED", label: "Affecté" },
+  { key: "IN_PROGRESS", label: "En cours" },
+  { key: "CLOSED", label: "Clôturé" },
+  { key: "RESOLVED_BY_CLIENT", label: "Résolu par le client" },
+  { key: "all", label: "Tous" },
 ];
 
 const OPEN_STATUSES: readonly IncidentStatus[] = [
@@ -113,11 +115,14 @@ export default function AdminIncidentsPage() {
 
     try {
       const res = await fetch("/api/incidents?limit=100");
-      if (!res.ok) throw new Error(`Incidents API returned ${res.status}`);
+      if (!res.ok)
+        throw new Error(`L'API des incidents a répondu ${res.status}`);
       const json = await res.json();
       setIncidents(json.data ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load incidents");
+      setError(
+        e instanceof Error ? e.message : "Échec du chargement des incidents"
+      );
     } finally {
       setLoading(false);
     }
@@ -170,13 +175,13 @@ export default function AdminIncidentsPage() {
       if (!res.ok) {
         const payload = await res.json().catch(() => null);
         throw new Error(
-          payload?.error ?? payload?.message ?? "The update was rejected."
+          payload?.error ?? payload?.message ?? "La mise à jour a été refusée."
         );
       }
 
       await load({ silent: true });
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : "The update failed.");
+      setActionError(e instanceof Error ? e.message : "La mise à jour a échoué.");
     } finally {
       setBusyId(null);
     }
@@ -204,27 +209,32 @@ export default function AdminIncidentsPage() {
 
   const tiles = [
     {
-      label: "Awaiting dispatch",
+      label: "En attente d'affectation",
       value: counts.awaiting,
-      hint: counts.emergencies > 0 ? `${counts.emergencies} emergency` : "none urgent",
+      hint:
+        counts.emergencies > 0
+          ? `${counts.emergencies} ${
+              counts.emergencies > 1 ? "urgences" : "urgence"
+            }`
+          : "aucune urgence",
       urgent: counts.emergencies > 0,
     },
     {
-      label: "In progress",
+      label: "En cours",
       value: counts.active,
-      hint: "technician on site",
+      hint: "technicien sur site",
       urgent: false,
     },
     {
-      label: "Self-resolved",
+      label: "Résolus par le client",
       value: counts.selfResolved,
-      hint: "resolved by the client",
+      hint: "sans intervention",
       urgent: false,
     },
     {
-      label: "Total logged",
+      label: "Total enregistré",
       value: incidents.length,
-      hint: "all time",
+      hint: "depuis l'origine",
       urgent: false,
     },
   ];
@@ -260,7 +270,7 @@ export default function AdminIncidentsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div
             role="tablist"
-            aria-label="Filter incidents"
+            aria-label="Filtrer les incidents"
             className="flex flex-wrap gap-1.5"
           >
             {FILTERS.map((option) => (
@@ -287,7 +297,7 @@ export default function AdminIncidentsPage() {
             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
           >
             <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            Refresh
+            Actualiser
           </button>
         </div>
 
@@ -302,8 +312,8 @@ export default function AdminIncidentsPage() {
 
         {visible.length === 0 ? (
           <p className="mt-6 text-sm text-gray-500 dark:text-gray-400">
-            Nothing here. Incidents reported from the client portal appear in
-            this list.
+            Rien à afficher. Les incidents signalés depuis l'espace client
+            apparaissent dans cette liste.
           </p>
         ) : (
           <ul className="mt-5 space-y-4">
@@ -340,7 +350,7 @@ export default function AdminIncidentsPage() {
                     {incident.isDirectTransfer && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
                         <AlertOctagon className="h-3 w-3" aria-hidden="true" />
-                        Emergency
+                        Urgence
                       </span>
                     )}
 
@@ -349,6 +359,7 @@ export default function AdminIncidentsPage() {
                     <span className="ml-auto text-xs text-gray-400">
                       {formatDistanceToNow(new Date(incident.createdAt), {
                         addSuffix: true,
+                        locale: fr,
                       })}
                     </span>
                   </div>
@@ -364,18 +375,23 @@ export default function AdminIncidentsPage() {
                     )}
                     {incident.notes ??
                       (incident.isDirectTransfer
-                        ? "Emergency assistance requested — no fault description given."
-                        : "No description provided.")}
+                        ? "Assistance d'urgence demandée — aucune description de la panne fournie."
+                        : "Aucune description fournie.")}
                   </p>
 
                   <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                    Reported by {incident.client.name ?? incident.client.email}
+                    Signalé par{" "}
+                    {incident.client.name ?? incident.client.email}
                     {incident.client.phone ? ` · ${incident.client.phone}` : ""}
                     {incident.technician
-                      ? ` · Attending: ${incident.technician.name ?? incident.technician.email}`
+                      ? ` · Sur place : ${
+                          incident.technician.name ?? incident.technician.email
+                        }`
                       : ""}
                     {incident.workOrder
-                      ? ` · WO ${incident.workOrder.orderNumber} (${incident.workOrder.priority})`
+                      ? ` · BT ${incident.workOrder.orderNumber} (${enumLabel(
+                          incident.workOrder.priority
+                        )})`
                       : ""}
                   </p>
 
@@ -390,7 +406,7 @@ export default function AdminIncidentsPage() {
                           className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
                         >
                           <UserPlus className="h-4 w-4" aria-hidden="true" />
-                          Dispatch technician
+                          Affecter un technicien
                         </button>
                       )}
 
