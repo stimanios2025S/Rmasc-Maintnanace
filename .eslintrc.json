@@ -1,0 +1,10 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "eqeqeq": ["error", "smart"],
+    "no-var": "error",
+    "prefer-const": "warn"
+  },
+  "ignorePatterns": ["node_modules/", ".next/", "out/"]
+}

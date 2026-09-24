@@ -1,0 +1,656 @@
+// ─────────────────────────────────────────────────────────────
+// ElevatorPulse – Prisma Schema
+// Predictive & Preventive Maintenance Platform for Elevators
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ──────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  MAINTENANCE_MANAGER
+  FIELD_TECHNICIAN
+  BUILDING_OWNER
+}
+
+enum SLATier {
+  BASIC
+  STANDARD
+  PREMIUM
+  ENTERPRISE
+}
+
+enum ElevatorStatus {
+  OPERATIONAL
+  SERVICE_REQUIRED
+  ANOMALY_DETECTED
+  CRITICAL_SHUTDOWN
+  OFFLINE
+}
+
+enum ElevatorBrand {
+  OTIS
+  SCHINDLER
+  THYSSENKRUPP
+  MITSUBISHI
+  HITACHI
+  KONE
+  OTHER
+}
+
+enum MotorType {
+  AC_GEARED
+  AC_GEARDLESS
+  DC_GEARED
+  HYDRAULIC
+  OTHER
+}
+
+enum ControllerType {
+  MICROPROCESSOR
+  PLC
+  RELAY_LOGIC
+  FULLY_DIGITAL
+  OTHER
+}
+
+enum MaintenanceFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  SEMI_ANNUAL
+  ANNUAL
+  BY_USAGE_CYCLES
+}
+
+enum WorkOrderStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkOrderPriority {
+  LOW
+  MEDIUM
+  HIGH
+  EMERGENCY
+  CRITICAL
+}
+
+enum WorkOrderType {
+  PREVENTIVE
+  PREDICTIVE
+  CORRECTIVE
+  EMERGENCY
+  INSPECTION
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  ANOMALY
+  CRITICAL
+  EMERGENCY
+}
+
+enum ComponentType {
+  TRACTION_MOTOR
+  BRAKE_ASSEMBLY
+  DOOR_OPERATOR
+  STEEL_ROPES
+  GUIDE_SHOES
+  CONTROLLER_BOARD
+  COUNTERWEIGHT
+  CABIN
+  HYDRAULIC_UNIT
+  SAFETY_GEAR
+  BUFFER
+  OTHER
+}
+
+enum InspectionCheckResult {
+  PASS
+  FAIL
+  NEEDS_ATTENTION
+  NOT_APPLICABLE
+}
+
+/// Whether a field technician can be sent to a job.
+///
+/// Carried by `User.status`. Only meaningful for `FIELD_TECHNICIAN` rows —
+/// an administrator or a building owner holds at the default and nothing reads
+/// it — but it lives on `User` because that is the table a dispatch decision
+/// selects from, and a separate technician table would be a join for one
+/// column.
+///
+/// Declared in *availability order*: AVAILABLE and ON_JOB are both
+/// dispatchable (a technician already on a job can still be queued behind it);
+/// OFF_DUTY and ON_LEAVE are not. The roster filter relies on that split
+/// rather than on an inline list at the call site.
+enum TechnicianStatus {
+  AVAILABLE
+  ON_JOB
+  OFF_DUTY
+  ON_LEAVE
+}
+
+enum PredictiveRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// Where a client-reported fault has reached in the resolution pipeline.
+///
+/// Declared in *pipeline order*, not alphabetically: the progress bar maps
+/// these to 25 / 50 / 75 / 100 and relies on that ordering (see
+/// `incidentProgress` in `src/lib/incidents/progress.ts`).
+///
+/// RESOLVED_BY_CLIENT sits last on purpose. It is a terminal state reached by
+/// the customer working through the error code's own guidance — no technician
+/// is involved and no work order is raised — so it is "finished", but it is
+/// *finished without us*. The admin board keeps its own badge for it so a
+/// self-resolved fault is never counted as validated work.
+enum IncidentStatus {
+  ESCALATED
+  TECHNICIAN_ASSIGNED
+  IN_PROGRESS
+  CLOSED
+  RESOLVED_BY_CLIENT
+}
+
+// ─── USERS & AUTH ───────────────────────────────────────────
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String
+  passwordHash  String   @map("password_hash")
+  role          UserRole
+  phone         String?
+  avatarUrl     String?  @map("avatar_url")
+  isActive      Boolean  @default(true) @map("is_active")
+  /// Whether this technician can be dispatched. Defaults to AVAILABLE so the
+  /// column is safe to add to a populated table: existing rows become
+  /// dispatchable, which is what they were before the column existed.
+  status        TechnicianStatus @default(AVAILABLE)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  assignedWorkOrders   WorkOrder[]       @relation("TechnicianWorkOrders")
+  createdWorkOrders    WorkOrder[]       @relation("CreatorWorkOrders")
+  ownedBuildings       Building[]
+  inspectionReports    InspectionReport[]
+  alerts               Alert[]
+  notifications        Notification[]
+  sessions             Session[]
+
+  // Two distinct roles on the same model, so both need naming: a client
+  // account that *reports* a fault is a different person from the field
+  // technician who *resolves* it.
+  reportedIncidents    IncidentReport[] @relation("ClientIncidents")
+  assignedIncidents    IncidentReport[] @relation("TechnicianIncidents")
+
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("sessions")
+}
+
+// ─── BUILDINGS & ELEVATOR ASSETS ────────────────────────────
+
+model Building {
+  id            String    @id @default(cuid())
+  name          String
+  address       String
+  city          String
+  state         String?
+  zipCode       String?   @map("zip_code")
+  country       String    @default("US")
+  contactPerson String    @map("contact_person")
+  contactEmail  String?   @map("contact_email")
+  contactPhone  String?   @map("contact_phone")
+  slaTier       SLATier   @default(STANDARD) @map("sla_tier")
+  latitude      Float?
+  longitude     Float?
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relationships
+  elevators     Elevator[]
+  ownerId       String?   @map("owner_id")
+  owner         User?     @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+
+  // Every BUILDING_OWNER read is filtered on `owner_id` (see
+  // `buildingScopeFor` in src/lib/api/guard.ts), so this is a hot filter, not
+  // an incidental relation.
+  @@index([ownerId])
+  @@map("buildings")
+}
+
+model Elevator {
+  id               String         @id @default(cuid())
+  elevatorCode     String         @unique @map("elevator_code")
+  buildingId       String         @map("building_id")
+  brand            ElevatorBrand
+  model            String
+  serialNumber     String?        @map("serial_number")
+  installationDate DateTime?      @map("installation_date")
+  motorType        MotorType      @map("motor_type")
+  maxPayloadKg     Float          @map("max_payload_kg")
+  controllerType   ControllerType @map("controller_type")
+  floorsServed     Int            @map("floors_served")
+  status           ElevatorStatus @default(OPERATIONAL)
+  operatingHours   Float          @default(0) @map("operating_hours")
+  doorCycleCount   Int            @default(0) @map("door_cycle_count")
+  brakeActuations  Int            @default(0) @map("brake_actuations")
+  lastMaintenance  DateTime?      @map("last_maintenance")
+  nextMaintenance  DateTime?      @map("next_maintenance")
+  overallHealth    Float          @default(100) @map("overall_health")
+  isActive         Boolean        @default(true) @map("is_active")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  // Relationships
+  building         Building       @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  components       ElevatorComponent[]
+  telemetryStreams  TelemetryStream[]
+  maintenanceSchedules MaintenanceSchedule[]
+  workOrders       WorkOrder[]
+  alerts           Alert[]
+  predictiveScores PredictiveScore[]
+  inspectionReports InspectionReport[]
+  incidents        IncidentReport[]
+  latestTelemetry  TelemetrySnapshot? @relation("LatestTelemetry")
+
+  @@index([buildingId])
+  @@index([status])
+  @@map("elevators")
+}
+
+model ElevatorComponent {
+  id            String        @id @default(cuid())
+  elevatorId    String        @map("elevator_id")
+  componentType ComponentType @map("component_type")
+  name          String
+  manufacturer  String?
+  partNumber    String?       @map("part_number")
+  installedDate DateTime?     @map("installed_date")
+  expectedLifeHours Float?    @map("expected_life_hours")
+  currentLifeHours  Float     @default(0) @map("current_life_hours")
+  remainingUsefulLife Float  @default(100) @map("remaining_useful_life")
+  isActive      Boolean       @default(true) @map("is_active")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  // Relationships
+  elevator        Elevator        @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+  predictiveScores PredictiveScore[]
+  workOrders      WorkOrder[]
+
+  @@index([elevatorId])
+  @@unique([elevatorId, componentType])
+  @@map("elevator_components")
+}
+
+// ─── TELEMETRY & IOT ────────────────────────────────────────
+
+model TelemetryStream {
+  id              String    @id @default(cuid())
+  elevatorId      String    @map("elevator_id")
+  timestamp       DateTime  @default(now())
+  motorVibrationMmS Float? @map("motor_vibration_mm_s")
+  motorTemperatureC Float? @map("motor_temperature_c")
+  doorCycleCount  Int?      @map("door_cycle_count")
+  doorSpeedMs     Float?    @map("door_speed_ms")
+  cabinLoadKg     Float?    @map("cabin_load_kg")
+  levelingOffsetMm Float?  @map("leveling_offset_mm")
+  operatingHours  Float?    @map("operating_hours")
+  brakeActuations Int?      @map("brake_actuations")
+  supplyVoltageV  Float?    @map("supply_voltage_v")
+  currentDrawA    Float?    @map("current_draw_a")
+  metadata        Json?     // Additional sensor data
+
+  // Relationships
+  elevator        Elevator  @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+
+  @@index([elevatorId, timestamp])
+  @@index([timestamp])
+  @@map("telemetry_streams")
+}
+
+model TelemetrySnapshot {
+  id              String    @id @default(cuid())
+  elevatorId      String    @unique @map("elevator_id")
+  motorVibrationMmS Float? @map("motor_vibration_mm_s")
+  motorTemperatureC Float? @map("motor_temperature_c")
+  doorCycleCount  Int?      @map("door_cycle_count")
+  doorSpeedMs     Float?    @map("door_speed_ms")
+  cabinLoadKg     Float?    @map("cabin_load_kg")
+  levelingOffsetMm Float?  @map("leveling_offset_mm")
+  operatingHours  Float?    @map("operating_hours")
+  brakeActuations Int?      @map("brake_actuations")
+  supplyVoltageV  Float?    @map("supply_voltage_v")
+  currentDrawA    Float?    @map("current_draw_a")
+  lastUpdated     DateTime  @default(now()) @map("last_updated")
+
+  elevator        Elevator  @relation("LatestTelemetry", fields: [elevatorId], references: [id], onDelete: Cascade)
+
+  @@map("telemetry_snapshots")
+}
+
+// ─── THRESHOLD RULES ────────────────────────────────────────
+
+model ThresholdRule {
+  id            String        @id @default(cuid())
+  metricName    String        @map("metric_name")
+  warningMin    Float?        @map("warning_min")
+  warningMax    Float?        @map("warning_max")
+  criticalMin   Float?        @map("critical_min")
+  criticalMax   Float?        @map("critical_max")
+  description   String?
+  isActive      Boolean       @default(true) @map("is_active")
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  alerts        Alert[]
+
+  @@unique([metricName])
+  @@map("threshold_rules")
+}
+
+// ─── ALERTS ─────────────────────────────────────────────────
+
+model Alert {
+  id              String        @id @default(cuid())
+  elevatorId      String        @map("elevator_id")
+  thresholdRuleId String?       @map("threshold_rule_id")
+  severity        AlertSeverity
+  title           String
+  message         String
+  metricName      String?       @map("metric_name")
+  metricValue     Float?        @map("metric_value")
+  isAcknowledged  Boolean       @default(false) @map("is_acknowledged")
+  acknowledgedBy  String?       @map("acknowledged_by")
+  acknowledgedAt  DateTime?     @map("acknowledged_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  resolvedAt      DateTime?     @map("resolved_at")
+
+  // Relationships
+  elevator        Elevator      @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+  thresholdRule   ThresholdRule? @relation(fields: [thresholdRuleId], references: [id], onDelete: SetNull)
+  acknowledgedByUser User?      @relation(fields: [acknowledgedBy], references: [id], onDelete: SetNull)
+  workOrders      WorkOrder[]
+
+  @@index([elevatorId, severity])
+  @@index([createdAt])
+  @@map("alerts")
+}
+
+// ─── PREDICTIVE AI SCORES ──────────────────────────────────
+
+model PredictiveScore {
+  id               String             @id @default(cuid())
+  elevatorId       String             @map("elevator_id")
+  componentId      String?            @map("component_id")
+  componentType    ComponentType      @map("component_type")
+  riskLevel        PredictiveRiskLevel @map("risk_level")
+  riskScore        Float              @map("risk_score") // 0-100
+  remainingUsefulLifePercent Float     @map("remaining_useful_life_percent")
+  predictedFailureDate DateTime?      @map("predicted_failure_date")
+  confidence       Float              @default(0) // 0-1
+  modelVersion     String?            @map("model_version")
+  features         Json?              // Input features used
+  recommendations  String[]
+  createdAt        DateTime           @default(now()) @map("created_at")
+  // Upserts reuse the existing row, so `createdAt` only records the *first*
+  // time a component was scored. Without `updatedAt` there was no way to tell
+  // how stale a stored score was.
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  // Relationships
+  elevator    Elevator             @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+  component   ElevatorComponent?   @relation(fields: [componentId], references: [id])
+
+  @@unique([elevatorId, componentType])
+  @@index([riskLevel])
+  @@map("predictive_scores")
+}
+
+// ─── MAINTENANCE SCHEDULING ────────────────────────────────
+
+model MaintenanceSchedule {
+  id            String               @id @default(cuid())
+  elevatorId    String               @map("elevator_id")
+  title         String
+  description   String?
+  frequency     MaintenanceFrequency
+  cycleThreshold Int?                @map("cycle_threshold") // For BY_USAGE_CYCLES
+  checklistItems Json                @map("checklist_items") // Array of checklist items
+  nextDueDate   DateTime             @map("next_due_date")
+  lastCompleted DateTime?            @map("last_completed")
+  isActive      Boolean              @default(true) @map("is_active")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  // Relationships
+  elevator      Elevator             @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+  workOrders    WorkOrder[]
+
+  @@index([elevatorId, nextDueDate])
+  @@map("maintenance_schedules")
+}
+
+// ─── WORK ORDERS ────────────────────────────────────────────
+
+model WorkOrder {
+  id              String            @id @default(cuid())
+  orderNumber     String            @unique @map("order_number")
+  title           String
+  description     String?
+  type            WorkOrderType
+  priority        WorkOrderPriority @default(MEDIUM)
+  status          WorkOrderStatus   @default(OPEN)
+
+  elevatorId      String            @map("elevator_id")
+  componentId     String?           @map("component_id")
+  scheduleId      String?           @map("schedule_id")
+  alertId         String?           @map("alert_id") @unique
+  assignedToId    String?           @map("assigned_to_id")
+  createdById     String?           @map("created_by_id")
+
+  estimatedHours  Float?            @map("estimated_hours")
+  actualHours     Float?            @map("actual_hours")
+  partsReplaced   Json?             @map("parts_replaced") // Array of {name, partNumber, qty}
+  notes           String?
+  photoUrls       String[]          @map("photo_urls")
+  signatureUrl    String?           @map("signature_url")
+
+  scheduledDate   DateTime?         @map("scheduled_date")
+  startedAt       DateTime?         @map("started_at")
+  completedAt     DateTime?         @map("completed_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  // Relationships
+  elevator        Elevator          @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+  component       ElevatorComponent? @relation(fields: [componentId], references: [id], onDelete: SetNull)
+  schedule        MaintenanceSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  alert           Alert?            @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  assignedTo      User?             @relation("TechnicianWorkOrders", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdBy       User?             @relation("CreatorWorkOrders", fields: [createdById], references: [id], onDelete: SetNull)
+  inspectionReports InspectionReport[]
+  incident        IncidentReport?
+
+  @@index([elevatorId, status])
+  @@index([assignedToId, status])
+  @@index([status, priority])
+  @@map("work_orders")
+}
+
+// ─── INSPECTION REPORTS ─────────────────────────────────────
+
+model InspectionReport {
+  id            String   @id @default(cuid())
+  workOrderId   String   @map("work_order_id")
+  technicianId  String   @map("technician_id")
+  elevatorId    String   @map("elevator_id")
+  reportNumber  String   @unique @map("report_number")
+  title         String
+  summary       String?
+  overallResult InspectionCheckResult @map("overall_result")
+  signatures    Json?    // Digital signature data
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relationships
+  workOrder     WorkOrder  @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  technician    User       @relation(fields: [technicianId], references: [id])
+  elevator      Elevator   @relation(fields: [elevatorId], references: [id])
+  checkItems    InspectionCheckItem[]
+
+  // The list endpoint paginates with `ORDER BY submitted_at DESC` and filters
+  // on technician (own reports), elevator (owner scoping) or work order
+  // (single report lookup). None of these were indexed, so every page load
+  // was a sequential scan plus sort over the whole history.
+  @@index([submittedAt])
+  @@index([technicianId, submittedAt])
+  @@index([elevatorId])
+  @@index([workOrderId])
+  @@map("inspection_reports")
+}
+
+model InspectionCheckItem {
+  id            String   @id @default(cuid())
+  reportId      String   @map("report_id")
+  checkName     String   @map("check_name")
+  description   String?
+  result        InspectionCheckResult
+  notes         String?
+  photoUrl      String?  @map("photo_url")
+  measuredValue Float?   @map("measured_value")
+  unit          String?
+
+  report        InspectionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("inspection_check_items")
+}
+
+// ─── NOTIFICATIONS ──────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  title     String
+  message   String
+  type      String   // alert, work_order, system
+  isRead    Boolean  @default(false) @map("is_read")
+  linkUrl   String?  @map("link_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+// ─── ERROR CODES (CLIENT SELF-SERVICE) ──────────────────────
+
+/// A controller fault code, written for a *non-technician*.
+///
+/// This is the first line of the client portal: a tenant reads the code off
+/// the controller display, looks it up, and follows `solution`. The copy here
+/// is therefore customer-facing prose, unlike `Alert.message`, which is
+/// written for staff reviewing a dashboard.
+///
+/// `audioUrl` is not decoration. A meaningful share of building occupants
+/// cannot read comfortably, so the accessibility mode plays this aloud
+/// instead of rendering `solution` as text — see the client portal's
+/// `speechSynthesis` path.
+model ErrorCode {
+  id          String   @id @default(cuid())
+  code        String   @unique // "E-101", shown verbatim on the controller
+  title       String
+  description String
+  solution    String // ordered steps, newline separated
+  audioUrl    String?  @map("audio_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  incidents   IncidentReport[]
+
+  @@index([isActive])
+  @@map("error_codes")
+}
+
+// ─── CLIENT INCIDENTS ───────────────────────────────────────
+
+/// A fault reported by a building's occupant, and its route to resolution.
+///
+/// Deliberately a separate model from `WorkOrder`, because the two answer
+/// different questions. A work order is *our* unit of labour: who is going,
+/// with what, by when. An incident is the *customer's* unit of experience:
+/// something broke, here is what I did about it. Most incidents never become
+/// work at all — the occupant reads the error code, follows the guidance and
+/// the thing is fixed (`RESOLVED_BY_CLIENT`).
+///
+/// The link between them is a nullable one-to-one (`workOrderId`), created
+/// only when escalation actually needs a technician. Forcing every reported
+/// fault to mint a work order would flood the dispatch board with jobs that
+/// a tenant resolved by power-cycling the controller.
+model IncidentReport {
+  id               String         @id @default(cuid())
+  incidentNumber   String         @unique @map("incident_number")
+  elevatorId       String         @map("elevator_id")
+  clientId         String         @map("client_id")
+  errorCodeId      String?        @map("error_code_id")
+  status           IncidentStatus @default(ESCALATED)
+  isDirectTransfer Boolean        @default(false) @map("is_direct_transfer")
+  workOrderId      String?        @unique @map("work_order_id")
+  technicianId     String?        @map("technician_id")
+  notes            String?
+  audioNoteUrl     String?        @map("audio_note_url")
+  resolvedAt       DateTime?      @map("resolved_at")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  // Relationships
+  elevator         Elevator   @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+  client           User       @relation("ClientIncidents", fields: [clientId], references: [id], onDelete: Cascade)
+  errorCode        ErrorCode? @relation(fields: [errorCodeId], references: [id], onDelete: SetNull)
+  workOrder        WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  technician       User?      @relation("TechnicianIncidents", fields: [technicianId], references: [id], onDelete: SetNull)
+
+  // The admin board filters by status and sorts by recency; the client portal
+  // asks "my own incidents" and the technician queue "assigned to me". Each of
+  // those is a leading-equality + sort, which is exactly what these cover.
+  @@index([status, createdAt])
+  @@index([clientId, status])
+  @@index([technicianId, status])
+  @@index([elevatorId, status])
+  @@index([createdAt])
+  @@map("incident_reports")
+}

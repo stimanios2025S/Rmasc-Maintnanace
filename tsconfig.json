@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    // `target` was previously unset, so TypeScript defaulted to ES5 and
+    // rejected `for...of` over `Map` and `Uint8Array` without
+    // `--downlevelIteration`. Next.js compiles the app with SWC, so this
+    // only governs type checking and the emitted lib/feature surface.
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
