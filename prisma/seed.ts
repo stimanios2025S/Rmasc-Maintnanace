@@ -85,7 +85,7 @@ const TechnicianStatus = {
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("🌱 Seeding ElevatorPulse database...\n");
+  console.log("🌱 Peuplement de la base ElevatorPulse...\n");
 
   // ─── Users ──────────────────────────────────────────────
 
@@ -97,16 +97,16 @@ async function main() {
     // hash (the #1 cause of "Invalid email or password"), fix it.
     update: {
       passwordHash: password,
-      name: "System Admin",
+      name: "Administrateur système",
       role: UserRole.ADMIN,
       isActive: true,
     },
     create: {
       email: "admin@elevatorpulse.com",
-      name: "System Admin",
+      name: "Administrateur système",
       passwordHash: password,
       role: UserRole.ADMIN,
-      phone: "+1-555-0100",
+      phone: "+213 21 00 00 01",
     },
   });
 
@@ -114,16 +114,16 @@ async function main() {
     where: { email: "manager@elevatorpulse.com" },
     update: {
       passwordHash: password,
-      name: "Sarah Mitchell",
+      name: "Amina Belkacem",
       role: UserRole.MAINTENANCE_MANAGER,
       isActive: true,
     },
     create: {
       email: "manager@elevatorpulse.com",
-      name: "Sarah Mitchell",
+      name: "Amina Belkacem",
       passwordHash: password,
       role: UserRole.MAINTENANCE_MANAGER,
-      phone: "+1-555-0200",
+      phone: "+213 21 00 00 02",
     },
   });
 
@@ -131,17 +131,17 @@ async function main() {
     where: { email: "tech1@elevatorpulse.com" },
     update: {
       passwordHash: password,
-      name: "James Rodriguez",
+      name: "Karim Haddad",
       role: UserRole.FIELD_TECHNICIAN,
       isActive: true,
       status: TechnicianStatus.AVAILABLE,
     },
     create: {
       email: "tech1@elevatorpulse.com",
-      name: "James Rodriguez",
+      name: "Karim Haddad",
       passwordHash: password,
       role: UserRole.FIELD_TECHNICIAN,
-      phone: "+1-555-0301",
+      phone: "+213 21 00 00 03",
       status: TechnicianStatus.AVAILABLE,
     },
   });
@@ -152,17 +152,17 @@ async function main() {
     where: { email: "tech2@elevatorpulse.com" },
     update: {
       passwordHash: password,
-      name: "Wei Chen",
+      name: "Yacine Bouzid",
       role: UserRole.FIELD_TECHNICIAN,
       isActive: true,
       status: TechnicianStatus.ON_JOB,
     },
     create: {
       email: "tech2@elevatorpulse.com",
-      name: "Wei Chen",
+      name: "Yacine Bouzid",
       passwordHash: password,
       role: UserRole.FIELD_TECHNICIAN,
-      phone: "+1-555-0302",
+      phone: "+213 21 00 00 04",
       status: TechnicianStatus.ON_JOB,
     },
   });
@@ -175,17 +175,17 @@ async function main() {
     where: { email: "tech3@elevatorpulse.com" },
     update: {
       passwordHash: password,
-      name: "Ilse Fontaine",
+      name: "Leïla Mansouri",
       role: UserRole.FIELD_TECHNICIAN,
       isActive: true,
       status: TechnicianStatus.ON_LEAVE,
     },
     create: {
       email: "tech3@elevatorpulse.com",
-      name: "Ilse Fontaine",
+      name: "Leïla Mansouri",
       passwordHash: password,
       role: UserRole.FIELD_TECHNICIAN,
-      phone: "+1-555-0303",
+      phone: "+213 21 00 00 05",
       status: TechnicianStatus.ON_LEAVE,
     },
   });
@@ -194,20 +194,20 @@ async function main() {
     where: { email: "owner@metroplaza.com" },
     update: {
       passwordHash: password,
-      name: "Robert Anderson",
+      name: "Rachid Zerrouki",
       role: UserRole.BUILDING_OWNER,
       isActive: true,
     },
     create: {
       email: "owner@metroplaza.com",
-      name: "Robert Anderson",
+      name: "Rachid Zerrouki",
       passwordHash: password,
       role: UserRole.BUILDING_OWNER,
-      phone: "+1-555-0400",
+      phone: "+213 21 00 00 06",
     },
   });
 
-  console.log("  ✅ Users created");
+  console.log("  ✅ Utilisateurs créés");
 
   // ─── Buildings (idempotent: delete-and-recreate keeps FK graph clean) ──
 
@@ -215,54 +215,54 @@ async function main() {
 
   const building1 = await prisma.building.create({
     data: {
-      name: "Metro Plaza Tower",
-      address: "100 Commerce Street",
-      city: "Dallas",
-      state: "TX",
-      zipCode: "75201",
-      contactPerson: "Robert Anderson",
+      name: "Immeuble Le Panorama",
+      address: "12 rue Didouche Mourad",
+      city: "Alger",
+      state: "Alger",
+      zipCode: "16000",
+      contactPerson: "Rachid Zerrouki",
       contactEmail: "owner@metroplaza.com",
-      contactPhone: "+1-555-0400",
+      contactPhone: "+213 21 00 00 06",
       slaTier: SLATier.PREMIUM,
-      latitude: 32.7876,
-      longitude: -96.7985,
+      latitude: 36.7538,
+      longitude: 3.0588,
       ownerId: owner.id,
     },
   });
 
   const building2 = await prisma.building.create({
     data: {
-      name: "Riverside Office Complex",
-      address: "250 River Road",
-      city: "Austin",
-      state: "TX",
-      zipCode: "78701",
-      contactPerson: "Maria Santos",
-      contactEmail: "maria@riversideoffice.com",
-      contactPhone: "+1-555-0500",
+      name: "Complexe d'affaires Les Oliviers",
+      address: "45 boulevard de la Soummam",
+      city: "Oran",
+      state: "Oran",
+      zipCode: "31000",
+      contactPerson: "Nadia Boumediene",
+      contactEmail: "n.boumediene@les-oliviers.dz",
+      contactPhone: "+213 41 00 00 07",
       slaTier: SLATier.STANDARD,
-      latitude: 30.2672,
-      longitude: -97.7431,
+      latitude: 35.6971,
+      longitude: -0.6308,
     },
   });
 
   const building3 = await prisma.building.create({
     data: {
-      name: "Harborview Residences",
-      address: "50 Harbor Drive",
-      city: "San Diego",
-      state: "CA",
-      zipCode: "92101",
-      contactPerson: "Tom Nakamura",
-      contactEmail: "tom@harborview.com",
-      contactPhone: "+1-555-0600",
+      name: "Résidence El Bahia",
+      address: "8 avenue Aouati Mostefa",
+      city: "Constantine",
+      state: "Constantine",
+      zipCode: "25000",
+      contactPerson: "Samir Lakhdari",
+      contactEmail: "s.lakhdari@elbahia.dz",
+      contactPhone: "+213 31 00 00 08",
       slaTier: SLATier.ENTERPRISE,
-      latitude: 32.7157,
-      longitude: -117.1611,
+      latitude: 36.365,
+      longitude: 6.6147,
     },
   });
 
-  console.log("  ✅ Buildings created");
+  console.log("  ✅ Immeubles créés");
 
   // ─── Elevators & Components ─────────────────────────────
 
@@ -356,42 +356,42 @@ async function main() {
     const components = [
       {
         componentType: ComponentType.TRACTION_MOTOR,
-        name: `${spec.brand} Traction Motor`,
+        name: `${spec.brand} — moteur de traction`,
         manufacturer: spec.brand,
         expectedLifeHours: 60000,
         currentLifeHours: spec.operatingHours,
       },
       {
         componentType: ComponentType.BRAKE_ASSEMBLY,
-        name: `${spec.brand} Brake Assembly`,
+        name: `${spec.brand} — ensemble de frein`,
         manufacturer: spec.brand,
         expectedLifeHours: 45000,
         currentLifeHours: spec.operatingHours * 0.9,
       },
       {
         componentType: ComponentType.DOOR_OPERATOR,
-        name: `${spec.brand} Door Operator`,
+        name: `${spec.brand} — opérateur de porte`,
         manufacturer: spec.brand,
         expectedLifeHours: 40000,
         currentLifeHours: spec.operatingHours * 0.85,
       },
       {
         componentType: ComponentType.STEEL_ROPES,
-        name: "Steel Hoist Ropes (4x)",
+        name: "Câbles de levage en acier (4×)",
         manufacturer: "CERHA",
         expectedLifeHours: 50000,
         currentLifeHours: spec.operatingHours * 0.95,
       },
       {
         componentType: ComponentType.GUIDE_SHOES,
-        name: "Guide Shoes (Teflon)",
+        name: "Patins de guidage (PTFE)",
         manufacturer: "CERHA",
         expectedLifeHours: 35000,
         currentLifeHours: spec.operatingHours * 0.7,
       },
       {
         componentType: ComponentType.CONTROLLER_BOARD,
-        name: `${spec.brand} Controller Board`,
+        name: `${spec.brand} — carte de commande`,
         manufacturer: spec.brand,
         expectedLifeHours: 80000,
         currentLifeHours: spec.operatingHours,
@@ -422,20 +422,20 @@ async function main() {
     await prisma.maintenanceSchedule.create({
       data: {
         elevatorId: elevator.id,
-        title: "Monthly Safety Inspection",
+        title: "Inspection de sécurité mensuelle",
         description:
-          "Comprehensive safety inspection including rope tension, brake test, leveling check, and door operation verification.",
+          "Inspection de sécurité complète : tension des câbles, essai des freins, contrôle du nivellement et vérification du fonctionnement des portes.",
         frequency: MaintenanceFrequency.MONTHLY,
         nextDueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
         checklistItems: [
-          { name: "Rope tension check", required: true },
-          { name: "Emergency brake test", required: true },
-          { name: "Cabin leveling verification", required: true },
-          { name: "Motor lubrication", required: true },
-          { name: "Door sensor calibration", required: true },
-          { name: "Emergency phone test", required: true },
-          { name: "Pit inspection", required: true },
-          { name: "Governor speed test", required: true },
+          { name: "Contrôle de la tension des câbles", required: true },
+          { name: "Essai du frein d'urgence", required: true },
+          { name: "Vérification du nivellement de la cabine", required: true },
+          { name: "Graissage du moteur", required: true },
+          { name: "Calibration des capteurs de porte", required: true },
+          { name: "Essai du téléphone d'urgence", required: true },
+          { name: "Inspection de la fosse", required: true },
+          { name: "Essai du limiteur de vitesse", required: true },
         ],
       },
     });
@@ -443,25 +443,25 @@ async function main() {
     await prisma.maintenanceSchedule.create({
       data: {
         elevatorId: elevator.id,
-        title: "Quarterly Full Service",
+        title: "Entretien complet trimestriel",
         description:
-          "Deep maintenance including controller diagnostics, rope replacement assessment, and motor vibration analysis.",
+          "Maintenance approfondie : diagnostic de l'armoire de commande, évaluation du remplacement des câbles et analyse des vibrations du moteur.",
         frequency: MaintenanceFrequency.QUARTERLY,
         nextDueDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000),
         checklistItems: [
-          { name: "Controller diagnostics", required: true },
-          { name: "Rope inspection & replacement assessment", required: true },
-          { name: "Motor vibration spectral analysis", required: true },
-          { name: "Guide rail lubrication", required: true },
-          { name: "Counterweight guide shoe inspection", required: true },
-          { name: "Buffer spring inspection", required: true },
-          { name: "Safety gear test", required: true },
+          { name: "Diagnostic de l'armoire de commande", required: true },
+          { name: "Inspection des câbles et évaluation du remplacement", required: true },
+          { name: "Analyse spectrale des vibrations du moteur", required: true },
+          { name: "Graissage des guides de la cabine", required: true },
+          { name: "Inspection des patins du contrepoids", required: true },
+          { name: "Inspection des ressorts d'amortisseur", required: true },
+          { name: "Essai du parachute", required: true },
         ],
       },
     });
   }
 
-  console.log("  ✅ Elevators, components, and schedules created");
+  console.log("  ✅ Ascenseurs, composants et plans d'entretien créés");
 
   // ─── Threshold Rules ────────────────────────────────────
 
@@ -471,12 +471,12 @@ async function main() {
   // — it previously sat here with 4500/5000 kg and silently did nothing when
   // edited.
   const thresholds = [
-    { metricName: "motor_vibration_mm_s", warningMax: 4.0, criticalMax: 7.0, description: "Motor vibration level in mm/s RMS" },
-    { metricName: "motor_temperature_c", warningMax: 85, criticalMax: 105, description: "Motor winding temperature in Celsius" },
-    { metricName: "door_speed_ms", warningMax: 1.5, criticalMax: 2.0, warningMin: 0.3, criticalMin: 0.1, description: "Door opening/closing speed in m/s" },
-    { metricName: "leveling_offset_mm", warningMax: 8, criticalMax: 15, warningMin: -8, criticalMin: -15, description: "Floor leveling offset in mm" },
-    { metricName: "supply_voltage_v", warningMax: 440, criticalMax: 460, warningMin: 360, criticalMin: 340, description: "Supply voltage in volts" },
-    { metricName: "current_draw_a", warningMax: 60, criticalMax: 80, description: "Motor current draw in amps" },
+    { metricName: "motor_vibration_mm_s", warningMax: 4.0, criticalMax: 7.0, description: "Niveau de vibration du moteur, en mm/s RMS" },
+    { metricName: "motor_temperature_c", warningMax: 85, criticalMax: 105, description: "Température des enroulements du moteur, en degrés Celsius" },
+    { metricName: "door_speed_ms", warningMax: 1.5, criticalMax: 2.0, warningMin: 0.3, criticalMin: 0.1, description: "Vitesse d'ouverture et de fermeture des portes, en m/s" },
+    { metricName: "leveling_offset_mm", warningMax: 8, criticalMax: 15, warningMin: -8, criticalMin: -15, description: "Écart de nivellement à l'étage, en mm" },
+    { metricName: "supply_voltage_v", warningMax: 440, criticalMax: 460, warningMin: 360, criticalMin: 340, description: "Tension d'alimentation, en volts" },
+    { metricName: "current_draw_a", warningMax: 60, criticalMax: 80, description: "Courant absorbé par le moteur, en ampères" },
   ];
 
   for (const t of thresholds) {
@@ -493,7 +493,7 @@ async function main() {
     });
   }
 
-  console.log("  ✅ Threshold rules created");
+  console.log("  ✅ Règles de seuil créées");
 
   // ─── Sample Work Orders ─────────────────────────────────
 
@@ -502,8 +502,8 @@ async function main() {
   await prisma.workOrder.create({
     data: {
       orderNumber: "WO-202608-0001",
-      title: "Monthly Safety Inspection — Metro Plaza EL01",
-      description: "Scheduled monthly safety inspection for elevator EP-BLD01-EL01.",
+      title: "Inspection de sécurité mensuelle — Immeuble Le Panorama EL01",
+      description: "Inspection de sécurité mensuelle planifiée pour l'ascenseur EP-BLD01-EL01.",
       type: "PREVENTIVE",
       priority: "MEDIUM",
       status: "ASSIGNED",
@@ -518,9 +518,9 @@ async function main() {
   await prisma.workOrder.create({
     data: {
       orderNumber: "WO-202608-0002",
-      title: "High Vibration Alert — Riverside EL01",
+      title: "Alerte vibrations élevées — Les Oliviers EL01",
       description:
-        "Motor vibration exceeding 4.0 mm/s threshold. Requires immediate inspection of traction motor mounting and brake assembly.",
+        "Vibrations du moteur au-delà du seuil de 4,0 mm/s. Inspection immédiate de la fixation du moteur de traction et de l'ensemble de frein requise.",
       type: "CORRECTIVE",
       priority: "HIGH",
       status: "OPEN",
@@ -533,9 +533,9 @@ async function main() {
   await prisma.workOrder.create({
     data: {
       orderNumber: "WO-202608-0003",
-      title: "Emergency: Motor Overheating — Harborview EL01",
+      title: "Urgence : surchauffe moteur — Résidence El Bahia EL01",
       description:
-        "CRITICAL: Motor temperature exceeding 105°C. Elevator shut down. Immediate inspection required.",
+        "CRITIQUE : température du moteur au-delà de 105 °C. Ascenseur à l'arrêt. Inspection immédiate requise.",
       type: "EMERGENCY",
       priority: "CRITICAL",
       status: "IN_PROGRESS",
@@ -547,7 +547,7 @@ async function main() {
     },
   });
 
-  console.log("  ✅ Sample work orders created");
+  console.log("  ✅ Bons de travail d'exemple créés");
 
   // ─── Error Code Catalogue ───────────────────────────────
 
@@ -573,7 +573,7 @@ async function main() {
     });
   }
 
-  console.log(`  ✅ ${ELEVATOR_ERROR_CODES.length} error codes created`);
+  console.log(`  ✅ ${ELEVATOR_ERROR_CODES.length} codes d'erreur créés`);
 
   // ─── Sample Client Incidents ────────────────────────────
 
@@ -589,12 +589,12 @@ async function main() {
   const escalationOrder = await prisma.workOrder.create({
     data: {
       orderNumber: "WO-202608-0004",
-      title: "Client report – EP-BLD01-EL02",
+      title: "Signalement client – EP-BLD01-EL02",
       description:
-        "Reported by the building through the client portal.\n" +
-        "Elevator: EP-BLD01-EL02\n" +
-        "Site: Metro Plaza Tower, 100 Commerce Street\n\n" +
-        "Reporter's description:\nLes portes restent ouvertes au rez-de-chaussée.",
+        "Signalé par l'immeuble via le portail client.\n" +
+        "Ascenseur : EP-BLD01-EL02\n" +
+        "Site : Immeuble Le Panorama, 12 rue Didouche Mourad\n\n" +
+        "Description du déclarant :\nLes portes restent ouvertes au rez-de-chaussée.",
       type: "CORRECTIVE",
       priority: "HIGH",
       status: "OPEN",
@@ -633,23 +633,25 @@ async function main() {
     },
   });
 
-  console.log("  ✅ Sample client incidents created");
+  console.log("  ✅ Signalements client d'exemple créés");
 
-  console.log("\n🎉 Seed complete!\n");
-  console.log("  Login credentials (all passwords: password123):");
-  console.log("    Admin:   admin@elevatorpulse.com");
-  console.log("    Manager: manager@elevatorpulse.com");
-  console.log(`    Tech 1:  ${tech1.email}   (${tech1.status})`);
-  console.log(`    Tech 2:  ${tech2.email}   (${tech2.status})`);
+  console.log("\n🎉 Peuplement terminé !\n");
+  console.log("  Identifiants de connexion (mot de passe commun : password123) :");
+  console.log("    Admin :            admin@elevatorpulse.com");
+  console.log("    Responsable :      manager@elevatorpulse.com");
+  console.log(`    Technicien 1 :     ${tech1.email}   (${tech1.status})`);
+  console.log(`    Technicien 2 :     ${tech2.email}   (${tech2.status})`);
   // Listed so the ON_LEAVE row is visible without a database client: she can
   // sign in, she simply cannot be dispatched.
-  console.log(`    Tech 3:  ${tech3.email}  (${tech3.status} — not dispatchable)`);
-  console.log("    Owner:   owner@metroplaza.com");
+  console.log(
+    `    Technicien 3 :     ${tech3.email}  (${tech3.status} — non affectable)`
+  );
+  console.log("    Client :           owner@metroplaza.com");
 }
 
 main()
   .catch((e) => {
-    console.error("Seed error:", e);
+    console.error("Erreur de peuplement :", e);
     process.exit(1);
   })
   .finally(async () => {
