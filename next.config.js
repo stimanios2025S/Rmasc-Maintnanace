@@ -10,6 +10,25 @@ const nextConfig = {
     // for any HTTPS origin. Nothing in the app loads a remote image, so the
     // list is empty; add explicit hosts (e.g. your CDN) if that changes.
     remotePatterns: [],
+
+    /**
+     * AVIF is dropped from the negotiation list, leaving WebP as the only
+     * modern format the optimiser will emit.
+     *
+     * Next.js defaults to `['image/avif', 'image/webp']`. AVIF output is the
+     * path named by GHSA-2xp9-vwfh-vxw4 — unauthenticated RCE in the Image
+     * Optimization API when AVIF is used. Next 14.2 carries no patch for it;
+     * the fix shipped in Next 16, which is a two-major-version upgrade this
+     * project has not taken. Removing AVIF closes that path today without
+     * touching application code: nothing here uses `next/image` at all (no
+     * import under `src/`, and `public/` is empty), so no rendered image loses
+     * anything by it. Add `image/avif` back only alongside the Next 16 move.
+     *
+     * This is a mitigation, not a fix. The rest of the advisory list covers
+     * surfaces this app does not use — Server Actions, rewrites, middleware,
+     * CSP nonces, Windows hosting — and is tracked with the upgrade.
+     */
+    formats: ["image/webp"],
   },
 
   async headers() {
