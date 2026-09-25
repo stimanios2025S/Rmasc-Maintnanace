@@ -6,6 +6,7 @@ import { signOut, useSession } from "next-auth/react";
 import {
   LayoutDashboard,
   ClipboardList,
+  FileSpreadsheet,
   Wrench,
   Bell,
   LogOut,
@@ -42,6 +43,15 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard },
   { href: "/ascenseurs", label: "Ascenseurs", icon: Activity },
   { href: "/bons-de-travail", label: "Bons de travail", icon: ClipboardList },
+  // The « Fiche Technique » board for non-contract clients. Same reasoning as
+  // /technicien below: the middleware gates it to OPS_ROLES, so the link is
+  // filtered to exactly those roles rather than offered and then refused.
+  {
+    href: "/fiches-techniques",
+    label: "Fiches techniques",
+    icon: FileSpreadsheet,
+    roles: OPS_ROLES,
+  },
   // Mirrors the middleware rule for /technicien. Without the filter a building
   // owner would see a link that silently bounces them back to the dashboard.
   { href: "/technicien", label: "Technicien", icon: Wrench, roles: OPS_ROLES },

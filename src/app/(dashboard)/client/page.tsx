@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ClipboardList, RefreshCw } from "lucide-react";
+import { ArrowRight, ClipboardList, FileSpreadsheet, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/states";
 import { ProgressTrack } from "@/components/ui/progress-track";
@@ -128,6 +129,40 @@ export default function ClientPortalPage() {
       <EmergencyButton elevators={elevators} onEscalated={refresh} />
 
       <IncidentWizard elevators={elevators} onSubmitted={refresh} />
+
+      {/* The « Fiche Technique » entry point. Deliberately placed after the two
+          fault-reporting paths: someone whose lift has stopped should reach the
+          emergency button and the wizard before this, because this form fixes
+          nothing today. It is here for the building manager setting up a first
+          visit, which is a different moment entirely. */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-900/30">
+            <FileSpreadsheet
+              className="h-5 w-5 text-blue-600 dark:text-blue-400"
+              aria-hidden="true"
+            />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">
+              Fiche technique
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Pas encore de contrat d&apos;entretien ? Décrivez votre
+              installation en quelques champs. Quatre informations suffisent
+              pour commencer — notre équipe technique relèvera le reste lors de
+              la visite.
+            </p>
+          </div>
+          <Link
+            href="/client/fiche-technique"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+          >
+            Remplir la fiche
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
+      </Card>
 
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3">

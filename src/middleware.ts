@@ -64,6 +64,22 @@ export default withAuth(
       }
     }
 
+    // The « Fiche Technique » board: every non-contract client's address,
+    // capacity and installation details. Gated to the same ops roles as the
+    // field portal rather than to management, because the technicians who
+    // complete the technical columns are its intended readers. A building
+    // owner must not see it — the API scopes their reads to their own sheets,
+    // and this keeps the page itself out of reach.
+    if (
+      pathname === "/fiches-techniques" ||
+      pathname.startsWith("/fiches-techniques/")
+    ) {
+      const role = token?.role;
+      if (!role || !OPS_ROLES.includes(role)) {
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
+      }
+    }
+
     // The dispatch board: escalated faults, emergency transfers and the
     // technician roster. A building owner who reaches it would see every
     // other customer's incidents and the company's staffing, so it is gated
@@ -132,6 +148,7 @@ export const config = {
     "/ascenseurs/:path*",
     "/bons-de-travail/:path*",
     "/technicien/:path*",
+    "/fiches-techniques/:path*",
     "/client/:path*",
     "/administration/:path*",
     "/rapports-inspection/:path*",

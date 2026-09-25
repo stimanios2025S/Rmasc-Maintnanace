@@ -205,6 +205,11 @@ model User {
   reportedIncidents    IncidentReport[] @relation("ClientIncidents")
   assignedIncidents    IncidentReport[] @relation("TechnicianIncidents")
 
+  /// « Fiche Technique » forms this account submitted. A client fills one in
+  /// per installation; staff may submit on a client's behalf from the admin
+  /// board, in which case `clientId` is that client's id, not theirs.
+  technicalSheets      TechnicalSheet[]
+
   @@map("users")
 }
 
@@ -285,6 +290,11 @@ model Elevator {
   inspectionReports InspectionReport[]
   incidents        IncidentReport[]
   latestTelemetry  TelemetrySnapshot? @relation("LatestTelemetry")
+
+  /// The « Fiche Technique » for this unit, when one has been submitted. At
+  /// most one per elevator — the unique constraint on the other side is what
+  /// enforces it.
+  technicalSheet   TechnicalSheet?
 
   @@index([buildingId])
   @@index([status])
@@ -653,4 +663,102 @@ model IncidentReport {
   @@index([elevatorId, status])
   @@index([createdAt])
   @@map("incident_reports")
+}
+
+// ─── FICHE TECHNIQUE (clients « Sans Contrat ») ─────────────
+
+/// The digitised « Fiche Technique » from *Conception Etude & Maintenance des
+/// Ascenseurs*.
+///
+/// WHY SO MUCH IS NULLABLE
+/// This form exists for clients we have no contract with — no prior file, no
+/// surveyed equipment. It is filled in from what the caretaker or the owner can
+/// read off the installation, so requiring the full technical breakdown would
+/// guarantee an empty form. Only the four fields in `REQUIRED_FIELD_NAMES`
+/// (`src/lib/technical-sheets/fields.ts`) are enforced; every technical column
+/// is nullable on purpose, and the maintenance team completes them on site.
+///
+/// ON DELETE BEHAVIOUR IS NOT COSMETIC HERE
+/// `elevator` is `SetNull`, and that is deliberate. `InspectionReport.elevator`
+/// was declared without a rule, so it defaulted to RESTRICT and made the whole
+/// graph undeletable — the seed failed on it with a foreign-key violation.
+/// A sheet that describes an installation we have since retired is still worth
+/// keeping, so the link is dropped rather than the row.
+model TechnicalSheet {
+  id         String  @id @default(cuid())
+  elevatorId String? @unique @map("elevator_id")
+  clientId   String  @map("client_id")
+
+  // ─── Obligatoires ─────────────────────────────────────────
+  /// Four fields the client always knows. See `REQUIRED_FIELD_NAMES`.
+  clientName     String @map("client_name")
+  location       String
+  weightCapacity String @map("weight_capacity")
+  numberOfFloors String @map("number_of_floors")
+
+  // ─── Optionnels — identification ──────────────────────────
+  serialNumber     String? @map("serial_number")
+  installationDate String? @map("installation_date")
+  technicianName   String? @map("technician_name")
+
+  // ─── Optionnels — machinerie ──────────────────────────────
+  machineType     String? @map("machine_type")
+  mainBreaker     String? @map("main_breaker")
+  plugSwitch      String? @map("plug_switch")
+  speedLimiter    String? @map("speed_limiter")
+  motorType       String? @map("motor_type")
+  speedVariator   String? @map("speed_variator")
+  arlCard         String? @map("arl_card")
+  inverter        String?
+  brakingResistor String? @map("braking_resistor")
+  chassis         String?
+  tractionRope    String? @map("traction_rope")
+
+  // ─── Optionnels — toit de cabine ──────────────────────────
+  inspectionBox       String? @map("inspection_box")
+  lubricator          String?
+  overloadContactType String? @map("overload_contact_type")
+  shoeGarnitureType   String? @map("shoe_garniture_type")
+  doorOperatorType    String? @map("door_operator_type")
+  mobileCam           String? @map("mobile_cam")
+  impulsors           String?
+  emergencyLight      String? @map("emergency_light")
+  fan                 String?
+
+  // ─── Optionnels — cabine et palier ────────────────────────
+  barreaudage       String?
+  limitSwitch       String? @map("limit_switch")
+  buttonStationType String? @map("button_station_type")
+  lighting          String?
+  cabinDoorType     String? @map("cabin_door_type")
+  display           String?
+  photocellType     String? @map("photocell_type")
+  soundSignal       String? @map("sound_signal")
+  handrail          String?
+  landingButtonType String? @map("landing_button_type")
+  landingDoorType   String? @map("landing_door_type")
+
+  // ─── Optionnels — gaine et cuve ───────────────────────────
+  shaftStop               String? @map("shaft_stop")
+  shaftLighting           String? @map("shaft_lighting")
+  counterweightShoes      String? @map("counterweight_shoes")
+  endLimitCam             String? @map("end_limit_cam")
+  pendantBrackets         String? @map("pendant_brackets")
+  cabinGuideRails         String? @map("cabin_guide_rails")
+  counterweightGuideRails String? @map("counterweight_guide_rails")
+  shockAbsorbers          String? @map("shock_absorbers")
+  tensionPulley           String? @map("tension_pulley")
+  parachuteType           String? @map("parachute_type")
+  travelHeight            String? @map("travel_height")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  elevator Elevator? @relation(fields: [elevatorId], references: [id], onDelete: SetNull)
+  client   User      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([createdAt])
+  @@map("technical_sheets")
 }
