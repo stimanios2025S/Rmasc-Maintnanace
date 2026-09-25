@@ -21,6 +21,13 @@ const UserRole = {
   FIELD_TECHNICIAN: "FIELD_TECHNICIAN",
   BUILDING_OWNER: "BUILDING_OWNER",
 } as const;
+// Whether a client account holds a maintenance contract. The two open
+// genuinely different portals, so the seed sets it explicitly rather than
+// leaving it null and letting the reader guess which fixture is which.
+const ClientType = {
+  CONTRACTED: "CONTRACTED",
+  NON_CONTRACTED: "NON_CONTRACTED",
+} as const;
 const SLATier = {
   BASIC: "BASIC",
   STANDARD: "STANDARD",
@@ -190,12 +197,15 @@ async function main() {
     },
   });
 
+  // A contracted customer. He owns the three buildings seeded below, which is
+  // what "contracted" means in practice: we hold his file.
   const owner = await prisma.user.upsert({
     where: { email: "owner@metroplaza.com" },
     update: {
       passwordHash: password,
       name: "Rachid Zerrouki",
       role: UserRole.BUILDING_OWNER,
+      clientType: ClientType.CONTRACTED,
       isActive: true,
     },
     create: {
@@ -203,7 +213,30 @@ async function main() {
       name: "Rachid Zerrouki",
       passwordHash: password,
       role: UserRole.BUILDING_OWNER,
+      clientType: ClientType.CONTRACTED,
       phone: "+213 21 00 00 06",
+    },
+  });
+
+  // A prospect, with no contract and deliberately no building: his portal is
+  // the « Fiche Technique » form, and the two fixtures together are what makes
+  // the split visible without anyone having to edit the database by hand.
+  const prospect = await prisma.user.upsert({
+    where: { email: "prospect@elbahia.dz" },
+    update: {
+      passwordHash: password,
+      name: "Sofiane Meziane",
+      role: UserRole.BUILDING_OWNER,
+      clientType: ClientType.NON_CONTRACTED,
+      isActive: true,
+    },
+    create: {
+      email: "prospect@elbahia.dz",
+      name: "Sofiane Meziane",
+      passwordHash: password,
+      role: UserRole.BUILDING_OWNER,
+      clientType: ClientType.NON_CONTRACTED,
+      phone: "+213 21 00 00 09",
     },
   });
 
@@ -655,7 +688,13 @@ async function main() {
   console.log(
     `    Technicien 3 :     ${tech3.email}  (${tech3.status} — non affectable)`
   );
-  console.log("    Client :           owner@metroplaza.com");
+  console.log("  Les deux portails clients :");
+  console.log(
+    `    Client sous contrat :   ${owner.email}  (3 immeubles, signalement de panne)`
+  );
+  console.log(
+    `    Client sans contrat :   ${prospect.email}  (fiche technique uniquement)`
+  );
 }
 
 main()

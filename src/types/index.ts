@@ -37,6 +37,16 @@ export const MANAGEMENT_ROLES: readonly UserRole[] = [
 ];
 
 /**
+ * Roles that administer the platform itself rather than the fleet.
+ *
+ * Kept separate from MANAGEMENT_ROLES because the distinction is real: a
+ * maintenance manager schedules work, an administrator opens customer accounts
+ * and decides whether one holds a contract. Declared here so the middleware
+ * gate, the sidebar filter and the API guard all read the same list.
+ */
+export const ADMIN_ROLES: readonly UserRole[] = ["ADMIN"];
+
+/**
  * Roles that may be recorded as the owner of a building.
  *
  * Ownership is not cosmetic: it is the column every BUILDING_OWNER read scope
@@ -48,6 +58,45 @@ export const OWNER_ELIGIBLE_ROLES: readonly UserRole[] = [
   "BUILDING_OWNER",
   "ADMIN",
 ];
+
+/**
+ * Whether a client account holds a maintenance contract.
+ *
+ * Mirrors the `ClientType` Prisma enum, declared here as well so client
+ * components can use it without pulling in the Prisma client — the same reason
+ * the role groupings above live in this file.
+ *
+ * A BUILDING_OWNER with no value at all reads as contracted: every account that
+ * existed before this distinction did was a contracted customer, so NULL is the
+ * historical behaviour rather than an unanswered question.
+ */
+export const CLIENT_TYPES = ["CONTRACTED", "NON_CONTRACTED"] as const;
+export type ClientType = (typeof CLIENT_TYPES)[number];
+
+/** French display labels. The identifiers themselves never reach the screen. */
+export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
+  CONTRACTED: "Avec contrat",
+  NON_CONTRACTED: "Sans contrat",
+};
+
+/** The shape this test needs — satisfied by both a Session user and a Token. */
+export interface ClientTypeSubject {
+  role?: UserRole | null;
+  clientType?: ClientType | null;
+}
+
+/**
+ * True when the account is a client with no maintenance contract.
+ *
+ * Deliberately an ask-the-question-positively test rather than `!isContracted`:
+ * an admin or a technician is neither, and a negated test would have quietly
+ * classified every staff account as a non-contracted customer.
+ */
+export function isNonContractedClient(
+  user: ClientTypeSubject | null | undefined
+): boolean {
+  return user?.role === "BUILDING_OWNER" && user.clientType === "NON_CONTRACTED";
+}
 
 export const SLA_TIERS = [
   "BASIC",

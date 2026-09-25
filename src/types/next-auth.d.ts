@@ -11,17 +11,23 @@
  */
 
 import type { DefaultSession } from "next-auth";
-import type { UserRole } from "@/types";
+import type { ClientType, UserRole } from "@/types";
 
 declare module "next-auth" {
   interface User {
     role: UserRole;
+    /**
+     * Contracted or not. Null on every staff account and, on a client, read as
+     * contracted — see `isNonContractedClient` in `@/types`.
+     */
+    clientType?: ClientType | null;
   }
 
   interface Session {
     user: {
       id: string;
       role: UserRole;
+      clientType: ClientType | null;
     } & DefaultSession["user"];
   }
 }
@@ -30,5 +36,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     id: string;
     role: UserRole;
+    clientType: ClientType | null;
   }
 }

@@ -80,6 +80,20 @@ export default withAuth(
       }
     }
 
+    // Account administration. Narrower than the management gate that covers
+    // the rest of `/administration`: opening a customer account and deciding
+    // whether it holds a maintenance contract is the administrator's job
+    // specifically, and `/api/clients` enforces the same rule. Checked before
+    // the broader block so the intent reads in order.
+    if (
+      pathname === "/administration/clients" ||
+      pathname.startsWith("/administration/clients/")
+    ) {
+      if (token?.role !== "ADMIN") {
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
+      }
+    }
+
     // The dispatch board: escalated faults, emergency transfers and the
     // technician roster. A building owner who reaches it would see every
     // other customer's incidents and the company's staffing, so it is gated

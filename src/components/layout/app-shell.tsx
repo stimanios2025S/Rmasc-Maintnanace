@@ -15,9 +15,10 @@ import {
   X,
   AlertOctagon,
   HelpCircle,
+  Users,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
+import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
 import type { UserRole } from "@/types";
 import { NotificationBell } from "./notification-bell";
 
@@ -63,6 +64,15 @@ const NAV_ITEMS: readonly NavItem[] = [
     label: "Incidents",
     icon: AlertOctagon,
     roles: MANAGEMENT_ROLES,
+  },
+  // Opening customer accounts and setting their contract status. Narrower than
+  // the incidents board above: the middleware gates this path to ADMIN alone,
+  // so a maintenance manager is not offered a link they cannot follow.
+  {
+    href: "/administration/clients",
+    label: "Comptes clients",
+    icon: Users,
+    roles: ADMIN_ROLES,
   },
   // The customer's own view of their equipment. Deliberately unrestricted — an
   // administrator needs to be able to open it to see what a customer sees.

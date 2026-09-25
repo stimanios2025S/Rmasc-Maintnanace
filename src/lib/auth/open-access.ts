@@ -29,7 +29,7 @@
  */
 
 import type { Session } from "next-auth";
-import type { UserRole } from "@/types";
+import type { ClientType, UserRole } from "@/types";
 
 /**
  * The identity every open-access session is attributed to.
@@ -50,6 +50,7 @@ export const OPEN_ACCESS_USER: {
   name: string;
   email: string;
   role: UserRole;
+  clientType: ClientType | null;
 } = {
   id: "open-access-local",
   // Shown in the app shell as the signed-in user, so it is French like the rest
@@ -57,6 +58,10 @@ export const OPEN_ACCESS_USER: {
   name: "Accès local",
   email: "local@elevatorpulse.dev",
   role: "ADMIN",
+  // Staff are neither contracted nor not: the column only means anything on a
+  // client account. Null here reads as contracted, which is what keeps the
+  // synthetic ADMIN session out of the non-contracted portal.
+  clientType: null,
 };
 
 /**

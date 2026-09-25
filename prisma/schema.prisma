@@ -21,6 +21,27 @@ enum UserRole {
   BUILDING_OWNER
 }
 
+/// Whether a client account holds a maintenance contract with us.
+///
+/// This is the column that splits the customer base in two, and the two halves
+/// have genuinely different portals rather than different labels:
+///
+///  - CONTRACTED — the historical customer. We hold their file, their buildings
+///    and their elevators. Their portal reports faults against a known unit.
+///  - NON_CONTRACTED — no file at all. Their portal is the « Fiche Technique »
+///    form, which is how the relationship starts.
+///
+/// NULLABLE ON PURPOSE. The column only means anything for a BUILDING_OWNER;
+/// every staff row carries NULL. And on the client side NULL is read as
+/// CONTRACTED, because every account that existed before this column did was a
+/// contracted customer — backfilling them to CONTRACTED would have been a
+/// data migration, whereas reading NULL as the old behaviour keeps the existing
+/// portal working untouched the moment this ships.
+enum ClientType {
+  CONTRACTED
+  NON_CONTRACTED
+}
+
 enum SLATier {
   BASIC
   STANDARD
@@ -180,6 +201,9 @@ model User {
   name          String
   passwordHash  String   @map("password_hash")
   role          UserRole
+  /// Contracted or not. Only meaningful on a BUILDING_OWNER row; NULL on staff
+  /// and read as CONTRACTED on a client. See the enum's doc comment.
+  clientType    ClientType? @map("client_type")
   phone         String?
   avatarUrl     String?  @map("avatar_url")
   isActive      Boolean  @default(true) @map("is_active")

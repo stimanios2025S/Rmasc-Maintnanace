@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ArrowRight, ClipboardList, FileSpreadsheet, RefreshCw } from "lucide-react";
+import { ClipboardList, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/states";
 import { ProgressTrack } from "@/components/ui/progress-track";
@@ -12,6 +12,8 @@ import { ValidationBadge } from "@/components/ui/validation-badge";
 import { EmergencyButton } from "@/components/client/emergency-button";
 import type { EmergencyElevator } from "@/components/client/emergency-button";
 import { IncidentWizard } from "@/components/client/incident-wizard";
+import { NonContractedPortal } from "@/components/client/non-contracted-portal";
+import { isNonContractedClient } from "@/types";
 import type { IncidentStatus } from "@/types";
 
 /**
@@ -30,6 +32,15 @@ import type { IncidentStatus } from "@/types";
  * not read a page right now. Neither replaces the other; both are visible at
  * once rather than behind a toggle, because in the moment nobody goes looking
  * for an accessibility setting.
+ *
+ * THIS IS THE CONTRACTED PORTAL
+ * Everything above assumes we already hold the customer's file: the wizard
+ * picks an elevator from a list, and the red button escalates a fault on one.
+ * Neither is possible for a customer with no contract and therefore no
+ * equipment registered, so those accounts are routed to
+ * `NonContractedPortal` before any of this renders. The two are genuinely
+ * different products sharing a route, which is why the split is a branch at
+ * the top rather than a few hidden controls further down.
  */
 
 interface IncidentRow {
@@ -56,10 +67,15 @@ interface ElevatorRow {
 }
 
 export default function ClientPortalPage() {
+  const { data: session, status } = useSession();
   const [elevators, setElevators] = useState<EmergencyElevator[]>([]);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // NULL reads as contracted — an account created before this distinction
+  // existed keeps the portal it has always had. See `@/types`.
+  const nonContracted = isNonContractedClient(session?.user);
 
   const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setLoading(true);
@@ -102,12 +118,27 @@ export default function ClientPortalPage() {
   }, []);
 
   useEffect(() => {
+    // Wait for the session before fetching: until it resolves we do not know
+    // which portal this account gets, and firing both requests for a
+    // non-contracted client would surface two errors for data that does not
+    // exist for them by design.
+    if (status === "loading") return;
+
+    if (nonContracted) {
+      setLoading(false);
+      return;
+    }
+
     void load();
-  }, [load]);
+  }, [load, nonContracted, status]);
 
   const refresh = useCallback(() => {
     void load({ silent: true });
   }, [load]);
+
+  // Checked before the loading state so a non-contracted client never sees the
+  // emergency skeleton of a portal that is not theirs.
+  if (nonContracted) return <NonContractedPortal />;
 
   if (loading) {
     return (
@@ -130,39 +161,11 @@ export default function ClientPortalPage() {
 
       <IncidentWizard elevators={elevators} onSubmitted={refresh} />
 
-      {/* The « Fiche Technique » entry point. Deliberately placed after the two
-          fault-reporting paths: someone whose lift has stopped should reach the
-          emergency button and the wizard before this, because this form fixes
-          nothing today. It is here for the building manager setting up a first
-          visit, which is a different moment entirely. */}
-      <Card className="p-5">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-900/30">
-            <FileSpreadsheet
-              className="h-5 w-5 text-blue-600 dark:text-blue-400"
-              aria-hidden="true"
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white">
-              Fiche technique
-            </h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Pas encore de contrat d&apos;entretien ? Décrivez votre
-              installation en quelques champs. Quatre informations suffisent
-              pour commencer — notre équipe technique relèvera le reste lors de
-              la visite.
-            </p>
-          </div>
-          <Link
-            href="/client/fiche-technique"
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-          >
-            Remplir la fiche
-            <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </Link>
-        </div>
-      </Card>
+      {/* The « Fiche Technique » entry point is deliberately NOT here. This
+          portal belongs to contracted customers — we hold their file, so there
+          is nothing for them to declare. The form exists for prospects with no
+          contract, and they get their own portal; see
+          `src/components/client/non-contracted-portal.tsx`. */}
 
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3">

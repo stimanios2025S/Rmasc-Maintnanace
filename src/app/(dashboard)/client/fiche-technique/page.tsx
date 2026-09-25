@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { CheckCircle2, Loader2, Send } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/card";
+import { OPS_ROLES, isNonContractedClient } from "@/types";
 import {
   TECHNICAL_SHEET_SECTIONS,
   REQUIRED_FIELD_NAMES,
@@ -42,6 +44,7 @@ interface FieldIssue {
 }
 
 export default function TechnicalSheetFormPage() {
+  const { data: session, status } = useSession();
   const [form, setForm] = useState<FormState>({});
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -115,6 +118,41 @@ export default function TechnicalSheetFormPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // Nothing is rendered until the session resolves, so nobody sees a flash of
+  // a form their account is not entitled to.
+  if (status === "loading") return null;
+
+  // The form belongs to customers with no contract. Staff are let through
+  // because the maintenance team records a sheet on a prospect's behalf after a
+  // site visit — a normal way for one to arrive. A contracted client is not,
+  // and is told why here rather than shown a form whose submit would be
+  // refused by the API.
+  const role = session?.user?.role;
+  const isStaff = !!role && OPS_ROLES.includes(role);
+  if (!isStaff && !isNonContractedClient(session?.user)) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <Card className="p-8 text-center">
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+            Fiche technique
+          </h1>
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+            Ce formulaire est réservé aux clients sans contrat
+            d&apos;entretien. Votre compte est déjà suivi sous contrat : votre
+            espace client vous permet de signaler une panne et de suivre vos
+            interventions.
+          </p>
+          <Link
+            href="/client"
+            className="mt-6 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+          >
+            Retour à l&apos;espace client
+          </Link>
+        </Card>
+      </div>
+    );
   }
 
   if (submitted) {

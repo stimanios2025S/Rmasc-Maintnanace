@@ -77,6 +77,7 @@ export const authOptions: NextAuthOptions = {
             email: user.email,
             name: user.name,
             role: user.role,
+            clientType: user.clientType,
           };
         } catch (error) {
           // DB down, schema drift, etc. Log the real cause server-side and
@@ -97,6 +98,14 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.role = user.role;
         token.id = user.id;
+        // Copied onto the token at sign-in and never refreshed, so an account
+        // whose type an administrator changes keeps its old portal until the
+        // token expires (24h) or the user signs out and back in. Accepted
+        // deliberately: the alternative is a database read on every request
+        // that touches the session, and `?? null` means an old token issued
+        // before this claim existed reads as contracted — the behaviour those
+        // sessions already had.
+        token.clientType = user.clientType ?? null;
       }
       return token;
     },
@@ -104,6 +113,7 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.role = token.role;
         session.user.id = token.id;
+        session.user.clientType = token.clientType ?? null;
       }
       return session;
     },

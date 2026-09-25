@@ -31,6 +31,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import {
   conflict,
+  forbidden,
   handleRouteError,
   jsonOk,
   notFound,
@@ -38,6 +39,7 @@ import {
   readJson,
 } from "@/lib/api/http";
 import { elevatorScopeFor, requireSession, OPS_ROLES } from "@/lib/api/guard";
+import { isNonContractedClient } from "@/types";
 import {
   ALL_FIELD_NAMES,
   OPTIONAL_FIELD_NAMES,
@@ -159,6 +161,22 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await requireSession();
+
+    // The form exists for customers we hold no file on. A contracted client
+    // already has a file — an equipment record, an inspection history and a
+    // maintenance schedule — so a sheet filled in by them would create a
+    // second, contradictory description of equipment we already document. Staff
+    // are exempt because the maintenance team records a sheet on a prospect's
+    // behalf after a site visit, which is a normal way for one to arrive.
+    const role = session.user.role;
+    const isStaff = !!role && OPS_ROLES.includes(role);
+    if (!isStaff && !isNonContractedClient(session.user)) {
+      throw forbidden(
+        "La fiche technique est réservée aux clients sans contrat. " +
+          "Votre compte est déjà suivi sous contrat."
+      );
+    }
+
     const body = await readJson(request);
     const parsed = CreateTechnicalSheetSchema.parse(body);
 
