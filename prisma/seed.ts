@@ -211,6 +211,15 @@ async function main() {
 
   // ─── Buildings (idempotent: delete-and-recreate keeps FK graph clean) ──
 
+  // `InspectionReport.elevator` is the one relation on this graph declared
+  // without `onDelete`, so it defaults to RESTRICT. Postgres therefore refuses
+  // to drop a building while any report still points at one of its elevators —
+  // and the cascade that would eventually remove those reports (elevator ->
+  // work order -> report) runs too late to save the delete. Clearing the
+  // reports first is what makes the wipe possible; `InspectionCheckItem`
+  // follows them by cascade.
+  await prisma.inspectionReport.deleteMany({});
+
   await prisma.building.deleteMany({});
 
   const building1 = await prisma.building.create({

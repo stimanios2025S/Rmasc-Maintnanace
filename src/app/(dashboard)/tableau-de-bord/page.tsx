@@ -303,7 +303,7 @@ export default function DashboardPage() {
           </div>
           {telemetryData.length === 0 ? (
             <div className="h-[300px] flex items-center justify-center text-sm text-gray-500">
-              Aucun relevé de capteur n'a encore été reçu pour ce parc.
+              Aucun relevé de capteur n&apos;a encore été reçu pour ce parc.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
@@ -390,7 +390,7 @@ export default function DashboardPage() {
         {/* Building Health */}
         <Card className="p-6">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            Vue d'ensemble de la santé des immeubles
+            Vue d&apos;ensemble de la santé des immeubles
           </h3>
           {buildingHealth.length === 0 ? (
             <p className="text-sm text-gray-500">

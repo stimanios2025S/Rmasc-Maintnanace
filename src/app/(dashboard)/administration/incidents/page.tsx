@@ -312,7 +312,7 @@ export default function AdminIncidentsPage() {
 
         {visible.length === 0 ? (
           <p className="mt-6 text-sm text-gray-500 dark:text-gray-400">
-            Rien à afficher. Les incidents signalés depuis l'espace client
+            Rien à afficher. Les incidents signalés depuis l&apos;espace client
             apparaissent dans cette liste.
           </p>
         ) : (

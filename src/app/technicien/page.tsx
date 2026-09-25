@@ -651,7 +651,7 @@ export default function TechnicianPage() {
                                 )}
                               </div>
                               <p className="mt-1 text-[11px] text-gray-400">
-                                Le téléversement n'est pas configuré sur ce
+                                Le téléversement n&apos;est pas configuré sur ce
                                 déploiement — joignez une URL depuis votre
                                 stockage de photos.
                               </p>
@@ -794,11 +794,11 @@ export default function TechnicianPage() {
       {/* Completed Today */}
       <Card className="p-5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
-          Terminées aujourd'hui
+          Terminées aujourd&apos;hui
         </h3>
         {completed.length === 0 ? (
           <p className="text-sm text-gray-500">
-            Aucune intervention terminée aujourd'hui.
+            Aucune intervention terminée aujourd&apos;hui.
           </p>
         ) : (
           completed.map((job) => (

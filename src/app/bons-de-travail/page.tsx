@@ -439,7 +439,7 @@ export default function WorkOrdersPage() {
                           </span>
                         ) : wo.status === "OPEN" ? (
                           <span className="text-gray-400">
-                            En attente d'affectation
+                            En attente d&apos;affectation
                           </span>
                         ) : (
                           <span className="flex items-center gap-1 text-green-600">

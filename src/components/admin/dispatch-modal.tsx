@@ -168,7 +168,7 @@ export function DispatchModal({
 
           {!loading && roster.length === 0 && !error && (
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Aucun technicien de terrain actif n'est enregistré. Ajoutez-en un
+              Aucun technicien de terrain actif n&apos;est enregistré. Ajoutez-en un
               avant de procéder à une affectation.
             </p>
           )}
@@ -244,7 +244,7 @@ export function DispatchModal({
           )}
 
           <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-            L'affectation fait aussi passer le bon de travail lié au statut
+            L&apos;affectation fait aussi passer le bon de travail lié au statut
             « Assigné » et notifie le technicien.
           </p>
         </div>
