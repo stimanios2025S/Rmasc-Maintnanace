@@ -280,14 +280,21 @@ function build(): DemoWorld {
   // the three technicians is deliberately ON_LEAVE so the roster's filter is
   // visible in the fixtures rather than merely asserted — a demo where nobody
   // is ever unavailable cannot show that the filter works.
+  // `clientType` is a required property of the `User` type — the column is
+  // nullable in the schema, but a nullable field is still a *present* key on
+  // the generated model type, and this array is typed against that model
+  // rather than against a create input. Staff hold null: the distinction only
+  // means anything for a client account. Both demo owners are contracted,
+  // because both own buildings in the fixtures and a non-contracted owner with
+  // a portfolio is the contradiction the admin screen warns about.
   const userSeed: Array<Omit<User, "createdAt" | "updatedAt">> = [
-    { id: "usr_admin", email: "admin@elevatorpulse.com", name: "Dana Whitfield", passwordHash: DEMO_HASH, role: "ADMIN", phone: "+1 415 555 0101", avatarUrl: null, isActive: true, status: "AVAILABLE" },
-    { id: "usr_mgr", email: "manager@elevatorpulse.com", name: "Marco Reyes", passwordHash: DEMO_HASH, role: "MAINTENANCE_MANAGER", phone: "+1 415 555 0102", avatarUrl: null, isActive: true, status: "AVAILABLE" },
-    { id: "usr_tech1", email: "tech1@elevatorpulse.com", name: "Priya Nair", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", phone: "+1 415 555 0103", avatarUrl: null, isActive: true, status: "AVAILABLE" },
-    { id: "usr_tech2", email: "tech2@elevatorpulse.com", name: "Sam Okafor", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", phone: "+1 415 555 0104", avatarUrl: null, isActive: true, status: "ON_JOB" },
-    { id: "usr_tech3", email: "tech3@elevatorpulse.com", name: "Ilse Fontaine", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", phone: "+1 415 555 0107", avatarUrl: null, isActive: true, status: "ON_LEAVE" },
-    { id: "usr_owner1", email: "owner@metroplaza.com", name: "Helena Voss", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", phone: "+1 415 555 0105", avatarUrl: null, isActive: true, status: "AVAILABLE" },
-    { id: "usr_owner2", email: "owner@riverside.com", name: "Tomas Bergman", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", phone: "+1 415 555 0106", avatarUrl: null, isActive: true, status: "AVAILABLE" },
+    { id: "usr_admin", email: "admin@elevatorpulse.com", name: "Dana Whitfield", passwordHash: DEMO_HASH, role: "ADMIN", clientType: null, phone: "+1 415 555 0101", avatarUrl: null, isActive: true, status: "AVAILABLE" },
+    { id: "usr_mgr", email: "manager@elevatorpulse.com", name: "Marco Reyes", passwordHash: DEMO_HASH, role: "MAINTENANCE_MANAGER", clientType: null, phone: "+1 415 555 0102", avatarUrl: null, isActive: true, status: "AVAILABLE" },
+    { id: "usr_tech1", email: "tech1@elevatorpulse.com", name: "Priya Nair", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", clientType: null, phone: "+1 415 555 0103", avatarUrl: null, isActive: true, status: "AVAILABLE" },
+    { id: "usr_tech2", email: "tech2@elevatorpulse.com", name: "Sam Okafor", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", clientType: null, phone: "+1 415 555 0104", avatarUrl: null, isActive: true, status: "ON_JOB" },
+    { id: "usr_tech3", email: "tech3@elevatorpulse.com", name: "Ilse Fontaine", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", clientType: null, phone: "+1 415 555 0107", avatarUrl: null, isActive: true, status: "ON_LEAVE" },
+    { id: "usr_owner1", email: "owner@metroplaza.com", name: "Helena Voss", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", clientType: "CONTRACTED", phone: "+1 415 555 0105", avatarUrl: null, isActive: true, status: "AVAILABLE" },
+    { id: "usr_owner2", email: "owner@riverside.com", name: "Tomas Bergman", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", clientType: "CONTRACTED", phone: "+1 415 555 0106", avatarUrl: null, isActive: true, status: "AVAILABLE" },
   ];
 
   const users: User[] = userSeed.map((u, i) => ({
