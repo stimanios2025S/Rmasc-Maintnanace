@@ -18,6 +18,7 @@ import { ErrorState } from "@/components/ui/states";
 import { ProgressTrack } from "@/components/ui/progress-track";
 import { ValidationBadge } from "@/components/ui/validation-badge";
 import { DispatchModal } from "@/components/admin/dispatch-modal";
+import { ContractBadge } from "@/components/admin/contract-badge";
 import { allowedTransitions } from "@/lib/incidents/progress";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import type { IncidentStatus } from "@/types";
@@ -51,7 +52,14 @@ interface IncidentRow {
     building: { id: string; name: string; address: string };
   };
   errorCode: { id: string; code: string; title: string } | null;
-  client: { id: string; name: string | null; email: string; phone: string | null };
+  client: {
+    id: string;
+    name: string | null;
+    email: string;
+    phone: string | null;
+    /** NULL reads as CONTRACTED — see `ContractBadge`. */
+    clientType: "CONTRACTED" | "NON_CONTRACTED" | null;
+  };
   technician: { id: string; name: string | null; email: string } | null;
   workOrder: {
     id: string;
@@ -355,6 +363,18 @@ export default function AdminIncidentsPage() {
                     )}
 
                     <ValidationBadge status={incident.status} />
+
+                    {/*
+                      Whether the reporter is a contracted customer, with the
+                      technical file a tap away. Placed with the status badges
+                      because a dispatcher reads all of them together before
+                      deciding who to send.
+                    */}
+                    <ContractBadge
+                      clientId={incident.client.id}
+                      clientType={incident.client.clientType}
+                      clientName={incident.client.name ?? incident.client.email}
+                    />
 
                     <span className="ml-auto text-xs text-gray-400">
                       {formatDistanceToNow(new Date(incident.createdAt), {

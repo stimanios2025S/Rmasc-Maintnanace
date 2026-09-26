@@ -10,9 +10,14 @@
  * the work order it owns — in one transaction. Reusing the other route would
  * mean either two non-atomic writes (an incident marked dispatched against an
  * order that is still open, or the reverse) or calling our own HTTP API from
- * the server. The transaction below is the smaller of the three evils, and
- * the shared precondition — `isOpenStatus` — is still imported from the
- * work-order service rather than reimplemented.
+ * the server.
+ *
+ * That transaction now lives in `assignIncidentToTechnician`
+ * (`src/lib/dispatch/auto-assign.ts`) rather than in this file, because the
+ * automatic dispatch path performs exactly the same move and two copies of an
+ * atomicity rule drift. What remains here is the part specific to a *manual*
+ * dispatch: the role check, and the explanation a dispatcher gets when the
+ * engineer they picked is on leave.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -36,6 +41,7 @@ import {
 } from "@/lib/api/guard";
 import { notify } from "@/lib/notifications/service";
 import { allowedTransitions, canTransition } from "@/lib/incidents/progress";
+import { assignIncidentToTechnician } from "@/lib/dispatch/auto-assign";
 import { isOpenStatus } from "@/lib/work-orders/service";
 import { DISPATCHABLE_TECHNICIAN_STATUSES, INCIDENT_STATUSES } from "@/types";
 import type { Session } from "next-auth";
@@ -57,7 +63,10 @@ const INCIDENT_SELECT = {
     },
   },
   errorCode: { select: { id: true, code: true, title: true } },
-  client: { select: { id: true, name: true, email: true, phone: true } },
+  /** `clientType` drives the board's contract badge — derived, never stored. */
+  client: {
+    select: { id: true, name: true, email: true, phone: true, clientType: true },
+  },
   technician: { select: { id: true, name: true, email: true, phone: true } },
   workOrder: {
     select: { id: true, orderNumber: true, status: true, priority: true },
@@ -128,7 +137,9 @@ async function dispatch(incidentId: string, technicianId: string) {
       id: true,
       incidentNumber: true,
       status: true,
-      workOrderId: true,
+      // `workOrderId` is not read here: the shared assignment re-reads it
+      // inside the transaction, where the value it acts on is the one the
+      // claim precondition was tested against.
       elevator: { select: { elevatorCode: true } },
     },
   });
@@ -179,55 +190,19 @@ async function dispatch(incidentId: string, technicianId: string) {
    * about. `updateMany` with the status as a precondition is the guard: if the
    * incident moved on, zero rows match and the write is abandoned.
    */
-  const updated = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        const claimed = await tx.incidentReport.updateMany({
-          where: {
-            id: incidentId,
-            status: { in: ["ESCALATED", "TECHNICIAN_ASSIGNED"] },
-          },
-          data: {
-            technicianId: technician.id,
-            status: "TECHNICIAN_ASSIGNED",
-          },
-        });
-
-        if (claimed.count === 0) {
-          throw conflict(
-            `L'incident ${incident.incidentNumber} a été modifié par une autre requête.`
-          );
-        }
-
-        // The work order is the technician's actual queue entry, so it has to
-        // carry the assignment too — otherwise the job appears on the
-        // incident board as dispatched but never reaches /technician.
-        if (incident.workOrderId) {
-          const order = await tx.workOrder.findUnique({
-            where: { id: incident.workOrderId },
-            select: { id: true, status: true, scheduledDate: true },
-          });
-
-          if (order && isOpenStatus(order.status)) {
-            await tx.workOrder.update({
-              where: { id: order.id },
-              data: {
-                assignedToId: technician.id,
-                status: "ASSIGNED",
-                scheduledDate: order.scheduledDate ?? new Date(),
-              },
-            });
-          }
-        }
-
-        return tx.incidentReport.findUniqueOrThrow({
-          where: { id: incidentId },
-          select: INCIDENT_SELECT,
-        });
-      },
-      { isolationLevel: "Serializable" }
-    )
-  );
+  /**
+   * The two-row write itself lives in `assignIncidentToTechnician`.
+   *
+   * That is the same move the automatic dispatch path makes, and it is the
+   * part with a rule in it: the incident and the work order it owns must move
+   * together, under serializable isolation, with the current status as the
+   * claim precondition. Two copies of that rule would drift, and the copy that
+   * drifted would be the one silently double-booking an engineer. Everything
+   * above this line — who may dispatch, and whether the chosen engineer is
+   * reachable — stays here, because it is about this request rather than
+   * about the write.
+   */
+  const updated = await assignIncidentToTechnician(incidentId, technician.id);
 
   // After the commit — a courtesy, never a precondition.
   await notify({
@@ -386,17 +361,3 @@ function incidentScopeFor(session: Session): Prisma.IncidentReportWhereInput {
   return {};
 }
 
-// ─── Retry ──────────────────────────────────────────────────
-
-/** Retries once on a serialization failure (Prisma P2034). */
-async function withSerializableRetry<T>(fn: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      const isSerializationFailure = (error as { code?: string })?.code === "P2034";
-      if (!isSerializationFailure || attempt >= 1) throw error;
-      console.warn("[incidents] serialization conflict, retrying");
-    }
-  }
-}

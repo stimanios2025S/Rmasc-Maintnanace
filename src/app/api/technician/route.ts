@@ -70,7 +70,19 @@ export async function GET(request: NextRequest) {
           elevator: {
             select: {
               elevatorCode: true,
-              building: { select: { name: true, address: true } },
+              building: {
+                select: {
+                  name: true,
+                  address: true,
+                  // Sent to the technician's browser so the check-in button can
+                  // be enabled or greyed out *before* the tap, using the same
+                  // rule the server applies. Without them the interface would
+                  // only find out from a refusal.
+                  latitude: true,
+                  longitude: true,
+                  geofenceRadiusM: true,
+                },
+              },
             },
           },
           component: { select: { name: true, componentType: true } },
@@ -119,12 +131,30 @@ export async function GET(request: NextRequest) {
           scheduledDate: wo.scheduledDate,
           estimatedHours: wo.estimatedHours,
           actualHours: wo.actualHours,
+          /**
+           * Carried so the portal can show "Arrivée pointée à 09:14" instead of
+           * the check-in button after a refresh. Without them the button came
+           * back on every reload and a second tap would be refused by the
+           * route's idempotency guard, which reads as the app losing the
+           * technician's own action.
+           */
+          arrivedAt: wo.arrivedAt,
+          checkInNotes: wo.checkInNotes,
           notes: wo.notes,
           partsReplaced: wo.partsReplaced,
           photoUrls: wo.photoUrls,
           elevator: wo.elevator.elevatorCode,
           building: wo.elevator.building.name,
           address: wo.elevator.building.address,
+          /**
+           * The site's position and radius, so the portal can compute the same
+           * distance the server will. Null latitude/longitude means the site
+           * has never been geolocated: the button then stays enabled, because
+           * refusing would strand a technician at a site we never mapped.
+           */
+          siteLatitude: wo.elevator.building.latitude,
+          siteLongitude: wo.elevator.building.longitude,
+          geofenceRadiusM: wo.elevator.building.geofenceRadiusM,
           component: wo.component?.name ?? null,
           inspection: wo.inspectionReports[0] ?? null,
         })),

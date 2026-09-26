@@ -38,6 +38,8 @@ import {
 } from "@/lib/api/guard";
 import { generateIncidentNumber, generateOrderNumber } from "@/lib/ids";
 import { notifyRoles } from "@/lib/notifications/service";
+import { autoAssignIncident } from "@/lib/dispatch/auto-assign";
+import { sendAdminSmsAlert } from "@/lib/notifications/sms";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoIncidents } from "@/lib/demo/responses";
 import { INCIDENT_STATUSES } from "@/types";
@@ -91,7 +93,18 @@ const INCIDENT_SELECT = {
     },
   },
   errorCode: { select: { id: true, code: true, title: true } },
-  client: { select: { id: true, name: true, email: true, phone: true } },
+  /**
+   * `clientType` is carried so the board can say whether the reporter is a
+   * contracted customer.
+   *
+   * Read, never stored. An earlier draft added a `contractStatus` column to
+   * `IncidentReport` — a denormalised copy of this value — which would have
+   * been wrong the first time an account changed contract, with nothing to
+   * reconcile it against. The relation is one join away and cannot drift.
+   */
+  client: {
+    select: { id: true, name: true, email: true, phone: true, clientType: true },
+  },
   technician: { select: { id: true, name: true, email: true, phone: true } },
   workOrder: {
     select: { id: true, orderNumber: true, status: true, priority: true },
@@ -228,22 +241,71 @@ export async function POST(request: NextRequest) {
     );
 
     /**
+     * An escalation is dispatched straight away, before anybody is told.
+     *
+     * The order matters. Announcing "this needs a technician" and *then*
+     * finding one produces two notifications that contradict each other, and a
+     * manager who reads the first and dispatches by hand creates exactly the
+     * double assignment `assignIncidentToTechnician`'s serializable claim
+     * exists to prevent. Assigning first lets the notification say what
+     * actually happened.
+     *
+     * This never throws. With no engineer reachable the incident simply stays
+     * ESCALATED on the board awaiting manual dispatch, which is where it would
+     * have been before this existed — see `src/lib/dispatch/auto-assign.ts`.
+     */
+    const auto = isEscalation ? await autoAssignIncident(created.id) : null;
+
+    /**
      * Notification goes out after the commit, never inside the transaction.
      * A courtesy that fails must not roll back an escalation — see the note
      * at the top of `src/lib/notifications/service.ts`.
      */
     if (isEscalation) {
+      const assignedTo = auto?.assigned
+        ? auto.technician.name ?? auto.technician.id
+        : null;
+
       await notifyRoles([...MANAGEMENT_ROLES], {
         title: body.isDirectTransfer
           ? `Urgence – ${elevator.elevatorCode}`
           : `Incident escaladé – ${elevator.elevatorCode}`,
-        message: buildNotificationMessage(elevator, body),
+        message: assignedTo
+          ? `${buildNotificationMessage(elevator, body)} Technicien affecté automatiquement : ${assignedTo}.`
+          : `${buildNotificationMessage(elevator, body)} Aucun technicien disponible — affectation manuelle requise.`,
         type: "incident",
         linkUrl: "/administration/incidents",
       });
+
+      /**
+       * Out of band, because the point of an escalation is that whoever needs
+       * to see it may not be looking at a dashboard.
+       *
+       * Note what this currently does: with no gateway configured it writes
+       * the message to the server log and delivers nothing. That is stated
+       * plainly here and warned about at boot rather than implied — see the
+       * module header in `src/lib/notifications/sms.ts`.
+       */
+      await sendAdminSmsAlert({
+        headline: `Incident escaladé – ${elevator.elevatorCode}`,
+        lines: [
+          created.incidentNumber,
+          `${elevator.building.name}, ${elevator.building.address}`,
+          assignedTo
+            ? `Technicien affecté : ${assignedTo}`
+            : "Aucun technicien disponible",
+        ],
+      });
     }
 
-    return NextResponse.json({ data: created }, { status: 201 });
+    // The response reflects the final state rather than the state at commit:
+    // after an automatic dispatch the incident is no longer ESCALATED, and
+    // returning the pre-assignment row would have the caller's own next read
+    // contradict the answer it was just given.
+    return NextResponse.json(
+      { data: auto?.assigned ? auto.incident : created },
+      { status: 201 }
+    );
   } catch (error) {
     return handleRouteError(error);
   }

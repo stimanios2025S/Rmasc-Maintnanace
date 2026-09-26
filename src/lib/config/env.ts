@@ -45,6 +45,17 @@ const ServerEnvSchema = z.object({
 
   /** When set, POST /api/telemetry requires this bearer token. */
   IOT_INGEST_TOKEN: optionalString(z.string().min(1)),
+
+  /**
+   * The number an escalated incident is texted to.
+   *
+   * Optional, because in-app notifications already reach every manager and a
+   * deployment that has not chosen an on-call number must still boot. But
+   * leaving it unset silently disables the out-of-band alert, and someone
+   * will assume they are being texted — so `getEnv` warns about it in
+   * production rather than staying quiet (see below).
+   */
+  ADMIN_PHONE_NUMBER: optionalString(z.string().min(5)),
 });
 
 export type ServerEnv = z.infer<typeof ServerEnvSchema>;
@@ -112,6 +123,17 @@ export function getEnv(): ServerEnv {
       // shouting about.
       console.warn(
         "[env] IOT_INGEST_TOKEN n'est pas défini en production : POST /api/telemetry acceptera des écritures non authentifiées."
+      );
+    }
+    if (!env.ADMIN_PHONE_NUMBER) {
+      // Also not fatal, and also worth saying out loud. The alternative is a
+      // silent gap: escalations keep working, the in-app bell keeps ringing,
+      // and the one channel that reaches somebody who is not looking at the
+      // dashboard is simply off — which nobody notices until an emergency
+      // goes unanswered.
+      console.warn(
+        "[env] ADMIN_PHONE_NUMBER n'est pas défini : aucune alerte SMS ne sera envoyée lors d'une escalade. " +
+          "Les notifications in-app restent actives."
       );
     }
   }

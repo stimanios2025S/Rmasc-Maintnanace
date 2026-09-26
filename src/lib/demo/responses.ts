@@ -455,6 +455,15 @@ export function demoTechnician(requestedId: string | null) {
       type: wo.type,
       priority: wo.priority,
       status: wo.status,
+      /**
+       * Carried through so demo mode and a real database agree about the
+       * check-in button. Without them the portal's `job.arrivedAt` reads
+       * `undefined`, which is falsy — so a fixture order that is already
+       * in progress would keep offering a check-in the live route would then
+       * refuse as a duplicate.
+       */
+      arrivedAt: wo.arrivedAt,
+      checkInNotes: wo.checkInNotes,
       scheduledDate: wo.scheduledDate,
       estimatedHours: wo.estimatedHours,
       actualHours: wo.actualHours,

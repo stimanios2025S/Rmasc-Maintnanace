@@ -545,6 +545,21 @@ function build(): DemoWorld {
       scheduledDate:
         w.scheduledInDays === null ? null : new Date(now + w.scheduledInDays * 24 * 60 * MINUTE),
       startedAt: w.status === "IN_PROGRESS" ? iso(3 * 60 * MINUTE) : null,
+      /**
+       * Check-in is a property of being on site, so only the demo's single
+       * in-progress order carries one — the technician is standing at that
+       * machine. Stamped an hour before work began rather than at the same
+       * instant, which is the ordering the real endpoint produces: arrival,
+       * then a spell of unloading and access before the job is started.
+       *
+       * `iso` counts *backwards* from now, so the larger value is the earlier
+       * timestamp.
+       */
+      arrivedAt: w.status === "IN_PROGRESS" ? iso(4 * 60 * MINUTE) : null,
+      checkInNotes:
+        w.status === "IN_PROGRESS"
+          ? "Accès par la loge ; le gardien a remis les clés de la machinerie."
+          : null,
       completedAt:
         w.completedHoursAgo === null ? null : iso(w.completedHoursAgo * 60 * MINUTE),
       createdAt: iso((i + 1) * 190 * MINUTE),

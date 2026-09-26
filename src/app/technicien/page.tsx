@@ -21,6 +21,8 @@ import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states"
 import { SignaturePad } from "@/components/technician/signature-pad";
 import type { SignatureValue } from "@/components/technician/signature-pad";
 import { enumLabel } from "@/lib/ui/enum-labels";
+import { evaluateGeofence, formatDistance } from "@/lib/geo/geofence";
+import type { Coordinates } from "@/lib/geo/geofence";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -34,12 +36,32 @@ interface ActiveJob {
   status: string;
   scheduledDate: string | null;
   estimatedHours: number | null;
+  /**
+   * When the technician pressed « J'ai pointé mon arrivée », or null.
+   *
+   * Distinct from the job simply being `IN_PROGRESS`: an order can have been
+   * started from the van. This is the field that answers "is anyone actually
+   * in the building", which is what the customer ringing us wants to know.
+   */
+  arrivedAt: string | null;
+  /** The optional note captured at check-in — access details, a keyholder. */
+  checkInNotes: string | null;
   notes: string | null;
   partsReplaced: Array<{ name: string; partNumber?: string; qty: number }> | null;
   photoUrls: string[];
   elevator: string;
   building: string;
   address: string;
+  /**
+   * Where the site is, and how close a technician must be to check in.
+   *
+   * Null coordinates mean the building has never been geolocated. The button
+   * then stays enabled on purpose — see `evaluateGeofence` — because refusing
+   * would strand a technician at a site nobody ever mapped.
+   */
+  siteLatitude: number | null;
+  siteLongitude: number | null;
+  geofenceRadiusM: number | null;
   component: string | null;
   inspection: {
     id: string;
@@ -155,6 +177,71 @@ export default function TechnicianPage() {
   const [signatures, setSignatures] = useState<Record<string, SignatureValue | null>>({});
   /** The job whose signature pad is open, if any. */
   const [signingJob, setSigningJob] = useState<string | null>(null);
+  /** The job whose optional arrival note is open, if any. */
+  const [arrivalNoteFor, setArrivalNoteFor] = useState<string | null>(null);
+  /** jobId → the arrival note being typed. Not the job's saved `notes`. */
+  const [arrivalNotes, setArrivalNotes] = useState<Record<string, string>>({});
+
+  /**
+   * The device's last known position, or null while there is not one.
+   *
+   * Watched rather than read once. The portal is opened in the van and looked
+   * at again at the door, so a single reading taken on page load would place
+   * the technician wherever they happened to be when they unlocked the phone —
+   * which is exactly the situation the geofence exists to catch.
+   */
+  const [position, setPosition] = useState<Coordinates | null>(null);
+  /** Set when the browser cannot or will not provide a position. */
+  const [geoNotice, setGeoNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      // Not fatal: the server allows a check-in with no coordinates, so the
+      // technician can still work. Only the pre-warning is lost.
+      setGeoNotice(
+        "Ce navigateur ne fournit pas la position : le pointage reste possible, sans contrôle de distance."
+      );
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (reading) => {
+        setPosition({
+          latitude: reading.coords.latitude,
+          longitude: reading.coords.longitude,
+        });
+        setGeoNotice(null);
+      },
+      () => {
+        setGeoNotice(
+          "Position indisponible. Autorisez la localisation pour que le pointage vérifie automatiquement votre présence sur le chantier."
+        );
+      },
+      // A reading up to 30 s old is fine: the technician is standing still at
+      // the moment it matters, and a fresh fix is worth waiting through.
+      { enableHighAccuracy: true, maximumAge: 30_000, timeout: 15_000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  /**
+   * Whether this job's site accepts a check-in from where the device is.
+   *
+   * The identical function the server runs, so the button never greys out for
+   * a check-in the API would have accepted — and, more importantly, never
+   * looks available for one it would refuse.
+   */
+  const verdictFor = useCallback(
+    (job: ActiveJob) => {
+      const site =
+        job.siteLatitude !== null && job.siteLongitude !== null
+          ? { latitude: job.siteLatitude, longitude: job.siteLongitude }
+          : null;
+      return evaluateGeofence(site, position, job.geofenceRadiusM);
+    },
+    [position]
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -272,6 +359,64 @@ export default function TechnicianPage() {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Échec de la mise à jour");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /**
+   * « J'ai pointé mon arrivée » — the technician is on site.
+   *
+   * A dedicated endpoint rather than the status PATCH above, because arrival
+   * is not merely a status. The server stamps `arrivedAt`, advances the linked
+   * incident so the customer's progress bar moves, and notifies both the
+   * customer and the office. None of that is expressible as a status change,
+   * which is why the old "Démarrer l'intervention" button is gone: it claimed
+   * the work had begun while telling the waiting customer nothing.
+   *
+   * The note is optional and only sent when one was actually typed. The main
+   * button must work with no note at all — it is pressed one-handed, in a
+   * machine room, and anything that adds a required step is a step that gets
+   * skipped.
+   */
+  const checkIn = async (jobId: string) => {
+    setBusyId(jobId);
+    setError("");
+    try {
+      const notes = (arrivalNotes[jobId] ?? "").trim();
+
+      const res = await fetch(`/api/work-orders/${jobId}/check-in`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        /**
+         * The position is sent whenever there is one, and omitted otherwise.
+         *
+         * The server decides what a missing coordinate means, and allows it —
+         * so a refused permission or a failed fix in a basement never costs a
+         * technician their check-in. Both keys are spread conditionally rather
+         * than sent as `null`, because the route's schema is strict and an
+         * explicit null would be a validation error.
+         */
+        body: JSON.stringify({
+          ...(notes ? { notes } : {}),
+          ...(position
+            ? { latitude: position.latitude, longitude: position.longitude }
+            : {}),
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        // A 409 means the arrival is already recorded — most often a second
+        // tap. The server's message says so, and it is more useful than a
+        // generic failure: the technician learns their first tap worked.
+        throw new Error(json.error ?? "Le pointage a échoué");
+      }
+
+      setArrivalNoteFor(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Le pointage a échoué");
     } finally {
       setBusyId(null);
     }
@@ -419,6 +564,10 @@ export default function TechnicianPage() {
           const checks = checklist[job.id] ?? DEFAULT_CHECKLIST.map(() => null);
           const done = checks.filter((c) => c !== null).length;
           const progress = checks.length > 0 ? (done / checks.length) * 100 : 0;
+
+          // Computed once per row, so the button's enabled state and the
+          // explanation beneath it can never disagree with each other.
+          const verdict = verdictFor(job);
           /**
            * A full bar is not the same as a clean inspection. The bar measures
            * how much has been *recorded*, so a checklist that is complete and
@@ -485,16 +634,113 @@ export default function TechnicianPage() {
                     {job.component && ` • ${job.component}`}
                   </p>
                 </div>
-                {job.status === "ASSIGNED" && (
-                  <button
-                    onClick={() => updateStatus(job.id, "IN_PROGRESS")}
-                    disabled={busyId === job.id}
-                    className="mt-3 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {busyId === job.id
-                      ? "Démarrage…"
-                      : "Démarrer l'intervention"}
-                  </button>
+                {/*
+                  Check-in replaces the old "Démarrer l'intervention" button
+                  rather than sitting beside it. Two controls that both mean
+                  "I am starting" is a worse interface than one that means it
+                  precisely — and the precise one is the arrival, because that
+                  is the fact the waiting customer is told about.
+                */}
+                {job.arrivedAt ? (
+                  <p className="mt-3 inline-flex items-start gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    <MapPin
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span>
+                      Arrivée pointée à{" "}
+                      {new Date(job.arrivedAt).toLocaleTimeString("fr-FR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                      {job.checkInNotes && (
+                        <span className="block font-normal">
+                          {job.checkInNotes}
+                        </span>
+                      )}
+                    </span>
+                  </p>
+                ) : (
+                  <>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {/*
+                        Disabled until the device sits inside the site's radius.
+
+                        The server refuses the very same check-in, so this is a
+                        courtesy and not the rule — but a button that looks
+                        available and then fails is worse than one that explains
+                        itself before the tap. It stays enabled when the site has
+                        no coordinates: see `evaluateGeofence`.
+                      */}
+                      <button
+                        type="button"
+                        onClick={() => void checkIn(job.id)}
+                        disabled={busyId === job.id || !verdict.allowed}
+                        className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {busyId === job.id
+                          ? "Pointage…"
+                          : "📍 J'ai pointé mon arrivée"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setArrivalNoteFor(
+                            arrivalNoteFor === job.id ? null : job.id
+                          )
+                        }
+                        className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                      >
+                        {arrivalNoteFor === job.id
+                          ? "Masquer la note"
+                          : "Ajouter une note"}
+                      </button>
+                    </div>
+
+                    {/*
+                      Says why the button above is greyed out, and by how much.
+                      "Trop loin" without a number would leave the technician to
+                      guess the direction; the site's own radius is quoted too,
+                      because a site configured at 400 m behaves very
+                      differently from one at 100 m.
+                    */}
+                    {!verdict.allowed && (
+                      <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                        Vous êtes à {formatDistance(verdict.distanceM)} du
+                        chantier — au-delà du rayon de{" "}
+                        {formatDistance(verdict.radiusM)}. Rapprochez-vous du
+                        site pour pointer votre arrivée.
+                      </p>
+                    )}
+
+                    {/*
+                      Only shown when the position is genuinely unavailable.
+                      Check-in still works in that case, so this is information
+                      rather than a warning.
+                    */}
+                    {geoNotice && verdict.allowed && (
+                      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        {geoNotice}
+                      </p>
+                    )}
+
+                    {arrivalNoteFor === job.id && (
+                      <textarea
+                        value={arrivalNotes[job.id] ?? ""}
+                        onChange={(event) =>
+                          setArrivalNotes((current) => ({
+                            ...current,
+                            [job.id]: event.target.value,
+                          }))
+                        }
+                        rows={2}
+                        maxLength={2000}
+                        placeholder="Accès, personne qui a remis les clés, stationnement…"
+                        aria-label="Note d'arrivée (facultative)"
+                        className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                      />
+                    )}
+                  </>
                 )}
               </div>
 

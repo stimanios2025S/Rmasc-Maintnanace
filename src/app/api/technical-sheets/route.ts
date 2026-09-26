@@ -135,8 +135,25 @@ export async function GET(request: NextRequest) {
     // customer's address, so it is an allow-list rather than a deny-list.
     const role = session.user.role;
     const isStaff = !!role && OPS_ROLES.includes(role);
+
+    /**
+     * Staff may narrow the board to one customer.
+     *
+     * The incident board uses this to pull a single client's sheet when a
+     * dispatcher expands the contract badge, instead of the whole board being
+     * handed every sheet on every poll.
+     *
+     * Ignored for a client account, which stays pinned to its own id. The
+     * parameter is a *filter* for people already entitled to the whole list —
+     * honouring it for a customer would turn "narrow my view" into "read
+     * somebody else's sheet", which is the one thing the scoping below exists
+     * to prevent.
+     */
+    const requestedClientId = searchParams.get("clientId");
     const where: Prisma.TechnicalSheetWhereInput = isStaff
-      ? {}
+      ? requestedClientId
+        ? { clientId: requestedClientId }
+        : {}
       : { clientId: session.user.id };
 
     const [sheets, total] = await Promise.all([

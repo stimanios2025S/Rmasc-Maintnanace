@@ -264,6 +264,19 @@ model Building {
   slaTier       SLATier   @default(STANDARD) @map("sla_tier")
   latitude      Float?
   longitude     Float?
+
+  /// Radius, in metres, within which a technician's check-in is accepted here.
+  ///
+  /// Per site rather than one constant for the fleet, because a fixed radius is
+  /// wrong in both directions: 100 m locks a technician out of an industrial
+  /// estate whose machine room sits 400 m inside the gate, and the same 100 m
+  /// waves through one parked at the café opposite a small apartment block.
+  ///
+  /// NULL means nobody has configured this site yet. The application falls back
+  /// to `DEFAULT_GEOFENCE_RADIUS_M` rather than refusing, so a building created
+  /// through the API keeps working before an administrator has been near it.
+  geofenceRadiusM Int?    @map("geofence_radius_m")
+
   isActive      Boolean   @default(true) @map("is_active")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
@@ -525,6 +538,39 @@ model WorkOrder {
   scheduledDate   DateTime?         @map("scheduled_date")
   startedAt       DateTime?         @map("started_at")
   completedAt     DateTime?         @map("completed_at")
+
+  /// When the technician pressed « J'ai pointé mon arrivée » on site.
+  ///
+  /// Deliberately a separate column from `startedAt`, which is the moment they
+  /// began working. The two answer different questions and disagree in both
+  /// directions: a technician can open the job from the van and arrive twenty
+  /// minutes later, or walk in and start immediately. When a client rings to
+  /// ask "is anyone actually here yet", `arrivedAt` is the only honest answer
+  /// — `startedAt` would have said yes from the car park.
+  arrivedAt       DateTime?         @map("arrived_at")
+
+  /// What the technician found on arrival — access arrangements, the name of
+  /// whoever handed over the keys, a parking restriction. Optional: check-in
+  /// must never be blocked by a text field, or it stops being used.
+  checkInNotes    String?           @map("check_in_notes")
+
+  /// Where the technician actually was when they checked in, and how far that
+  /// was from the site.
+  ///
+  /// Kept as evidence rather than for the running of the application: the gate
+  /// reads them once, at the moment of the check-in, and nothing else ever
+  /// consults them. They are stored because the reason a geofence exists is to
+  /// be able to answer "was he actually there?" weeks later, and a verdict
+  /// nobody recorded is not an answer.
+  ///
+  /// All three are NULL whenever the position could not be established — see
+  /// `evaluateGeofence`. That is not an error state: it is the normal outcome
+  /// for a site we have never geolocated, or for a technician in a basement.
+  checkInLatitude  Float?           @map("check_in_latitude")
+  checkInLongitude Float?           @map("check_in_longitude")
+  /// Metres from the site centre, rounded. NULL when either end is unknown.
+  checkInDistanceM Int?             @map("check_in_distance_m")
+
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 

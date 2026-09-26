@@ -27,6 +27,7 @@ import {
   requireRole,
 } from "@/lib/api/guard";
 import { createWorkOrderWithUniqueNumber } from "@/lib/work-orders/service";
+import { syncTechnicianStatus } from "@/lib/dispatch/auto-assign";
 import {
   WORK_ORDER_PRIORITIES,
   WORK_ORDER_STATUSES,
@@ -366,6 +367,23 @@ export async function PATCH(request: NextRequest) {
       data: updateData,
       include: WORK_ORDER_INCLUDE,
     });
+
+    /**
+     * A finished or abandoned order frees whoever was holding it.
+     *
+     * Without this the `User.status` mirror only ever moves one way: check-in
+     * sets ON_JOB, nothing ever clears it, and a technician who closed their
+     * last job on Friday is still offered as "En intervention" on Monday. The
+     * helper decides whether they are actually free — it re-counts their open
+     * work rather than assuming this was the last one, and never touches an
+     * OFF_DUTY or ON_LEAVE row.
+     */
+    if (
+      (parsed.status === "COMPLETED" || parsed.status === "CANCELLED") &&
+      workOrder.assignedToId
+    ) {
+      await syncTechnicianStatus(prisma, workOrder.assignedToId);
+    }
 
     return NextResponse.json({ data: workOrder });
   } catch (error) {
