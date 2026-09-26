@@ -17,6 +17,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { FleetMapCard } from "@/components/map/fleet-map-card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { SignaturePad } from "@/components/technician/signature-pad";
 import type { SignatureValue } from "@/components/technician/signature-pad";
@@ -181,6 +182,17 @@ export default function TechnicianPage() {
   const [arrivalNoteFor, setArrivalNoteFor] = useState<string | null>(null);
   /** jobId → the arrival note being typed. Not the job's saved `notes`. */
   const [arrivalNotes, setArrivalNotes] = useState<Record<string, string>>({});
+  /**
+   * jobId → whether the technician agreed to place an unmapped site using the
+   * position captured at check-in.
+   *
+   * Stored as "the exceptions, not the rule": an absent key means yes, so the
+   * common case — an unmapped site, a technician standing on it — needs no
+   * interaction at all, and only an explicit untick has to be remembered.
+   */
+  const [placeSiteOnCheckIn, setPlaceSiteOnCheckIn] = useState<
+    Record<string, boolean>
+  >({});
 
   /**
    * The device's last known position, or null while there is not one.
@@ -385,6 +397,23 @@ export default function TechnicianPage() {
     try {
       const notes = (arrivalNotes[jobId] ?? "").trim();
 
+      /**
+       * Whether this check-in should also place the site on the map.
+       *
+       * Three conditions, all necessary: there is a position to send at all;
+       * the technician has not unticked the box (`!== false`, because an
+       * absent key means ticked — see the state declaration); and the site is
+       * genuinely unmapped. The last one is also enforced server-side, so a
+       * stale `jobs` array cannot overwrite a position an administrator has
+       * set in the meantime.
+       */
+      const job = jobs.find((j) => j.id === jobId);
+      const wantsPlacement =
+        position !== null &&
+        placeSiteOnCheckIn[jobId] !== false &&
+        job !== undefined &&
+        (job.siteLatitude === null || job.siteLongitude === null);
+
       const res = await fetch(`/api/work-orders/${jobId}/check-in`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -402,6 +431,7 @@ export default function TechnicianPage() {
           ...(position
             ? { latitude: position.latitude, longitude: position.longitude }
             : {}),
+          ...(wantsPlacement ? { usePositionAsSiteLocation: true } : {}),
         }),
       });
 
@@ -550,6 +580,28 @@ export default function TechnicianPage() {
         </p>
       )}
 
+      {/*
+        The fleet map.
+
+        The whole park rather than only this technician's assignments, by
+        choice: it is how they see where the rest of the fleet is and which of
+        it is in trouble — useful when the office rings to ask them to take one
+        more job on the way back. Their own position is drawn on it, and
+        selecting a site draws that site's check-in radius, so the distance that
+        decides whether the check-in button is available becomes something they
+        can see rather than something the screen only asserts.
+
+        Not polled: this portal runs on a phone in the field, and a timer
+        re-fetching pins that have not moved spends battery to tell them
+        nothing. It loads when opened and refreshes with the page.
+      */}
+      <FleetMapCard
+        title="Carte du parc"
+        height={280}
+        selfPosition={position}
+        intervalMs={0}
+      />
+
       {/* Active Assignments */}
       {jobs.length === 0 ? (
         <EmptyState
@@ -568,6 +620,9 @@ export default function TechnicianPage() {
           // Computed once per row, so the button's enabled state and the
           // explanation beneath it can never disagree with each other.
           const verdict = verdictFor(job);
+          /** Whether this site has ever been placed on the map. */
+          const siteIsUnmapped =
+            job.siteLatitude === null || job.siteLongitude === null;
           /**
            * A full bar is not the same as a clean inspection. The bar measures
            * how much has been *recorded*, so a checklist that is complete and
@@ -704,6 +759,56 @@ export default function TechnicianPage() {
                       because a site configured at 400 m behaves very
                       differently from one at 100 m.
                     */}
+                    {/*
+                      An unmapped site, and the one chance to map it.
+
+                      A building with no coordinates is absent from the fleet
+                      map entirely — no pin, no count, not even a greyed-out
+                      placeholder — so nothing on any screen reveals that it is
+                      missing. This is the only point in the system where
+                      somebody is standing at the address, which makes it the
+                      best position that building will ever get; an
+                      administrator placing one from the office is reading a
+                      map rather than looking at a door.
+
+                      Ticked by default, because that is the whole purpose of
+                      the control and an unticked default would mean the
+                      feature never fires. It cannot overwrite a position
+                      anybody has already set — the server only writes when the
+                      building still has none — so the worst case is a pin an
+                      administrator reviews and moves.
+                    */}
+                    {siteIsUnmapped && (
+                      <label className="mt-2 flex items-start gap-2.5 rounded-lg border border-gray-200 p-2.5 dark:border-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={placeSiteOnCheckIn[job.id] !== false}
+                          onChange={(event) =>
+                            setPlaceSiteOnCheckIn((current) => ({
+                              ...current,
+                              [job.id]: event.target.checked,
+                            }))
+                          }
+                          disabled={!position}
+                          className="mt-0.5 h-4 w-4 flex-none rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
+                            Placer ce chantier sur la carte
+                          </span>
+                          <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                            {position
+                              ? `Ce chantier n'a pas encore de position. La vôtre (${position.latitude.toFixed(
+                                  5
+                                )}, ${position.longitude.toFixed(
+                                  5
+                                )}) sera enregistrée comme emplacement du site.`
+                              : "Ce chantier n'a pas encore de position. Activez la localisation sur votre téléphone pour pouvoir le placer en pointant votre arrivée."}
+                          </span>
+                        </span>
+                      </label>
+                    )}
+
                     {!verdict.allowed && (
                       <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
                         Vous êtes à {formatDistance(verdict.distanceM)} du

@@ -87,3 +87,180 @@
 .glow-yellow { box-shadow: 0 0 8px rgba(234, 179, 8, 0.4); }
 .glow-orange { box-shadow: 0 0 8px rgba(249, 115, 22, 0.4); }
 .glow-red { box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }
+
+/* ─── Fleet map ─────────────────────────────────────────────
+ *
+ * Marker styling lives here rather than inline because a Leaflet
+ * `divIcon` is an HTML *string* handed to Leaflet, not a React element —
+ * there is no component to carry a style prop. The colour is the one variable
+ * Leaflet cannot know: it comes from the attention level, so it is passed in
+ * as `--ep-color` on each marker's own element, and everything below reads it.
+ *
+ * The white ring around each dot is not decoration. Map tiles are a busy,
+ * mid-tone background — beige streets, green parks, blue water — and a flat
+ * coloured circle on top of that loses its edge. The ring gives every marker a
+ * boundary that survives whatever is underneath it.
+ */
+
+.ep-map-marker {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+}
+
+/* The expanding ring, drawn only for the most urgent level. */
+.ep-map-marker__halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--ep-color);
+  opacity: 0;
+}
+
+.ep-map-marker--pulse .ep-map-marker__halo {
+  animation: ep-map-pulse 2s ease-out infinite;
+}
+
+@keyframes ep-map-pulse {
+  0%   { transform: scale(0.45); opacity: 0.5; }
+  70%  { transform: scale(1.6);  opacity: 0; }
+  100% { transform: scale(1.6);  opacity: 0; }
+}
+
+/* Respecting the setting matters more than usual here: this is the one
+   animation in the application that runs forever, unwatched, on a screen
+   somebody may leave open all day. */
+@media (prefers-reduced-motion: reduce) {
+  .ep-map-marker--pulse .ep-map-marker__halo { animation: none; }
+}
+
+.ep-map-marker__dot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: var(--ep-color);
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.45);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transition: width 120ms ease, height 120ms ease;
+}
+
+/* A site with something outstanding carries the count. Sized to hold two
+   digits without the number touching the ring. */
+.ep-map-marker--counted .ep-map-marker__dot {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+/* The selected site, and the one hovered. Enlarged rather than recoloured:
+   the colour is already saying something, and overloading it would make the
+   selection look like a change of state. */
+.ep-map-marker--selected .ep-map-marker__dot,
+.leaflet-marker-icon:hover .ep-map-marker__dot {
+  width: 26px;
+  height: 26px;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.55);
+}
+
+.ep-map-marker__you {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #2563eb;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.22), 0 1px 4px rgba(15, 23, 42, 0.5);
+}
+
+/* The position being chosen, before it is confirmed and saved. */
+.ep-map-marker__draft {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #0f172a;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px #0f172a, 0 0 0 9px rgba(15, 23, 42, 0.16);
+}
+
+/* Placement mode. The crosshair is the only affordance telling the user that
+   the next click on the map does something different from the last one. */
+.ep-map-placing .leaflet-container,
+.ep-map-placing .leaflet-container .leaflet-grab {
+  cursor: crosshair;
+}
+
+.ep-map-placing .leaflet-marker-icon { cursor: pointer; }
+
+/* Leaflet's own tooltip, brought into the application's type and palette. */
+.ep-map-tooltip {
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+  white-space: normal;
+}
+
+.ep-map-tooltip::before { display: none; }
+
+.ep-map-tooltip__body {
+  padding: 8px 10px;
+  min-width: 160px;
+  max-width: 240px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ep-map-tooltip__name {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.ep-map-tooltip__meta { color: #64748b; }
+
+.ep-map-tooltip__reason {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.ep-map-tooltip__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  flex: none;
+  background: var(--ep-color);
+}
+
+@media (prefers-color-scheme: dark) {
+  .ep-map-tooltip__body { background: #0f172a; color: #e2e8f0; }
+  .ep-map-tooltip__meta { color: #94a3b8; }
+}
+
+/* The map pane sits under the app's overlays; Leaflet's default z-indexes are
+   high enough to punch through sticky headers and dropdowns if left alone. */
+.leaflet-container {
+  z-index: 0;
+  font-family: inherit;
+  background: #eef2f6;
+}
+
+@media (prefers-color-scheme: dark) {
+  .leaflet-container { background: #0b1220; }
+}
+
+.leaflet-container a { color: #2563eb; }

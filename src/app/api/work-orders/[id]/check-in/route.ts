@@ -66,6 +66,16 @@ const CheckInSchema = z
     notes: z.string().trim().max(2000).optional(),
 
     /**
+     * Whether the technician agreed to have this position become the *site's*
+     * position, for a building that has none. See the transaction below.
+     *
+     * Strictly opt-in, and never inferred from the mere presence of
+     * coordinates: a position used to place a site is a lasting claim about
+     * where the fleet is, and it must be something a person said yes to.
+     */
+    usePositionAsSiteLocation: z.boolean().optional(),
+
+    /**
      * Where the device says it is, when it will say. Absent whenever the
      * browser refuses permission or cannot get a fix, which is a normal
      * outcome rather than a failure — see `evaluateGeofence`.
@@ -104,6 +114,7 @@ export async function POST(request: NextRequest, { params }: Params) {
             elevatorCode: true,
             building: {
               select: {
+                id: true,
                 name: true,
                 address: true,
                 // The site's position and its configured radius, both needed
@@ -166,8 +177,9 @@ export async function POST(request: NextRequest, { params }: Params) {
      */
     const building = workOrder.elevator.building;
     const technicianPosition = readCoordinates(body);
+    const sitePosition = readCoordinates(building);
     const verdict = evaluateGeofence(
-      readCoordinates(building),
+      sitePosition,
       technicianPosition,
       building.geofenceRadiusM
     );
@@ -220,6 +232,36 @@ export async function POST(request: NextRequest, { params }: Params) {
         where: { id: workOrder.id, startedAt: null },
         data: { startedAt: arrivedAt },
       });
+
+      /**
+       * A site nobody has ever placed, and a technician standing on it.
+       *
+       * This is the only moment the system will ever obtain a trustworthy
+       * position for a building that has none. An administrator dropping a pin
+       * from the office is reading a map; this is somebody physically at the
+       * address, which is why the technician portal offers it and why the
+       * administrator's map is still the way to correct it afterwards.
+       *
+       * Written only on an explicit yes from the technician. There is a second
+       * reason beyond consent: with no site coordinates there is also no
+       * geofence, so `evaluateGeofence` has just let this check-in through
+       * without checking anything. A position captured by accident here would
+       * put a confident, wrong pin on the fleet map — worse than the site being
+       * absent, because absence is at least visible as a gap.
+       *
+       * `latitude: null` in the WHERE means this can only ever fill a gap. A
+       * building an administrator placed while the technician was in the lift
+       * keeps what the administrator set.
+       */
+      if (body.usePositionAsSiteLocation && technicianPosition && !sitePosition) {
+        await tx.building.updateMany({
+          where: { id: building.id, latitude: null, longitude: null },
+          data: {
+            latitude: technicianPosition.latitude,
+            longitude: technicianPosition.longitude,
+          },
+        });
+      }
 
       /**
        * The customer watches the incident, not the work order, so the arrival

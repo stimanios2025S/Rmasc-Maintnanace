@@ -29,6 +29,7 @@ import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { FleetMapCard } from "@/components/map/fleet-map-card";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -268,6 +269,22 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {/*
+        The fleet map.
+
+        Placed above the charts rather than after them, because it answers the
+        question this page opens with — *where* in the fleet is something wrong
+        — and the charts answer the follow-up. A KPI tile saying "4 unités
+        critiques" does not tell anyone which four, or which of them are the
+        same building; this does, in one glance, from the same payload and the
+        same five-level rule as `/carte`.
+
+        Everything it shows is interactive in place: the level chips filter the
+        pins, and selecting one lists that site's units underneath. The map is
+        collapsed with one click for anyone who wants the page they had before.
+      */}
+      <FleetMapCard title="Carte du parc" height={360} moreHref="/carte" />
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -304,24 +304,38 @@ function build(): DemoWorld {
   }));
 
   // ── Buildings ─────────────────────────────────────────────
+  /**
+   * The three demo sites, each with a deliberately different geofence radius.
+   *
+   * 60 m for the downtown tower, 150 m for the business centre on its larger
+   * plot, and `null` for the medical centre — the last so the fixture exercises
+   * the unconfigured path that falls back to `DEFAULT_GEOFENCE_RADIUS_M`. A
+   * demo where every site shared one value would never show that the setting
+   * exists, or that leaving it empty works.
+   */
   const buildingSeed: Array<Omit<Building, "createdAt" | "updatedAt">> = [
     {
       id: "bld_1", name: "Metro Plaza Tower", address: "410 Market Street", city: "San Francisco",
       state: "CA", zipCode: "94105", country: "US", contactPerson: "Helena Voss",
       contactEmail: "owner@metroplaza.com", contactPhone: "+1 415 555 0105", slaTier: "PREMIUM",
-      latitude: 37.7908, longitude: -122.4014, isActive: true, ownerId: "usr_owner1",
+      latitude: 37.7908, longitude: -122.4014, geofenceRadiusM: 60, isActive: true, ownerId: "usr_owner1",
     },
     {
       id: "bld_2", name: "Riverside Business Center", address: "88 Embarcadero", city: "Oakland",
       state: "CA", zipCode: "94607", country: "US", contactPerson: "Tomas Bergman",
       contactEmail: "owner@riverside.com", contactPhone: "+1 415 555 0106", slaTier: "STANDARD",
-      latitude: 37.7955, longitude: -122.2793, isActive: true, ownerId: "usr_owner2",
+      latitude: 37.7955, longitude: -122.2793, geofenceRadiusM: 150, isActive: true, ownerId: "usr_owner2",
     },
     {
       id: "bld_3", name: "Northgate Medical Center", address: "1200 Northgate Drive", city: "Berkeley",
       state: "CA", zipCode: "94702", country: "US", contactPerson: "Dr. Amara Idowu",
       contactEmail: "facilities@northgate.example.org", contactPhone: "+1 415 555 0110",
-      slaTier: "ENTERPRISE", latitude: 37.8715, longitude: -122.2730, isActive: true, ownerId: null,
+      slaTier: "ENTERPRISE", latitude: 37.8715, longitude: -122.2730,
+      // Left unset on purpose: this is what a site nobody has configured looks
+      // like, and the application has to keep working for it. See
+      // `effectiveRadiusM` in src/lib/geo/geofence.ts.
+      geofenceRadiusM: null,
+      isActive: true, ownerId: null,
     },
   ];
 
@@ -516,6 +530,30 @@ function build(): DemoWorld {
     { elevatorId: "elv_4", title: "Vérification de la télémétrie de référence", description: "Contrôle après mise en service confirmant que tous les capteurs relèvent dans les plages attendues.", type: "INSPECTION", priority: "LOW", status: "COMPLETED", assignedToId: "usr_tech2", componentType: null, estimatedHours: 1, actualHours: 0.75, scheduledInDays: null, completedHoursAgo: 52 },
   ];
 
+  /**
+   * Where the demo's one on-site technician actually checked in.
+   *
+   * Derived from the order's own site rather than written out as literals,
+   * because a recorded position sitting in a different city from the building
+   * it belongs to is worse than no position at all — the map would draw the
+   * technician somewhere the job is not, and the recorded distance would
+   * contradict it. The offset is roughly 20 m: a phone in the lobby, not the
+   * building's survey point.
+   */
+  const checkIn = (() => {
+    const order = workOrderSeed.find((w) => w.status === "IN_PROGRESS");
+    if (!order) return null;
+    const unit = elevators.find((e) => e.id === order.elevatorId);
+    if (!unit) return null;
+    const site = buildings.find((b) => b.id === unit.buildingId);
+    if (!site || site.latitude === null || site.longitude === null) return null;
+    return {
+      latitude: site.latitude + 0.00015,
+      longitude: site.longitude + 0.00019,
+      distanceM: 26,
+    };
+  })();
+
   const workOrders: WorkOrder[] = workOrderSeed.map((w, i) => {
     const component = w.componentType
       ? components.find(
@@ -556,6 +594,12 @@ function build(): DemoWorld {
        * timestamp.
        */
       arrivedAt: w.status === "IN_PROGRESS" ? iso(4 * 60 * MINUTE) : null,
+      // The device's own report at that moment: a point ~20 m from the site
+      // centre, which is what a phone in a lobby sends. Null on every other
+      // order, because a check-in that never happened has no position.
+      checkInLatitude: w.status === "IN_PROGRESS" ? checkIn?.latitude ?? null : null,
+      checkInLongitude: w.status === "IN_PROGRESS" ? checkIn?.longitude ?? null : null,
+      checkInDistanceM: w.status === "IN_PROGRESS" ? checkIn?.distanceM ?? null : null,
       checkInNotes:
         w.status === "IN_PROGRESS"
           ? "Accès par la loge ; le gardien a remis les clés de la machinerie."

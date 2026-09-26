@@ -5,6 +5,9 @@ import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import {
   LayoutDashboard,
+  // Aliased: `Map` is also a global constructor, and an unaliased import would
+  // shadow it inside this module for no reason.
+  Map as MapIcon,
   ClipboardList,
   FileSpreadsheet,
   Wrench,
@@ -42,6 +45,10 @@ type NavItem = {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard },
+  // Unrestricted for the same reason `/ascenseurs` is: the endpoint behind it
+  // scopes a building owner to their own portfolio, so every signed-in role
+  // has something true to see here.
+  { href: "/carte", label: "Carte du parc", icon: MapIcon },
   { href: "/ascenseurs", label: "Ascenseurs", icon: Activity },
   { href: "/bons-de-travail", label: "Bons de travail", icon: ClipboardList },
   // The « Fiche Technique » board for non-contract clients. Same reasoning as

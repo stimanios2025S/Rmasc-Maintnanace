@@ -160,6 +160,7 @@ export const config = {
   matcher: [
     "/tableau-de-bord/:path*",
     "/ascenseurs/:path*",
+    "/carte/:path*",
     "/bons-de-travail/:path*",
     "/technicien/:path*",
     "/fiches-techniques/:path*",
