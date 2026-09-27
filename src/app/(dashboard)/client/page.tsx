@@ -13,6 +13,7 @@ import { EmergencyButton } from "@/components/client/emergency-button";
 import type { EmergencyElevator } from "@/components/client/emergency-button";
 import { IncidentWizard } from "@/components/client/incident-wizard";
 import { NonContractedPortal } from "@/components/client/non-contracted-portal";
+import { InterventionActions } from "@/components/client/intervention-actions";
 import { isNonContractedClient } from "@/types";
 import type { IncidentStatus } from "@/types";
 
@@ -159,7 +160,22 @@ export default function ClientPortalPage() {
           the reading order, so it is reachable without scrolling past prose. */}
       <EmergencyButton elevators={elevators} onEscalated={refresh} />
 
-      <IncidentWizard elevators={elevators} onSubmitted={refresh} />
+      {/* Deliberately BELOW the red button. The note above explains why the
+          emergency path is first; putting a choice of two ordinary actions in
+          front of it would push it below the fold on a phone, which is the one
+          thing that ordering exists to prevent. */}
+      <InterventionActions
+        contracted
+        elevators={elevators}
+        onRequested={refresh}
+      />
+
+      {/* The anchor the « Démarrage Maintenance » tile points at. Wrapping the
+          wizard here rather than reaching into its internal heading id keeps
+          this page's navigation from breaking when that component is edited. */}
+      <div id="signaler" className="scroll-mt-6">
+        <IncidentWizard elevators={elevators} onSubmitted={refresh} />
+      </div>
 
       {/* The « Fiche Technique » entry point is deliberately NOT here. This
           portal belongs to contracted customers — we hold their file, so there

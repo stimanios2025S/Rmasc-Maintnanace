@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState } from "@/components/ui/states";
+import { InterventionActions } from "@/components/client/intervention-actions";
 
 /**
  * The portal for a client we hold no maintenance contract with.
@@ -84,6 +85,17 @@ export function NonContractedPortal() {
           place.
         </p>
       </div>
+
+      {/* The same component the contracted portal uses, with `contracted`
+          false. The point is not that this account has two options — it has
+          one — but that « Démarrage Maintenance » means the same thing on both
+          portals, so a customer who upgrades their account does not have to
+          relearn where anything is. */}
+      <InterventionActions
+        contracted={false}
+        elevators={[]}
+        onRequested={() => void load()}
+      />
 
       <Card className="p-6">
         <div className="flex flex-wrap items-start gap-4">
@@ -200,11 +212,14 @@ export function NonContractedPortal() {
             <h2 className="text-sm font-bold text-gray-900 dark:text-white">
               Une panne à signaler ?
             </h2>
+            {/* The first sentence used to explain that online fault reporting
+                needs a contract. The action card above now says that, and
+                saying it twice on one short page reads as a system apologising
+                for itself. What remains is the part the card cannot offer:
+                a telephone number and a promise. */}
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Le signalement en ligne est réservé aux clients sous contrat,
-              parce qu&apos;il s&apos;appuie sur un ascenseur déjà enregistré
-              chez nous. En attendant votre contrat, appelez-nous : nous
-              interviendrons de la même façon.
+              En attendant votre contrat, appelez-nous : nous interviendrons de
+              la même façon.
             </p>
           </div>
         </div>
