@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – IoT Telemetry Ingestion API
+ * Maintenance RMASC – IoT Telemetry Ingestion API
  *
  * POST /api/telemetry  – Ingest a single telemetry reading (token-gated)
  * GET  /api/telemetry  – Latest telemetry (authenticated)

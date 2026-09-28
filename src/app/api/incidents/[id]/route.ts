@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Single Incident API
+ * Maintenance RMASC – Single Incident API
  *
  * GET   /api/incidents/:id  – one incident
  * PATCH /api/incidents/:id  – dispatch a technician, or advance the status

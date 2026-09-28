@@ -10,7 +10,7 @@ import {
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ElevatorPulse — Plateforme de maintenance prédictive",
+  title: "Maintenance RMASC — Plateforme de maintenance prédictive",
   description:
     "Plateforme de maintenance prédictive et préventive prête pour la production, destinée aux entreprises de maintenance d'ascenseurs. Télémétrie IoT en temps réel, prédiction des pannes assistée par IA et affectation des techniciens de terrain.",
 };

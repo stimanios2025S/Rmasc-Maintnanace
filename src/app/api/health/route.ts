@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Health probe
+ * Maintenance RMASC – Health probe
  *
  * GET /api/health
  *

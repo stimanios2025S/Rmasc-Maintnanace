@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Technician Check-in API
+ * Maintenance RMASC – Technician Check-in API
  *
  * POST /api/work-orders/:id/check-in – « J'ai pointé mon arrivée »
  *

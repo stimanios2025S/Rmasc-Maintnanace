@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Predictive AI Engine
+ * Maintenance RMASC – Predictive AI Engine
  *
  * Calculates Remaining Useful Life (RUL) and Predictive Risk Scores
  * for elevator components using statistical degradation models.

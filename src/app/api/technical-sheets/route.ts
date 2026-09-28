@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Fiche Technique API
+ * Maintenance RMASC – Fiche Technique API
  *
  * GET  /api/technical-sheets   – list the sheets the caller may read
  * POST /api/technical-sheets   – record a completed « Fiche Technique »

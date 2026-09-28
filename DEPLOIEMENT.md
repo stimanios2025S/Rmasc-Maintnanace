@@ -1,4 +1,4 @@
-# Déploiement — Rmasc Maintenance (ElevatorPulse)
+# Déploiement — Rmasc Maintenance (Maintenance RMASC)
 
 Procédure de mise en production sur le serveur **greendutyconfig**.
 

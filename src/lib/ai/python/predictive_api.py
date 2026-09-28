@@ -1,5 +1,5 @@
 """
-ElevatorPulse – Python FastAPI + Scikit-learn Predictive API
+Maintenance RMASC – Python FastAPI + Scikit-learn Predictive API
 
 This is a reference implementation for the ML prediction service.
 In production, this runs as a separate FastAPI microservice.
@@ -14,7 +14,7 @@ from typing import List, Optional
 import numpy as np
 from datetime import datetime, timedelta
 
-app = FastAPI(title="ElevatorPulse Predictive API", version="1.0.0")
+app = FastAPI(title="Maintenance RMASC Predictive API", version="1.0.0")
 
 
 # ─── Request/Response Models ────────────────────────────────

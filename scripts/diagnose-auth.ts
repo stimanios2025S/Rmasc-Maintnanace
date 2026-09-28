@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Auth diagnostics & demo password reset
+ * Maintenance RMASC – Auth diagnostics & demo password reset
  *
  * Run this when login says "Invalid email or password":
  *

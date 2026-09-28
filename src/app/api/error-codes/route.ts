@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Error Code Lookup API
+ * Maintenance RMASC – Error Code Lookup API
  *
  * GET /api/error-codes?q=E-101&limit=20 – search the fault-code reference
  *

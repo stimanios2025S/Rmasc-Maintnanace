@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – client account administration.
+ * Maintenance RMASC – client account administration.
  *
  * GET    /api/clients   – list the customer accounts
  * POST   /api/clients   – create one, contracted or not

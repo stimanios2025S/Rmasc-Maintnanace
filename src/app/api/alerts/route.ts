@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Alerts API
+ * Maintenance RMASC – Alerts API
  *
  * GET    /api/alerts             – List alerts (filterable)
  * PATCH  /api/alerts?id=xxx      – Acknowledge / resolve an alert

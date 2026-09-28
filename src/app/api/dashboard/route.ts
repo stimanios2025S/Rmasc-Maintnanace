@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Dashboard Overview API
+ * Maintenance RMASC – Dashboard Overview API
  *
  * GET /api/dashboard – Fleet KPIs, status breakdown, building health and
  *                      recent alerts, scoped to the caller's access.

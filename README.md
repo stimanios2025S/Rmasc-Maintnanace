@@ -1,4 +1,4 @@
-# 🛗 ElevatorPulse — Predictive & Preventive Maintenance Platform
+# 🛗 Maintenance RMASC — Predictive & Preventive Maintenance Platform
 
 > Maintenance platform for elevator service companies: IoT telemetry ingestion
 > with threshold alerting, statistical remaining-useful-life scoring, work order

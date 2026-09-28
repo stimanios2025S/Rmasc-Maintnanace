@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Database Seed Script
+ * Maintenance RMASC – Database Seed Script
  *
  * Creates initial buildings, elevators, components, users, and threshold rules.
  *
@@ -92,7 +92,7 @@ const TechnicianStatus = {
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log("🌱 Peuplement de la base ElevatorPulse...\n");
+  console.log("🌱 Peuplement de la base Maintenance RMASC...\n");
 
   // ─── Users ──────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Buildings API
+ * Maintenance RMASC – Buildings API
  *
  * GET    /api/buildings     – List buildings with elevator counts and health
  * POST   /api/buildings     – Create a new building

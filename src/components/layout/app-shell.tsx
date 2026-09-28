@@ -197,13 +197,21 @@ export function AppShell({
         } bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300`}
       >
         <div className="h-16 flex items-center px-4 border-b border-gray-200 dark:border-gray-800">
+          {/* The brand is longer than the old one and the sidebar is a fixed
+              width, so the text is allowed to shrink and clip rather than push
+              the collapse button out of the row. `min-w-0` on the link is what
+              makes `truncate` on the span do anything: a flex child will not
+              shrink below its content width without it. */}
           {sidebarOpen && (
-            <Link href="/tableau-de-bord" className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+            <Link
+              href="/tableau-de-bord"
+              className="flex min-w-0 items-center gap-2"
+            >
+              <div className="w-8 h-8 flex-none bg-blue-600 rounded-lg flex items-center justify-center">
                 <Activity className="w-5 h-5 text-white" />
               </div>
-              <span className="font-bold text-lg text-gray-900 dark:text-white">
-                ElevatorPulse
+              <span className="truncate text-base font-bold text-gray-900 dark:text-white">
+                Maintenance RMASC
               </span>
             </Link>
           )}
@@ -301,7 +309,7 @@ export function AppShell({
         <header className="h-16 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-6">
           <div>
             <h1 className="text-lg font-semibold text-gray-900 dark:text-white">
-              {current?.label ?? "ElevatorPulse"}
+              {current?.label ?? "Maintenance RMASC"}
             </h1>
             {user?.role && (
               <p className="text-xs text-gray-500">{formatRole(user.role)}</p>

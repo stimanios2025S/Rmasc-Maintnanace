@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – IoT Telemetry Simulator
+ * Maintenance RMASC – IoT Telemetry Simulator
  *
  * Simulates realistic elevator sensor data and pushes it to the API.
  * Includes periodic synthetic anomalies for testing the alerting system.
@@ -228,7 +228,7 @@ function postTelemetry(payload: {
 
 async function main() {
   console.log("╔═══════════════════════════════════════════════════════╗");
-  console.log("║     ElevatorPulse IoT Telemetry Simulator v1.0       ║");
+  console.log("║     Maintenance RMASC IoT Telemetry Simulator v1.0   ║");
   console.log("╠═══════════════════════════════════════════════════════╣");
   console.log(`║  API Target:  ${API_BASE.padEnd(39)}║`);
   console.log(`║  Interval:    ${(INTERVAL / 1000 + "s").padEnd(39)}║`);

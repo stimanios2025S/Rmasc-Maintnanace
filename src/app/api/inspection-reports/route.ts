@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Inspection Reports API
+ * Maintenance RMASC – Inspection Reports API
  *
  * GET  /api/inspection-reports?workOrderId=…  – the report for a work order
  * GET  /api/inspection-reports                – recent reports (paginated)

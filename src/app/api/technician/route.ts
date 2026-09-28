@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Technician Portal API
+ * Maintenance RMASC – Technician Portal API
  *
  * GET /api/technician – Active assignments plus work completed today.
  *

@@ -195,7 +195,7 @@ export default function InspectionReportPage() {
       <article className="mx-auto my-6 max-w-3xl bg-white p-8 shadow-sm print:my-0 print:max-w-none print:p-0 print:shadow-none">
         <header className="border-b border-gray-300 pb-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-            ElevatorPulse · Rapport d&apos;inspection
+            Maintenance RMASC · Rapport d&apos;inspection
           </p>
           <h1 className="mt-2 text-2xl font-bold text-gray-900">
             {report.title}
@@ -378,7 +378,7 @@ export default function InspectionReportPage() {
         </section>
 
         <footer className="mt-10 border-t border-gray-300 pt-3 text-xs text-gray-500">
-          Document généré par ElevatorPulse. Ce rapport constate l&apos;état de
+          Document généré par Maintenance RMASC. Ce rapport constate l&apos;état de
           l&apos;équipement au moment de l&apos;inspection et n&apos;atteste pas
           de son aptitude à l&apos;usage au-delà des points listés ci-dessus.
         </footer>

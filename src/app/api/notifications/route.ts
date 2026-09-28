@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – In-App Notifications API
+ * Maintenance RMASC – In-App Notifications API
  *
  * GET   /api/notifications              – the caller's own notifications
  * PATCH /api/notifications              – mark one, or all, as read

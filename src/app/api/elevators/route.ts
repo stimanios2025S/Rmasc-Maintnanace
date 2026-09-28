@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Elevators API
+ * Maintenance RMASC – Elevators API
  *
  * GET    /api/elevators     – List elevators with latest telemetry
  * POST   /api/elevators     – Register a new elevator

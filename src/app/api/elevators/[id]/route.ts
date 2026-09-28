@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Elevator Detail API
+ * Maintenance RMASC – Elevator Detail API
  *
  * GET /api/elevators/[id] – Specs, components, telemetry, predictive scores,
  *                          recent work orders and alerts for one unit.

@@ -1,5 +1,5 @@
 /**
- * Configuration pm2 — Rmasc Maintenance (ElevatorPulse)
+ * Configuration pm2 — Maintenance RMASC
  *
  * Le processus permanent de l'application sur le serveur. Toutes les valeurs
  * modifiables sont en haut du fichier `apps[0]`.
