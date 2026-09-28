@@ -273,6 +273,15 @@
   background: var(--ep-color);
 }
 
+/* The zone line's swatch is a hollow ring rather than a filled disc, mirroring
+   the dashed circle the map draws around the fault: one colour, two shapes,
+   so "where it is" and "how wide the work area is" never read as the same
+   claim. */
+.ep-map-tooltip__swatch--zone {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ep-color);
+}
+
 @media (prefers-color-scheme: dark) {
   .ep-map-tooltip__body { background: #0f172a; color: #e2e8f0; }
   .ep-map-tooltip__meta { color: #94a3b8; }

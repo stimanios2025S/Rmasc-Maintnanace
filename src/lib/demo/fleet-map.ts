@@ -187,6 +187,7 @@ export function demoFleetMap(): FleetMapPayload {
       elevatorCode: unit.elevatorCode,
       buildingId: site.id,
       buildingName: site.name,
+      interventionRadiusM: effectiveRadiusM(site.geofenceRadiusM),
     });
   }
 

@@ -128,6 +128,16 @@ export interface FleetMapFault {
   /** The site this fault belongs to, so a click can open its detail panel. */
   buildingId: string;
   buildingName: string;
+  /**
+   * How wide the intervention zone is around this point, in metres.
+   *
+   * The site's own check-in radius, reused rather than given a column of its
+   * own. A dispatcher drawing the boundary of an intervention and a technician
+   * deciding how close is close enough are answering the same question about
+   * the same building, and two numbers to keep in step would drift apart the
+   * first time either one was changed.
+   */
+  interventionRadiusM: number;
 }
 
 /**

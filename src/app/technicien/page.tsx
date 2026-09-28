@@ -15,6 +15,7 @@ import {
   MinusCircle,
   Link2,
   ExternalLink,
+  Ruler,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { FleetMapCard } from "@/components/map/fleet-map-card";
@@ -809,12 +810,57 @@ export default function TechnicianPage() {
                       </label>
                     )}
 
-                    {!verdict.allowed && (
-                      <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                        Vous êtes à {formatDistance(verdict.distanceM)} du
-                        chantier — au-delà du rayon de{" "}
-                        {formatDistance(verdict.radiusM)}. Rapprochez-vous du
-                        site pour pointer votre arrivée.
+                    {/*
+                      The télémètre.
+
+                      Always on screen when both ends of the measurement are
+                      known — not only when the technician is outside the
+                      radius, which is what this used to be. A readout that
+                      appears only on failure is silent for the whole of the
+                      approach, which is exactly the minute someone wants to
+                      know whether they are nearly there.
+
+                      It re-renders on every position the watch reports, so it
+                      counts down as the technician walks. The value comes from
+                      `evaluateGeofence`, the same haversine the check-in
+                      verdict uses, so the number on screen cannot disagree
+                      with the number the server enforces.
+                    */}
+                    {verdict.distanceM !== null ? (
+                      <div
+                        className={`mt-2 rounded-lg px-3 py-2 text-sm ${
+                          verdict.allowed
+                            ? "bg-gray-50 text-gray-700 dark:bg-gray-800/60 dark:text-gray-300"
+                            : "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                        }`}
+                      >
+                        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <Ruler
+                            className="h-4 w-4 flex-none"
+                            aria-hidden="true"
+                          />
+                          <span>
+                            Distance au chantier :{" "}
+                            <span className="font-semibold">
+                              {formatDistance(verdict.distanceM)}
+                            </span>
+                            <span className="opacity-75">
+                              {" "}
+                              (rayon {formatDistance(verdict.radiusM)})
+                            </span>
+                          </span>
+                        </p>
+                        {!verdict.allowed && (
+                          <p className="mt-1">
+                            Rapprochez-vous du site pour pointer votre arrivée.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800/60 dark:text-gray-400">
+                        {verdict.reason === "no-site-coordinates"
+                          ? "Distance au chantier indisponible : ce site n'a pas encore de position sur la carte."
+                          : "Distance au chantier indisponible : votre position n'est pas connue. Activez la localisation du navigateur."}
                       </p>
                     )}
 

@@ -41,6 +41,7 @@ import { ATTENTION_STYLES } from "@/lib/map/attention";
 import type { FleetMapFault, FleetMapSite } from "@/lib/map/types";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import type { Coordinates } from "@/lib/geo/geofence";
+import { formatDistance } from "@/lib/geo/geofence";
 import { cn } from "@/lib/utils";
 
 /** The whole `L` object, as `@types/leaflet` describes it. */
@@ -228,6 +229,13 @@ function faultTooltipHtml(fault: FleetMapFault): string {
     `<div class="ep-map-tooltip__meta">${escapeHtml(fault.buildingName)} · ${escapeHtml(meta)}</div>` +
     `<div class="ep-map-tooltip__reason">` +
     `<span class="ep-map-tooltip__swatch"></span>Position : ${escapeHtml(origin)}` +
+    `</div>` +
+    // Says out loud what the dashed ring on the map is, so the circle is not
+    // read as a measurement of anything — it is a work area.
+    `<div class="ep-map-tooltip__reason">` +
+    `<span class="ep-map-tooltip__swatch ep-map-tooltip__swatch--zone"></span>Zone d'intervention : ${escapeHtml(
+      formatDistance(fault.interventionRadiusM)
+    )}` +
     `</div></div>`
   );
 }
@@ -547,6 +555,32 @@ export function FleetMap({
 
     for (const fault of faults) {
       const clickable = selectable.has(fault.buildingId);
+
+      /**
+       * The intervention zone, drawn around the fault rather than around the
+       * site.
+       *
+       * Dashed on purpose: the site layer already draws a solid circle around
+       * each building at the same kind of radius, and two identical rings
+       * meaning "you may check in here" and "this is the area we are working
+       * in" would make the map lie about one of them. A broken ring reads as a
+       * boundary somebody drew, not as a surveyed distance.
+       *
+       * Drawn whether or not the site geofence toggle is on: a dispatcher
+       * looking at an open fault is asking where the work is, and hiding the
+       * answer behind a display setting would be the wrong default.
+       */
+      L.circle([fault.latitude, fault.longitude], {
+        radius: fault.interventionRadiusM,
+        color: faultColor(fault),
+        weight: 1.5,
+        opacity: 0.6,
+        dashArray: "6 5",
+        fillColor: faultColor(fault),
+        fillOpacity: 0.06,
+        // A boundary, not a target: the pin is what gets clicked.
+        interactive: false,
+      }).addTo(layer);
 
       const marker = L.marker([fault.latitude, fault.longitude], {
         icon: L.divIcon({

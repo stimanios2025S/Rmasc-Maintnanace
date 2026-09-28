@@ -180,7 +180,9 @@ export async function GET() {
             select: {
               id: true,
               elevatorCode: true,
-              building: { select: { id: true, name: true } },
+              building: {
+                select: { id: true, name: true, geofenceRadiusM: true },
+              },
             },
           },
           technician: { select: { name: true } },
@@ -331,6 +333,11 @@ export async function GET() {
         elevatorCode: incident.elevator.elevatorCode,
         buildingId: incident.elevator.building.id,
         buildingName: incident.elevator.building.name,
+        // Read from the building, not from the fault: the report says where
+        // the problem is, the site says how far around it we work.
+        interventionRadiusM: effectiveRadiusM(
+          incident.elevator.building.geofenceRadiusM
+        ),
       });
     }
 
