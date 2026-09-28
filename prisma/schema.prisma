@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// ElevatorPulse – Prisma Schema
+// Maintenance RMASC – Prisma Schema
 // Predictive & Preventive Maintenance Platform for Elevators
 // ─────────────────────────────────────────────────────────────
 
@@ -191,6 +191,23 @@ enum IncidentStatus {
   IN_PROGRESS
   CLOSED
   RESOLVED_BY_CLIENT
+}
+
+/// How a reported fault position was arrived at.
+///
+/// Stored beside the coordinates rather than inferred from them, because the
+/// two cases mean genuinely different things to whoever reads the record later.
+/// `GPS` is a measurement — the reporter's own device said they were there.
+/// `SITE` is an assumption — the device gave nothing, so the building's
+/// registered address was used instead. Without the distinction a dispatcher
+/// reads a fallback pin as evidence an occupant stood at that spot.
+///
+/// The position is context, never the location of record. A building's address
+/// is the fixed, permanent answer to "where is this lift"; this is only ever
+/// "where was the person who told us about it".
+enum ReportedPositionSource {
+  GPS
+  SITE
 }
 
 // ─── USERS & AUTH ───────────────────────────────────────────
@@ -571,6 +588,23 @@ model WorkOrder {
   /// Metres from the site centre, rounded. NULL when either end is unknown.
   checkInDistanceM Int?             @map("check_in_distance_m")
 
+  /// Where the fault was reported from — the client's answer to "where is it",
+  /// not the technician's answer to "where am I".
+  ///
+  /// A copy of the same three columns on `IncidentReport`, written in the same
+  /// transaction. It exists because a work order is what a technician actually
+  /// opens in the field, and making them join back through the incident to
+  /// learn where to go would be a join on every list that draws a job.
+  ///
+  /// NOT interchangeable with `checkIn*` above, and the two are never merged:
+  /// this is where the *customer* said the problem was, hours or days before
+  /// anyone drove there; those are where the *engineer* was when they arrived.
+  /// A wide gap between them is exactly the thing a dispatcher wants to see,
+  /// and averaging them would destroy it.
+  reportedLatitude       Float?                   @map("reported_latitude")
+  reportedLongitude      Float?                   @map("reported_longitude")
+  reportedPositionSource ReportedPositionSource?  @map("reported_position_source")
+
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 
@@ -713,6 +747,23 @@ model IncidentReport {
   technicianId     String?        @map("technician_id")
   notes            String?
   audioNoteUrl     String?        @map("audio_note_url")
+
+  /// Where the fault was reported from, and how certain that is.
+  ///
+  /// A *snapshot*, taken once when the report is filed and never updated. That
+  /// is what makes the copy on `WorkOrder` safe: the two rows are written in
+  /// the same transaction and neither is ever revised afterwards, so there is
+  /// nothing for them to disagree about. `reportedPositionSource` is what says
+  /// whether this is the reporter's own device or the building's address
+  /// standing in for it — see `ReportedPositionSource`.
+  ///
+  /// All three are NULL only for reports filed before this existed, or for a
+  /// building that has never been geolocated. The map draws a pin for neither;
+  /// the site's own pin still carries the incident count.
+  reportedLatitude       Float?                   @map("reported_latitude")
+  reportedLongitude      Float?                   @map("reported_longitude")
+  reportedPositionSource ReportedPositionSource?  @map("reported_position_source")
+
   resolvedAt       DateTime?      @map("resolved_at")
   createdAt        DateTime       @default(now()) @map("created_at")
   updatedAt        DateTime       @updatedAt @map("updated_at")

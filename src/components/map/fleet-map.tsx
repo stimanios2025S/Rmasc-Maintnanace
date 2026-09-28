@@ -38,7 +38,8 @@ import { useEffect, useRef, useState } from "react";
 import type { LayerGroup, Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ATTENTION_STYLES } from "@/lib/map/attention";
-import type { FleetMapSite } from "@/lib/map/types";
+import type { FleetMapFault, FleetMapSite } from "@/lib/map/types";
+import { enumLabel } from "@/lib/ui/enum-labels";
 import type { Coordinates } from "@/lib/geo/geofence";
 import { cn } from "@/lib/utils";
 
@@ -173,10 +174,82 @@ function tooltipHtml(site: FleetMapSite): string {
   );
 }
 
+// ─── Fault pins ─────────────────────────────────────────────
+
+/**
+ * The two fault colours.
+ *
+ * Deliberately *not* in `attention.ts`. Those colours answer "how healthy is
+ * this site", and these answer a different question — "has this one been
+ * handled yet". Red is a fault raised through the emergency button, which by
+ * construction means nobody has read a description and nobody has spoken to the
+ * reporter; amber came through the wizard, so there is a fault code and some
+ * words attached. Reusing the attention palette would put two meanings on one
+ * colour and leave the legend unable to say what either of them is.
+ */
+const FAULT_COLORS = {
+  emergency: "#dc2626",
+  escalation: "#f59e0b",
+} as const;
+
+function faultColor(fault: FleetMapFault): string {
+  return fault.isDirectTransfer ? FAULT_COLORS.emergency : FAULT_COLORS.escalation;
+}
+
+function faultMarkerHtml(fault: FleetMapFault): string {
+  return `<div class="ep-map-fault" style="--ep-fault:${faultColor(fault)}"></div>`;
+}
+
+/**
+ * What the pin says when hovered.
+ *
+ * The third line is the one that matters. A pin drawn from the reporter's own
+ * device and a pin drawn from the building's address look identical on the map,
+ * and they are not the same claim at all — one is a measurement, the other is a
+ * fallback. Saying which is which is the difference between a map a dispatcher
+ * can act on and one that quietly overstates what it knows.
+ */
+function faultTooltipHtml(fault: FleetMapFault): string {
+  const meta = [
+    enumLabel(fault.status),
+    fault.isDirectTransfer ? "Urgence" : null,
+    fault.technicianName ? `Technicien : ${fault.technicianName}` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+
+  const origin = fault.source
+    ? enumLabel(fault.source)
+    : "Position d'origine non enregistrée";
+
+  return (
+    `<div class="ep-map-tooltip__body" style="--ep-color:${faultColor(fault)}">` +
+    `<div class="ep-map-tooltip__name">${escapeHtml(fault.incidentNumber)} · ${escapeHtml(fault.elevatorCode)}</div>` +
+    `<div class="ep-map-tooltip__meta">${escapeHtml(fault.buildingName)} · ${escapeHtml(meta)}</div>` +
+    `<div class="ep-map-tooltip__reason">` +
+    `<span class="ep-map-tooltip__swatch"></span>Position : ${escapeHtml(origin)}` +
+    `</div></div>`
+  );
+}
+
 // ─── Component ──────────────────────────────────────────────
 
 export interface FleetMapProps {
   sites: FleetMapSite[];
+  /**
+   * Open faults, drawn at the spot they were reported from.
+   *
+   * Independent of `sites` and of `selectedId`: these pins are not a site's
+   * health, they are outstanding work. They stay on the map when the attention
+   * filter hides the building they belong to — filtering by level is a way of
+   * reading the fleet, and it must not be a way of losing sight of a lift
+   * somebody is stuck in.
+   *
+   * A fault whose building is not among `sites` is still drawn, but is not
+   * clickable: there is no detail panel to open for a site the map is not
+   * showing.
+   */
+  faults?: FleetMapFault[];
   /** The site to highlight. Controlled by the caller. */
   selectedId?: string | null;
   onSelect?: (siteId: string | null) => void;
@@ -211,6 +284,7 @@ export interface FleetMapProps {
 
 export function FleetMap({
   sites,
+  faults = [],
   selectedId = null,
   onSelect,
   showGeofence = false,
@@ -226,6 +300,7 @@ export function FleetMap({
   const siteLayerRef = useRef<LayerGroup | null>(null);
   const selfLayerRef = useRef<LayerGroup | null>(null);
   const draftLayerRef = useRef<LayerGroup | null>(null);
+  const faultLayerRef = useRef<LayerGroup | null>(null);
 
   /** Set once Leaflet has loaded and the map exists, so the drawing effects
    *  know they have something to draw on. */
@@ -284,6 +359,7 @@ export function FleetMap({
       siteLayerRef.current = L.layerGroup().addTo(map);
       selfLayerRef.current = L.layerGroup().addTo(map);
       draftLayerRef.current = L.layerGroup().addTo(map);
+      faultLayerRef.current = L.layerGroup().addTo(map);
 
       map.on("click", (event) => {
         onMapClickRef.current?.({
@@ -304,6 +380,7 @@ export function FleetMap({
       siteLayerRef.current = null;
       selfLayerRef.current = null;
       draftLayerRef.current = null;
+      faultLayerRef.current = null;
       hasFittedRef.current = false;
       flownToRef.current = null;
       setReady(false);
@@ -447,6 +524,63 @@ export function FleetMap({
       zIndexOffset: 2000,
     }).addTo(layer);
   }, [ready, draftPosition]);
+
+  // ── Draw the open faults ──────────────────────────────────
+  useEffect(() => {
+    const L = leafletRef.current;
+    const layer = faultLayerRef.current;
+    if (!ready || !L || !layer) return;
+
+    layer.clearLayers();
+    if (faults.length === 0) return;
+
+    /**
+     * Which faults belong to a site the map is currently drawing.
+     *
+     * Built once rather than searched per pin. A fault on a building the
+     * attention filter has hidden is still drawn — losing sight of an open
+     * fault because of a display choice would be the worst possible trade — but
+     * it is not clickable, because there is no detail panel to open for a site
+     * that is not on the screen.
+     */
+    const selectable = new Set(sites.map((site) => site.id));
+
+    for (const fault of faults) {
+      const clickable = selectable.has(fault.buildingId);
+
+      const marker = L.marker([fault.latitude, fault.longitude], {
+        icon: L.divIcon({
+          html: faultMarkerHtml(fault),
+          className: MARKER_CLASS,
+          iconSize: [16, 16],
+          iconAnchor: [8, 8],
+        }),
+        // Above the site pins, because an outstanding fault is the thing worth
+        // noticing, but below the viewer's own dot at 1000 — "where I am" is
+        // the one fact that has to stay on top of everything.
+        zIndexOffset: 500,
+        interactive: clickable,
+      });
+
+      marker.bindTooltip(faultTooltipHtml(fault), {
+        direction: "top",
+        offset: [0, -10],
+        className: "ep-map-tooltip",
+      });
+
+      if (clickable) {
+        marker.on("click", (event) => {
+          // Leaflet dispatches a click on the map after the marker's unless it
+          // is stopped. Without this, clicking a fault would both open its site
+          // and, in placement mode, drop a pin on the same spot.
+          L.DomEvent.stopPropagation(event);
+          onSelectRef.current?.(fault.buildingId);
+        });
+      }
+
+      marker.addTo(layer);
+    }
+  }, [ready, faults, sites]);
 
   return (
     <div

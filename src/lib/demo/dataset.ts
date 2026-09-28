@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – In-memory demo dataset.
+ * Maintenance RMASC – In-memory demo dataset.
  *
  * WHAT THIS IS
  * A small, internally-consistent world (buildings, elevators, components,
@@ -554,6 +554,66 @@ function build(): DemoWorld {
     };
   })();
 
+  /**
+   * Where each fault in the demo was reported from.
+   *
+   * Derived from the unit's own site for exactly the reason the check-in above
+   * is: a recorded position in a different city from the building it belongs to
+   * is worse than no position at all, because the map would draw the fault
+   * somewhere the job is not.
+   *
+   * The offset is a few tens of metres — a phone at the gate or in the lift
+   * lobby — and is derived from the elevator id so that it is *stable* (the
+   * same report is always in the same place, so nothing flickers between
+   * reloads) and *distinct per unit* (three faults in one tower do not stack
+   * into a single pin that hides two of them).
+   *
+   * `reportedPositionSource` is `GPS`. The fixture models the ordinary case —
+   * a phone that was asked and answered. The `SITE` fallback the API applies
+   * when a device gives
+   * nothing is a branch, not the common path, and a demo that showed only the
+   * branch would misrepresent what the map normally looks like.
+   */
+  const reportedPositionFor = (
+    elevatorId: string
+  ): {
+    reportedLatitude: number | null;
+    reportedLongitude: number | null;
+    reportedPositionSource: "GPS" | "SITE" | null;
+  } => {
+    const unit = elevators.find((e) => e.id === elevatorId);
+    const site = unit
+      ? buildings.find((b) => b.id === unit.buildingId)
+      : undefined;
+    if (!site || site.latitude === null || site.longitude === null) {
+      return {
+        reportedLatitude: null,
+        reportedLongitude: null,
+        reportedPositionSource: null,
+      };
+    }
+
+    let hash = 0;
+    for (const char of elevatorId) {
+      hash = (hash * 31 + char.charCodeAt(0)) % 997;
+    }
+    const bearing = (hash / 997) * Math.PI * 2;
+    const metres = 25 + (hash % 45);
+    const degreesLat = metres / 111_320;
+    const degreesLon =
+      metres / (111_320 * Math.cos((site.latitude * Math.PI) / 180));
+
+    return {
+      reportedLatitude: Number(
+        (site.latitude + degreesLat * Math.cos(bearing)).toFixed(6)
+      ),
+      reportedLongitude: Number(
+        (site.longitude + degreesLon * Math.sin(bearing)).toFixed(6)
+      ),
+      reportedPositionSource: "GPS",
+    };
+  };
+
   const workOrders: WorkOrder[] = workOrderSeed.map((w, i) => {
     const component = w.componentType
       ? components.find(
@@ -604,6 +664,15 @@ function build(): DemoWorld {
         w.status === "IN_PROGRESS"
           ? "Accès par la loge ; le gardien a remis les clés de la machinerie."
           : null,
+      /**
+       * Left null here and filled in by the pass below, once the incidents
+       * exist — the incident owns the value and the order only carries a copy.
+       * Writing it here would mean looking up an array declared further down,
+       * which is a temporal dead zone rather than a design.
+       */
+      reportedLatitude: null,
+      reportedLongitude: null,
+      reportedPositionSource: null,
       completedAt:
         w.completedHoursAgo === null ? null : iso(w.completedHoursAgo * 60 * MINUTE),
       createdAt: iso((i + 1) * 190 * MINUTE),
@@ -762,11 +831,34 @@ function build(): DemoWorld {
     technicianId: s.technicianId,
     notes: s.notes,
     audioNoteUrl: null,
+    ...reportedPositionFor(s.elevatorId),
     resolvedAt:
       s.resolvedMinutesAgo === null ? null : iso(s.resolvedMinutesAgo * MINUTE),
     createdAt: iso(s.minutesAgo * MINUTE),
     updatedAt: iso(Math.max(1, s.resolvedMinutesAgo ?? s.minutesAgo - 30) * MINUTE),
   }));
+
+  /**
+   * Hand each order the position of the report that raised it.
+   *
+   * A second pass rather than a field in the mapping above, for two reasons: the
+   * incidents do not exist yet when the orders are built, and — more to the
+   * point — the incident is the source and the order is the copy. Written this
+   * way round, the demo reproduces the direction the real transaction writes
+   * in, so a reviewer checking the two against each other sees the same rule.
+   *
+   * An order with no incident keeps nulls. That is not a gap: a preventive
+   * visit raised from the client portal, or one raised by an alert nobody
+   * reported, has no reporter and therefore no reported position.
+   */
+  for (const incident of incidents) {
+    if (!incident.workOrderId) continue;
+    const order = workOrders.find((w) => w.id === incident.workOrderId);
+    if (!order) continue;
+    order.reportedLatitude = incident.reportedLatitude;
+    order.reportedLongitude = incident.reportedLongitude;
+    order.reportedPositionSource = incident.reportedPositionSource;
+  }
 
   // ── Notifications ─────────────────────────────────────────
   //

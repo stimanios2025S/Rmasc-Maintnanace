@@ -10,6 +10,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useSpeech } from "./use-speech";
+import { primeDevicePosition, readDevicePosition } from "@/lib/geo/device-position";
 import type { EmergencyElevator } from "./emergency-button";
 
 /**
@@ -56,6 +57,15 @@ export function IncidentWizard({
     null
   );
   const [error, setError] = useState<string | null>(null);
+
+  // Asked for as soon as the wizard appears, and never waited on. By the time
+  // an occupant has chosen an elevator and read a code's steps the answer has
+  // almost always arrived; when it has not, the report is filed without it and
+  // the server falls back to the building's address. See
+  // `src/lib/geo/device-position.ts` for why it is not requested at submit.
+  useEffect(() => {
+    primeDevicePosition();
+  }, []);
 
   // The full code list is small (a few dozen at most) and is fetched once, so
   // filtering as the occupant types is instant and works with no round trip.
@@ -126,6 +136,10 @@ export function IncidentWizard({
     setSubmitting(outcome);
     setError(null);
 
+    // Whatever the capture has produced so far — never awaited, so a slow or
+    // refused fix cannot hold up a report about a stopped lift.
+    const position = readDevicePosition();
+
     try {
       const res = await fetch("/api/incidents", {
         method: "POST",
@@ -136,6 +150,9 @@ export function IncidentWizard({
           isDirectTransfer: false,
           ...(selected ? { errorCodeId: selected.id } : {}),
           ...(notes.trim() ? { notes: notes.trim() } : {}),
+          ...(position
+            ? { latitude: position.latitude, longitude: position.longitude }
+            : {}),
         }),
       });
 

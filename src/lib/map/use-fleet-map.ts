@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AttentionFilter,
+  FleetMapFault,
   FleetMapPayload,
   FleetMapSite,
 } from "./types";
@@ -54,6 +55,14 @@ export interface UseFleetMapResult {
   payload: FleetMapPayload | null;
   /** `payload.sites`, with a stable identity — empty rather than null. */
   sites: FleetMapSite[];
+  /**
+   * `payload.faults`, same treatment. Deliberately *not* filtered by the
+   * attention filter the way `sites` is: the filter narrows which buildings'
+   * health you are looking at, and a fault is not a level — hiding the open
+   * faults on the units you just filtered out would be the map withholding the
+   * most urgent thing it knows.
+   */
+  faults: FleetMapFault[];
   loading: boolean;
   error: string;
   refreshedAt: Date | null;
@@ -103,8 +112,9 @@ export function useFleetMap({
 
   /** Memoised so the `[]` fallback is not a fresh reference on every render. */
   const sites = useMemo(() => payload?.sites ?? [], [payload]);
+  const faults = useMemo(() => payload?.faults ?? [], [payload]);
 
-  return { payload, sites, loading, error, refreshedAt, reload };
+  return { payload, sites, faults, loading, error, refreshedAt, reload };
 }
 
 /**

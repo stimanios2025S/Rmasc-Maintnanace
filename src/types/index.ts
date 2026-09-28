@@ -270,6 +270,17 @@ export const INCIDENT_STATUSES = [
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
 /**
+ * How a reported fault position was arrived at. Mirrors the Prisma enum of the
+ * same name — see the schema for why the distinction is stored rather than
+ * inferred.
+ *
+ * `GPS`  — the reporter's own device supplied the position.
+ * `SITE` — it did not, so the building's registered address stood in for it.
+ */
+export const REPORTED_POSITION_SOURCES = ["GPS", "SITE"] as const;
+export type ReportedPositionSource = (typeof REPORTED_POSITION_SOURCES)[number];
+
+/**
  * Statuses that mean the fault is still someone's outstanding problem.
  * Escalated and assigned incidents are *open*; a self-resolved one is not.
  */

@@ -30,6 +30,7 @@ import {
 import type { AttentionLevel } from "@/lib/map/attention";
 import type {
   FleetMapElevator,
+  FleetMapFault,
   FleetMapPayload,
   FleetMapSite,
   UnlocatedSite,
@@ -42,7 +43,8 @@ const severityRank = (severity: string): number =>
   ALERT_SEVERITIES.indexOf(severity as AlertSeverity);
 
 export function demoFleetMap(): FleetMapPayload {
-  const { buildings, elevators, alerts, workOrders, incidents } = demoWorld();
+  const { buildings, elevators, alerts, workOrders, incidents, users } =
+    demoWorld();
   const now = new Date();
 
   const sites: FleetMapSite[] = [];
@@ -147,9 +149,51 @@ export function demoFleetMap(): FleetMapPayload {
     });
   }
 
+  /**
+   * The open faults, built from the fixture's incidents by the same rule the
+   * endpoint applies: open statuses only, and only rows that have a point.
+   *
+   * The position comes off the incident rather than off its building. That is
+   * the whole distinction the fault layer exists to draw — a report made from
+   * the gate is not the building's survey point — and a fixture that placed
+   * every pin on the building would make the feature look like it does nothing.
+   */
+  const faults: FleetMapFault[] = [];
+  for (const incident of incidents) {
+    if (!OPEN_INCIDENT_STATUSES.includes(incident.status)) continue;
+
+    const position = readCoordinates({
+      latitude: incident.reportedLatitude,
+      longitude: incident.reportedLongitude,
+    });
+    if (!position) continue;
+
+    const unit = elevators.find((e) => e.id === incident.elevatorId);
+    const site = unit ? buildings.find((b) => b.id === unit.buildingId) : undefined;
+    if (!unit || !site) continue;
+
+    faults.push({
+      incidentId: incident.id,
+      incidentNumber: incident.incidentNumber,
+      status: incident.status,
+      isDirectTransfer: incident.isDirectTransfer,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      source: incident.reportedPositionSource,
+      reportedAt: incident.createdAt.toISOString(),
+      technicianName:
+        users.find((u) => u.id === incident.technicianId)?.name ?? null,
+      elevatorId: unit.id,
+      elevatorCode: unit.elevatorCode,
+      buildingId: site.id,
+      buildingName: site.name,
+    });
+  }
+
   return {
     sites,
     unlocated,
+    faults,
     totals: {
       sites: buildings.length,
       sitesLocated: sites.length,

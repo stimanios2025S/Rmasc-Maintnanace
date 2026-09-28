@@ -191,6 +191,33 @@
   box-shadow: 0 0 0 2px #0f172a, 0 0 0 9px rgba(15, 23, 42, 0.16);
 }
 
+/* An open fault, drawn at the spot it was reported from.
+ *
+ * A rotated square rather than another circle, and the shape is doing real
+ * work: every other marker on this map is round, so the silhouette alone says
+ * "this is not a building's health — this is a job somebody is waiting on".
+ * The rotation is applied to the element rather than to the wrapper, so the pin
+ * stays centred on its coordinate instead of swinging out from it.
+ *
+ * No pulse. The site pin's halo is the only continuous animation on this map,
+ * on purpose: it marks the worst attention level on the screen and nothing is
+ * allowed to compete with it. A second forever-animation would halve the
+ * meaning of the first.
+ */
+.ep-map-fault {
+  width: 16px;
+  height: 16px;
+  background: var(--ep-fault);
+  border: 2.5px solid #fff;
+  border-radius: 3px;
+  transform: rotate(45deg);
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.55);
+}
+
+.leaflet-marker-icon:hover .ep-map-fault {
+  transform: rotate(45deg) scale(1.25);
+}
+
 /* Placement mode. The crosshair is the only affordance telling the user that
    the next click on the map does something different from the last one. */
 .ep-map-placing .leaflet-container,

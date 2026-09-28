@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Client Incident API
+ * Maintenance RMASC – Client Incident API
  *
  * GET  /api/incidents   – list incidents visible to the caller
  * POST /api/incidents   – record a client-reported fault
@@ -42,7 +42,9 @@ import { autoAssignIncident } from "@/lib/dispatch/auto-assign";
 import { sendAdminSmsAlert } from "@/lib/notifications/sms";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoIncidents } from "@/lib/demo/responses";
+import { readCoordinates } from "@/lib/geo/geofence";
 import { INCIDENT_STATUSES } from "@/types";
+import type { ReportedPositionSource } from "@/types";
 
 // ─── Schemas ────────────────────────────────────────────────
 
@@ -69,6 +71,21 @@ const CreateIncidentSchema = z
     isDirectTransfer: z.boolean().default(false),
     notes: z.string().trim().max(4000).optional(),
     audioNoteUrl: z.string().trim().max(2000).optional(),
+    /**
+     * The reporter's own position, when their device supplied one.
+     *
+     * Optional, both halves together. Geocoding a fault report is a courtesy,
+     * not a condition: a client who declines the browser prompt, or whose phone
+     * takes ten seconds to get a fix, must still be able to report a stopped
+     * lift. The bounds are checked here so an impossible pair is a 400 rather
+     * than a row no map can draw.
+     *
+     * Half a coordinate is treated as no coordinate at all — see
+     * `resolveReportedPosition`. A latitude with no longitude is a client bug,
+     * and storing it would put a pin on the Greenwich meridian.
+     */
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
   })
   .strict();
 
@@ -81,6 +98,12 @@ const INCIDENT_SELECT = {
   isDirectTransfer: true,
   notes: true,
   audioNoteUrl: true,
+  // Returned so the board and the technician's sheet can draw the fault where
+  // it was reported from, and say whether that is a measurement or the site's
+  // address standing in for one.
+  reportedLatitude: true,
+  reportedLongitude: true,
+  reportedPositionSource: true,
   resolvedAt: true,
   createdAt: true,
   updatedAt: true,
@@ -171,7 +194,17 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         elevatorCode: true,
-        building: { select: { name: true, address: true } },
+        building: {
+          select: {
+            name: true,
+            address: true,
+            // Read for the fallback position only. Never written back: the
+            // building's own address is the permanent record and a report must
+            // not be able to move it.
+            latitude: true,
+            longitude: true,
+          },
+        },
       },
     });
     if (!elevator) throw notFound(`Ascenseur introuvable : ${body.elevatorId}`);
@@ -185,6 +218,17 @@ export async function POST(request: NextRequest) {
     }
 
     const isEscalation = body.status === "ESCALATED";
+
+    /**
+     * Where this fault is, resolved once and written to both rows.
+     *
+     * Computed before the transaction because it reads the building we have
+     * already fetched and depends on nothing the transaction writes. The same
+     * three values go to the incident and to its work order, which is safe
+     * precisely because neither is ever revised afterwards: the pair cannot
+     * drift, there being nothing to drift from.
+     */
+    const reported = resolveReportedPosition(body, elevator.building);
 
     /**
      * The incident and its work order are written together.
@@ -215,6 +259,12 @@ export async function POST(request: NextRequest) {
               // the system creator here (as the telemetry ingestion path does)
               // would discard the only link back to the person who reported it.
               createdById: session.user.id,
+              // The same snapshot the incident carries, so a technician opening
+              // the job in the field never has to join back to find out where
+              // the customer said the problem was.
+              reportedLatitude: reported.latitude,
+              reportedLongitude: reported.longitude,
+              reportedPositionSource: reported.source,
             },
             select: { id: true },
           });
@@ -232,6 +282,9 @@ export async function POST(request: NextRequest) {
             workOrderId,
             notes: body.notes ?? null,
             audioNoteUrl: body.audioNoteUrl ?? null,
+            reportedLatitude: reported.latitude,
+            reportedLongitude: reported.longitude,
+            reportedPositionSource: reported.source,
             resolvedAt:
               body.status === "RESOLVED_BY_CLIENT" ? new Date() : null,
           },
@@ -335,6 +388,51 @@ function incidentScopeFor(session: Session): Prisma.IncidentReportWhereInput {
     return { technicianId: session.user.id };
   }
   return {};
+}
+
+// ─── Reported position ──────────────────────────────────────
+
+/**
+ * Where the reported fault is, and how we know.
+ *
+ * Three outcomes, in order of trust:
+ *
+ *  - the reporter's device gave a usable pair → `GPS`;
+ *  - it did not, but we have geolocated the building → `SITE`, the address
+ *    standing in for a measurement;
+ *  - neither → nothing stored at all, and the map draws no pin for it. The
+ *    site's own pin still carries the incident count, so the fault is not
+ *    invisible — it is simply not pinned to a point nobody can vouch for.
+ *
+ * The validation is `readCoordinates`, the same predicate the geofence uses.
+ * That is deliberate rather than convenient: it already refuses NaN, infinities
+ * and out-of-range values, and it already accepts `(0, 0)` as the real place in
+ * the Atlantic that it is rather than treating it as "unset". A second,
+ * subtly-different test here is exactly how one screen ends up disagreeing with
+ * another about whether a position exists.
+ *
+ * A single coordinate is not half a position, it is none: a latitude with no
+ * longitude would place the pin on the Greenwich meridian, which is worse than
+ * no pin because it looks like an answer.
+ */
+function resolveReportedPosition(
+  body: CreateIncidentInput,
+  building: { latitude: number | null; longitude: number | null }
+): {
+  latitude: number | null;
+  longitude: number | null;
+  source: ReportedPositionSource | null;
+} {
+  const device = readCoordinates({
+    latitude: body.latitude ?? null,
+    longitude: body.longitude ?? null,
+  });
+  if (device) return { ...device, source: "GPS" };
+
+  const site = readCoordinates(building);
+  if (site) return { ...site, source: "SITE" };
+
+  return { latitude: null, longitude: null, source: null };
 }
 
 // ─── Copy builders ──────────────────────────────────────────

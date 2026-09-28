@@ -1,5 +1,5 @@
 /**
- * ElevatorPulse – Fleet Map API
+ * Maintenance RMASC – Fleet Map API
  *
  * GET /api/map/fleet – every located site, its elevators, and how urgent each
  *                      one is, in a single payload.
@@ -43,6 +43,7 @@ import {
 import type { AttentionLevel } from "@/lib/map/attention";
 import type {
   FleetMapElevator,
+  FleetMapFault,
   FleetMapPayload,
   FleetMapSite,
   UnlocatedSite,
@@ -115,7 +116,7 @@ export async function GET() {
      * would otherwise scale with the fleet. An empty `in: []` matches nothing
      * and costs one round trip, which is cheaper than branching around it.
      */
-    const [workOrderGroups, incidentGroups, alertGroups] = await Promise.all([
+    const [workOrderGroups, incidentGroups, alertGroups, faultRows] = await Promise.all([
       prisma.workOrder.groupBy({
         by: ["elevatorId"],
         where: {
@@ -144,6 +145,47 @@ export async function GET() {
           isAcknowledged: false,
         },
         _count: { _all: true },
+      }),
+      /**
+       * The open faults, as points rather than counts.
+       *
+       * Separate from the `incidentGroups` aggregate above, which stays as it
+       * is: the count still colours the site pin, and it still has to include
+       * incidents the map cannot place. This query is the narrower one — only
+       * the rows that have somewhere to be drawn.
+       *
+       * Scoped through the elevator's building rather than by elevator id, so
+       * a building owner sees faults on their own sites and nothing else. The
+       * `elevatorScopeFor` helper is not reused here because it also filters on
+       * `isActive`, and a fault on a unit that has since been taken out of
+       * service is exactly the kind of thing that is still burning.
+       */
+      prisma.incidentReport.findMany({
+        where: {
+          status: { in: [...OPEN_INCIDENT_STATUSES] },
+          reportedLatitude: { not: null },
+          reportedLongitude: { not: null },
+          elevator: { building: buildingScopeFor(session) },
+        },
+        select: {
+          id: true,
+          incidentNumber: true,
+          status: true,
+          isDirectTransfer: true,
+          reportedLatitude: true,
+          reportedLongitude: true,
+          reportedPositionSource: true,
+          createdAt: true,
+          elevator: {
+            select: {
+              id: true,
+              elevatorCode: true,
+              building: { select: { id: true, name: true } },
+            },
+          },
+          technician: { select: { name: true } },
+        },
+        orderBy: { createdAt: "desc" },
       }),
     ]);
 
@@ -257,9 +299,45 @@ export async function GET() {
       });
     }
 
+    /**
+     * The fault pins, validated once more on the way out.
+     *
+     * The query already filters on non-null, so the only row this can drop is
+     * one whose stored pair is out of range — a hand-edited row, a future
+     * ingestion path, a coordinate that drifted. It is `readCoordinates`, the
+     * same predicate the write path used, so a position that passed there
+     * passes here; one that does not is left off the map rather than drawn at
+     * a point in the Atlantic.
+     */
+    const faults: FleetMapFault[] = [];
+    for (const incident of faultRows) {
+      const position = readCoordinates({
+        latitude: incident.reportedLatitude,
+        longitude: incident.reportedLongitude,
+      });
+      if (!position) continue;
+
+      faults.push({
+        incidentId: incident.id,
+        incidentNumber: incident.incidentNumber,
+        status: incident.status,
+        isDirectTransfer: incident.isDirectTransfer,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        source: incident.reportedPositionSource,
+        reportedAt: incident.createdAt.toISOString(),
+        technicianName: incident.technician?.name ?? null,
+        elevatorId: incident.elevator.id,
+        elevatorCode: incident.elevator.elevatorCode,
+        buildingId: incident.elevator.building.id,
+        buildingName: incident.elevator.building.name,
+      });
+    }
+
     const payload: FleetMapPayload = {
       sites,
       unlocated,
+      faults,
       totals: {
         sites: buildings.length,
         sitesLocated: sites.length,

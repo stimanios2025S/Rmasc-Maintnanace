@@ -45,6 +45,15 @@ export const ENUM_LABELS: Record<string, string> = {
   CLOSED: "Clôturé",
   RESOLVED_BY_CLIENT: "Résolu par le client",
 
+  // ─── Reported position source ─────────────────────────────
+  //
+  // Short enough to sit inside a sentence — the map reads them as
+  // "Position : Téléphone du client". The distinction they carry is not
+  // cosmetic: one is something a device measured, the other is the site's own
+  // address standing in for a measurement that never arrived.
+  GPS: "Téléphone du client",
+  SITE: "Adresse du site",
+
   // ─── Elevator status ──────────────────────────────────────
   OPERATIONAL: "En service",
   SERVICE_REQUIRED: "Entretien requis",

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertOctagon, Loader2, PhoneCall, Volume2 } from "lucide-react";
 import { useSpeech } from "./use-speech";
+import { primeDevicePosition, readDevicePosition } from "@/lib/geo/device-position";
 
 /**
  * The accessibility path: one press, no reading, a technician is dispatched.
@@ -42,9 +43,24 @@ export function EmergencyButton({
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Started on mount, and this is the component that most needs it.
+   *
+   * Somebody pressing the red button is by definition in a hurry — there is no
+   * typing here, no code to read, nothing to buy the capture any time at all.
+   * Whatever has arrived by the press is used, and the press is never delayed
+   * by the wait. It shares one capture with the wizard rendered below it, so
+   * the two do not each ask the browser for a position.
+   */
+  useEffect(() => {
+    primeDevicePosition();
+  }, []);
+
   async function escalate(elevatorId: string) {
     setSubmitting(elevatorId);
     setError(null);
+
+    const position = readDevicePosition();
 
     try {
       const res = await fetch("/api/incidents", {
@@ -55,6 +71,9 @@ export function EmergencyButton({
           status: "ESCALATED",
           isDirectTransfer: true,
           notes: "Demande d'assistance immédiate — envoi direct, sans description.",
+          ...(position
+            ? { latitude: position.latitude, longitude: position.longitude }
+            : {}),
         }),
       });
 

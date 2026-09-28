@@ -16,6 +16,7 @@
  */
 
 import type { AttentionCounts, AttentionLevel } from "./attention";
+import type { ReportedPositionSource } from "@/types";
 
 /** One elevator as it appears inside a site. */
 export interface FleetMapElevator {
@@ -85,6 +86,51 @@ export interface UnlocatedSite {
 }
 
 /**
+ * One open fault, at the spot it was reported from.
+ *
+ * WHY THIS IS NOT A PROPERTY OF A SITE
+ * A site's pin answers "how is this building doing". A fault pin answers a
+ * different question — "where is the thing somebody rang us about" — and the
+ * two do not coincide. A technician reporting a fault from a phone at the gate,
+ * four hundred metres from the survey point, is telling us something the site
+ * pin cannot express; folding it into the site would round it away to the
+ * building's own coordinates and the position would be recorded and never
+ * used.
+ *
+ * Only *open* faults appear. A map that keeps drawing last month's resolved
+ * jobs becomes a map of history, and the one thing a dispatcher needs from it
+ * is what is outstanding right now.
+ *
+ * `latitude`/`longitude` are non-null because the endpoint filters out rows
+ * without them: an incident raised before positions were recorded, or from a
+ * building that has never been geolocated, has no point to draw and is left to
+ * the site pin's count rather than placed at a guess.
+ */
+export interface FleetMapFault {
+  incidentId: string;
+  incidentNumber: string;
+  /** `IncidentStatus`. Left as a string so the UI can fall back gracefully. */
+  status: string;
+  /** True when it came from the emergency button rather than the wizard. */
+  isDirectTransfer: boolean;
+  latitude: number;
+  longitude: number;
+  /**
+   * How certain the position is — the reporter's own device, or the site's
+   * address standing in for it. Null only for a row written before the column
+   * existed, which the tooltip says out loud rather than guessing at.
+   */
+  source: ReportedPositionSource | null;
+  reportedAt: string;
+  technicianName: string | null;
+  elevatorId: string;
+  elevatorCode: string;
+  /** The site this fault belongs to, so a click can open its detail panel. */
+  buildingId: string;
+  buildingName: string;
+}
+
+/**
  * What the map is currently showing: one level, or everything.
  *
  * Declared here rather than beside the legend that renders it, because it is
@@ -106,6 +152,15 @@ export interface FleetMapTotals {
 export interface FleetMapPayload {
   sites: FleetMapSite[];
   unlocated: UnlocatedSite[];
+  /**
+   * Open faults, drawn where they were reported from.
+   *
+   * A separate list rather than a field on each site, because a fault is not a
+   * property of a building: it belongs to an elevator, it is reported from a
+   * place that may not be the building's address, and it disappears from the
+   * map when it closes without the site changing at all.
+   */
+  faults: FleetMapFault[];
   totals: FleetMapTotals;
   /** When the payload was assembled, so the panel can say how fresh it is. */
   generatedAt: string;
