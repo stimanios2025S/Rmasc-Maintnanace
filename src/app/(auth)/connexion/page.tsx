@@ -44,27 +44,69 @@ function LoginForm() {
   const [demoLoading, setDemoLoading] = useState<string | null>(null);
   const [error, setError] = useState("");
 
+  /**
+   * NextAuth's error codes, in words a person can act on.
+   *
+   * The default is the raw code, NOT the credentials message. That default is
+   * the point: this page used to report every failure that was not
+   * "AuthServiceUnavailable" as « adresse e-mail ou mot de passe incorrect »,
+   * so an expired CSRF token, a 500, or a page left open in a background tab
+   * since yesterday all read as "you typed it wrong" — and sent the reader off
+   * to retype a password that was never the problem.
+   */
+  const AUTH_ERROR_MESSAGES: Record<string, string> = {
+    CredentialsSignin:
+      "Adresse e-mail ou mot de passe incorrect. Veuillez réessayer.",
+    MissingCSRF:
+      "La page est restée ouverte trop longtemps : sa session de sécurité a expiré. Rechargez la page, puis reconnectez-vous.",
+    SessionRequired: "Votre session a expiré. Reconnectez-vous.",
+  };
+
+  const messageFor = (code: string): string => {
+    if (code.includes("AuthServiceUnavailable")) {
+      return "Service d'authentification indisponible — la base de données est peut-être arrêtée ou non initialisée.";
+    }
+    return AUTH_ERROR_MESSAGES[code] ?? `La connexion a échoué (${code}).`;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError("");
 
+    /**
+     * Read the values out of the form, not out of React state.
+     *
+     * State is only as fresh as the last `onChange` React saw, and on a phone
+     * that is not always the last thing that happened. Android Chrome and iOS
+     * Safari fill a field from the keyboard's password manager *without*
+     * dispatching a change event React is listening for, so the input displays
+     * the address while the component still holds "". Submitting then posts an
+     * empty e-mail, the server refuses, and the reader is told their address is
+     * wrong while looking straight at it on the screen.
+     *
+     * The DOM value is the one the person can actually see, so that is the one
+     * to send. The state stays as the fallback for anything that fills the
+     * fields without a submit event.
+     */
+    const form = e.currentTarget as HTMLFormElement;
+    const submitted = new FormData(form);
+
+    const submittedEmail = String(submitted.get("email") ?? email)
+      .trim()
+      .toLowerCase();
+    const submittedPassword = String(submitted.get("password") ?? password);
+
     const result = await signIn("credentials", {
-      email: email.trim().toLowerCase(),
-      password,
+      email: submittedEmail,
+      password: submittedPassword,
       redirect: false,
     });
 
     setIsLoading(false);
 
     if (result?.error) {
-      if (result.error.includes("AuthServiceUnavailable")) {
-        setError(
-          "Service d'authentification indisponible — la base de données est peut-être arrêtée ou non initialisée. Démarrez le backend, puis réessayez."
-        );
-      } else {
-        setError("Adresse e-mail ou mot de passe incorrect. Veuillez réessayer.");
-      }
+      setError(messageFor(result.error));
       return;
     }
 
@@ -87,15 +129,7 @@ function LoginForm() {
     setDemoLoading(null);
 
     if (result?.error) {
-      if (result.error.includes("AuthServiceUnavailable")) {
-        setError(
-          "Service d'authentification indisponible — la base de données est peut-être arrêtée ou non initialisée. Exécutez : npx prisma db push && npm run db:seed, puis redémarrez npm run dev."
-        );
-      } else {
-        setError(
-          "Compte de démonstration introuvable ou mot de passe incorrect. Exécutez npm run db:seed, puis appuyez de nouveau sur Administrateur."
-        );
-      }
+      setError(messageFor(result.error));
       return;
     }
 
@@ -112,7 +146,7 @@ function LoginForm() {
             <Activity className="w-9 h-9 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            ElevatorPulse
+            Maintenance RMASC
           </h1>
           <p className="text-sm text-gray-500 mt-1">
             Plateforme de maintenance prédictive
@@ -142,10 +176,29 @@ function LoginForm() {
               >
                 Adresse e-mail
               </label>
+              {/*
+                `name` is not decoration: `handleSubmit` reads the submitted
+                values with `new FormData(form)`, and an input without one is
+                simply absent from it.
+
+                `autoComplete="username"` rather than "email" because password
+                managers key their saved credentials on that token, and it is
+                what pairs the address with the password box below.
+
+                The next four attributes are for phone keyboards. `type="email"`
+                suppresses capitalisation in most browsers but not all of them,
+                and a leading capital is invisible on a phone screen — the
+                address looks right and arrives wrong.
+              */}
               <input
                 id="email"
+                name="email"
                 type="email"
-                autoComplete="email"
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="vous@entreprise.com"
@@ -162,10 +215,16 @@ function LoginForm() {
                 Mot de passe
               </label>
               <div className="relative">
+                {/* Same as the address above: a password is not a word, and the
+                    keyboard must not capitalise or correct it. */}
                 <input
                   id="password"
+                  name="password"
                   type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
