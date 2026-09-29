@@ -26,6 +26,7 @@ import type {
   FleetMapFault,
   FleetMapPayload,
   FleetMapSite,
+  FleetMapTechnician,
 } from "./types";
 
 /** A minute. A map is read rather than watched; see the callers' comments. */
@@ -63,6 +64,14 @@ export interface UseFleetMapResult {
    * most urgent thing it knows.
    */
   faults: FleetMapFault[];
+  /**
+   * `payload.technicians`, same treatment.
+   *
+   * Empty for every role that is not staff — the endpoint never puts the list
+   * in the payload for a building owner — so a consumer can pass this straight
+   * through without knowing who is looking.
+   */
+  technicians: FleetMapTechnician[];
   loading: boolean;
   error: string;
   refreshedAt: Date | null;
@@ -113,8 +122,9 @@ export function useFleetMap({
   /** Memoised so the `[]` fallback is not a fresh reference on every render. */
   const sites = useMemo(() => payload?.sites ?? [], [payload]);
   const faults = useMemo(() => payload?.faults ?? [], [payload]);
+  const technicians = useMemo(() => payload?.technicians ?? [], [payload]);
 
-  return { payload, sites, faults, loading, error, refreshedAt, reload };
+  return { payload, sites, faults, technicians, loading, error, refreshedAt, reload };
 }
 
 /**

@@ -43,6 +43,10 @@ import { sendAdminSmsAlert } from "@/lib/notifications/sms";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoIncidents } from "@/lib/demo/responses";
 import { readCoordinates } from "@/lib/geo/geofence";
+import {
+  readTechnicianFix,
+  technicianProximity,
+} from "@/lib/geo/technician-position";
 import { INCIDENT_STATUSES } from "@/types";
 import type { ReportedPositionSource } from "@/types";
 
@@ -112,7 +116,20 @@ const INCIDENT_SELECT = {
       id: true,
       elevatorCode: true,
       model: true,
-      building: { select: { id: true, name: true, address: true, city: true } },
+      building: {
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          city: true,
+          // Read for the distance, never written. Null on a site that has
+          // never been geolocated, which is why the board says "distance
+          // inconnue" instead of guessing from the address.
+          latitude: true,
+          longitude: true,
+          geofenceRadiusM: true,
+        },
+      },
     },
   },
   errorCode: { select: { id: true, code: true, title: true } },
@@ -128,11 +145,95 @@ const INCIDENT_SELECT = {
   client: {
     select: { id: true, name: true, email: true, phone: true, clientType: true },
   },
-  technician: { select: { id: true, name: true, email: true, phone: true } },
+  /**
+   * The assignee, with the last position their own phone reported.
+   *
+   * The three position columns are carried so the board can answer the one
+   * question a dispatcher has while a job is open — how far out is he — without
+   * a second request per row. They are the technician's own device's word, not
+   * an administrator's, and `readTechnicianFix` decides whether they are recent
+   * enough to show as current.
+   */
+  technician: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      lastLatitude: true,
+      lastLongitude: true,
+      lastPositionAt: true,
+    },
+  },
   workOrder: {
     select: { id: true, orderNumber: true, status: true, priority: true },
   },
 } satisfies Prisma.IncidentReportSelect;
+
+/**
+ * Adds the assignee's distance to the site to one incident row.
+ *
+ * WHY THIS IS COMPUTED HERE AND NOT IN THE BROWSER
+ * The board already receives the site's coordinates and could subtract them
+ * itself, but a distance the client derives is a distance the server never
+ * agreed to: two screens would round it differently, and a route that later
+ * stops sending one of the four numbers would produce `NaN` metres rather than
+ * a missing value. It goes through `technicianProximity`, which goes through
+ * `evaluateGeofence` — the same function the technician's own télémètre counts
+ * down with and the server refuses a late check-in with, so the number a
+ * dispatcher reads and the number a technician is judged by cannot disagree.
+ *
+ * THE AGE TRAVELS WITH THE DISTANCE, AND THAT IS THE POINT
+ * A distance alone cannot be acted on, because a stale one looks exactly like a
+ * live one. `technicianProximity.ageMs` is how long ago the device last spoke
+ * and `isFresh` is whether that was inside the freshness window; the board
+ * shows "il y a 18 min" beside a number it no longer trusts, rather than either
+ * hiding it or presenting a phone in a basement as a live dot.
+ *
+ * Nothing is faked when the coordinates are missing. `distanceM` is null and
+ * the board says « position inconnue » — the alternative, falling back to the
+ * site's own position, would confidently report zero metres for a technician
+ * whose phone never answered.
+ */
+function withTechnicianProximity<
+  T extends {
+    elevator: {
+      building: {
+        latitude: number | null;
+        longitude: number | null;
+        geofenceRadiusM: number | null;
+      };
+    };
+    technician: {
+      id: string;
+      name: string | null;
+      email: string;
+      phone: string | null;
+      lastLatitude: number | null;
+      lastLongitude: number | null;
+      lastPositionAt: Date | null;
+    } | null;
+  },
+>(incident: T, now: Date) {
+  const building = incident.elevator.building;
+  const fix = readTechnicianFix(
+    incident.technician ?? {
+      lastLatitude: null,
+      lastLongitude: null,
+      lastPositionAt: null,
+    },
+    now
+  );
+
+  return {
+    ...incident,
+    technicianProximity: technicianProximity(
+      fix,
+      readCoordinates(building),
+      building.geofenceRadiusM
+    ),
+  };
+}
 
 // ─── GET ────────────────────────────────────────────────────
 
@@ -165,7 +266,14 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
-    return NextResponse.json({ data: incidents, total, page, limit });
+    const now = new Date();
+
+    return NextResponse.json({
+      data: incidents.map((incident) => withTechnicianProximity(incident, now)),
+      total,
+      page,
+      limit,
+    });
   } catch (error) {
     if (shouldServeDemoData(error)) {
       warnDemoFallbackOnce("GET /api/incidents");
@@ -355,8 +463,18 @@ export async function POST(request: NextRequest) {
     // after an automatic dispatch the incident is no longer ESCALATED, and
     // returning the pre-assignment row would have the caller's own next read
     // contradict the answer it was just given.
+    //
+    // Shaped by the same function the list uses, so a freshly created incident
+    // carries the same three proximity fields as one that came off a GET — an
+    // auto-dispatch has just assigned a technician, and that is precisely the
+    // moment a caller wants to know where they are.
     return NextResponse.json(
-      { data: auto?.assigned ? auto.incident : created },
+      {
+        data: withTechnicianProximity(
+          auto?.assigned ? auto.incident : created,
+          new Date()
+        ),
+      },
       { status: 201 }
     );
   } catch (error) {

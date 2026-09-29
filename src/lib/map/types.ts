@@ -141,6 +141,41 @@ export interface FleetMapFault {
 }
 
 /**
+ * A field technician, at the last position their own phone reported.
+ *
+ * WHY THIS IS NOT A PROPERTY OF A SITE
+ * A technician is not at a building; they are on the way to one. Attaching them
+ * to the nearest site would place them on a pin they are not standing on, and
+ * the whole question a dispatcher opens this map with — who is near the fault
+ * that just came in — would be answered with the company's own address book.
+ *
+ * Only ever present for staff. A building owner is a customer account, and the
+ * position of an employee is not part of what they bought: the route empties
+ * this list for that role rather than the map choosing not to draw it.
+ */
+export interface FleetMapTechnician {
+  id: string;
+  name: string;
+  /** `TechnicianStatus`, left as a string so the UI can fall back. */
+  status: string;
+  latitude: number;
+  longitude: number;
+  /** When the device last reported, as an ISO string. */
+  reportedAt: string;
+  /** How long ago that was, in milliseconds. */
+  ageMs: number;
+  /**
+   * Whether the reading is recent enough to present as current.
+   *
+   * A stale technician is still drawn — the map is not entitled to hide one of
+   * its own people — but faded, and the tooltip says how old the reading is.
+   * Dropping them would make the map look like a roster, and a dispatcher would
+   * have no way to tell "he has no phone" from "he is not working today".
+   */
+  isFresh: boolean;
+}
+
+/**
  * What the map is currently showing: one level, or everything.
  *
  * Declared here rather than beside the legend that renders it, because it is
@@ -171,6 +206,14 @@ export interface FleetMapPayload {
    * map when it closes without the site changing at all.
    */
   faults: FleetMapFault[];
+  /**
+   * The field staff, at the last position each of their phones reported.
+   *
+   * Empty for a building owner — see `FleetMapTechnician`. Empty is the normal
+   * state for everybody else too, in the sense that a technician whose location
+   * has never been granted simply is not here.
+   */
+  technicians: FleetMapTechnician[];
   totals: FleetMapTotals;
   /** When the payload was assembled, so the panel can say how fresh it is. */
   generatedAt: string;

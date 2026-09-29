@@ -35,6 +35,7 @@ import { handleRouteError } from "@/lib/api/http";
 import { buildingScopeFor, requireRole, OPS_ROLES } from "@/lib/api/guard";
 import { OPEN_WORK_ORDER_STATUSES } from "@/lib/work-orders/service";
 import { readCoordinates, effectiveRadiusM } from "@/lib/geo/geofence";
+import { readTechnicianFix } from "@/lib/geo/technician-position";
 import {
   countAttention,
   worstAttention,
@@ -46,6 +47,7 @@ import type {
   FleetMapFault,
   FleetMapPayload,
   FleetMapSite,
+  FleetMapTechnician,
   UnlocatedSite,
 } from "@/lib/map/types";
 import { ALERT_SEVERITIES, OPEN_INCIDENT_STATUSES } from "@/types";
@@ -191,6 +193,63 @@ export async function GET() {
       }),
     ]);
 
+    /**
+     * Where the field staff are.
+     *
+     * Deliberately outside the `Promise.all` above and conditional, because it
+     * is not part of the fleet: a building owner is a customer account, and the
+     * position of an employee is not part of what they bought. The list is
+     * emptied for that role rather than filtered in the browser, so a payload
+     * that reaches a customer never contained it.
+     *
+     * Fetched as a fifth query rather than joined into the graph, because a
+     * technician belongs to no building: the four queries above are all reached
+     * through `buildings`, and a person is not.
+     */
+    const technicianRows = OPS_ROLES.includes(session.user.role)
+      ? await prisma.user.findMany({
+          where: {
+            role: "FIELD_TECHNICIAN",
+            isActive: true,
+            lastLatitude: { not: null },
+            lastLongitude: { not: null },
+          },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            lastLatitude: true,
+            lastLongitude: true,
+            lastPositionAt: true,
+          },
+          orderBy: { name: "asc" },
+        })
+      : [];
+
+    const now = new Date();
+
+    /**
+     * Re-validated through `readTechnicianFix`, the same reader the incident
+     * board uses, so one screen cannot accept a pair another refuses. A row
+     * that fails is dropped rather than drawn at a point in the Atlantic.
+     */
+    const technicians: FleetMapTechnician[] = [];
+    for (const row of technicianRows) {
+      const fix = readTechnicianFix(row, now);
+      if (!fix.position || !fix.recordedAt) continue;
+
+      technicians.push({
+        id: row.id,
+        name: row.name,
+        status: row.status,
+        latitude: fix.position.latitude,
+        longitude: fix.position.longitude,
+        reportedAt: fix.recordedAt.toISOString(),
+        ageMs: fix.ageMs ?? 0,
+        isFresh: fix.isFresh,
+      });
+    }
+
     const openWorkOrders = new Map(
       workOrderGroups.map((g) => [g.elevatorId, g._count._all])
     );
@@ -212,7 +271,9 @@ export async function GET() {
       alerts.set(group.elevatorId, entry);
     }
 
-    const now = new Date();
+    // One `now` for the whole request, declared with the technician block
+    // above. Two clocks in one payload is how a pin and the panel behind it
+    // end up disagreeing about how old something is.
 
     const sites: FleetMapSite[] = [];
     const unlocated: UnlocatedSite[] = [];
@@ -345,6 +406,7 @@ export async function GET() {
       sites,
       unlocated,
       faults,
+      technicians,
       totals: {
         sites: buildings.length,
         sitesLocated: sites.length,

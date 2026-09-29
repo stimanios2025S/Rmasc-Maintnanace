@@ -12,6 +12,11 @@
 
 import { demoWorld } from "./dataset";
 import { presentErrorCode } from "@/lib/incidents/error-codes";
+import { readCoordinates } from "@/lib/geo/geofence";
+import {
+  readTechnicianFix,
+  technicianProximity,
+} from "@/lib/geo/technician-position";
 import { DISPATCHABLE_TECHNICIAN_STATUSES } from "@/types";
 import type {
   Alert,
@@ -647,6 +652,7 @@ export function demoErrorCodes(query?: string | null) {
 
 export function demoIncidents(filters: { status?: string | null }) {
   const { incidents, elevators, errorCodes, users, workOrders } = demoWorld();
+  const now = new Date();
 
   const rows = incidents
     .filter((i) => (filters.status ? i.status === filters.status : true))
@@ -659,6 +665,24 @@ export function demoIncidents(filters: { status?: string | null }) {
       const technician = users.find((u) => u.id === incident.technicianId);
       const order = workOrders.find((w) => w.id === incident.workOrderId);
 
+      /**
+       * The same reading the real route performs, through the same two
+       * functions.
+       *
+       * Worth the three lines: the demo board and the live board render one
+       * row shape, and a fixture that hard-coded "1,2 km" would let the
+       * distance on screen drift away from the coordinates behind it the first
+       * time either was touched.
+       */
+      const fix = readTechnicianFix(
+        technician ?? {
+          lastLatitude: null,
+          lastLongitude: null,
+          lastPositionAt: null,
+        },
+        now
+      );
+
       return {
         id: incident.id,
         incidentNumber: incident.incidentNumber,
@@ -669,6 +693,11 @@ export function demoIncidents(filters: { status?: string | null }) {
         resolvedAt: incident.resolvedAt,
         createdAt: incident.createdAt,
         updatedAt: incident.updatedAt,
+        technicianProximity: technicianProximity(
+          fix,
+          readCoordinates(building),
+          building?.geofenceRadiusM ?? null
+        ),
         elevator: {
           id: unit?.id ?? "—",
           elevatorCode: unit?.elevatorCode ?? "—",
@@ -678,6 +707,9 @@ export function demoIncidents(filters: { status?: string | null }) {
             name: building?.name ?? "—",
             address: building?.address ?? "—",
             city: building?.city ?? "—",
+            latitude: building?.latitude ?? null,
+            longitude: building?.longitude ?? null,
+            geofenceRadiusM: building?.geofenceRadiusM ?? null,
           },
         },
         errorCode: code ? { id: code.id, code: code.code, title: code.title } : null,
@@ -690,6 +722,9 @@ export function demoIncidents(filters: { status?: string | null }) {
               name: technician.name,
               email: technician.email,
               phone: technician.phone,
+              lastLatitude: technician.lastLatitude,
+              lastLongitude: technician.lastLongitude,
+              lastPositionAt: technician.lastPositionAt,
             }
           : null,
         workOrder: order

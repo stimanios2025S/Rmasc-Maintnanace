@@ -57,7 +57,7 @@ interface PlacementTarget {
 }
 
 export default function CartePage() {
-  const { payload, sites, faults, loading, error, refreshedAt, reload } =
+  const { payload, sites, faults, technicians, loading, error, refreshedAt, reload } =
     useFleetMap();
 
   const [filter, setFilter] = useState<AttentionFilter>("ALL");
@@ -335,6 +335,7 @@ export default function CartePage() {
           <FleetMap
             sites={visibleSites}
             faults={faults}
+            technicians={technicians}
             selectedId={selectedId}
             onSelect={(id) =>
               setSelectedId((current) => (current === id ? null : id))

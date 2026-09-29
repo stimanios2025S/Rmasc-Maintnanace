@@ -22,6 +22,7 @@
 import { demoWorld } from "./dataset";
 import { OPEN_WORK_ORDER_STATUSES } from "@/lib/work-orders/service";
 import { effectiveRadiusM, readCoordinates } from "@/lib/geo/geofence";
+import { readTechnicianFix } from "@/lib/geo/technician-position";
 import {
   countAttention,
   evaluateAttention,
@@ -33,6 +34,7 @@ import type {
   FleetMapFault,
   FleetMapPayload,
   FleetMapSite,
+  FleetMapTechnician,
   UnlocatedSite,
 } from "@/lib/map/types";
 import { ALERT_SEVERITIES, OPEN_INCIDENT_STATUSES } from "@/types";
@@ -191,10 +193,40 @@ export function demoFleetMap(): FleetMapPayload {
     });
   }
 
+  /**
+   * The field staff, from the fixture's own last-known positions.
+   *
+   * The route gates this list by role and this fixture does not. That is a
+   * deliberate divergence rather than an oversight: the fixture exists for a
+   * developer running without PostgreSQL, there is no customer behind a demo
+   * session, and every name and coordinate in it is synthetic. Reproducing the
+   * gate would mean the layer could never be seen in the one environment where
+   * it is cheap to look at.
+   */
+  const technicians: FleetMapTechnician[] = [];
+  for (const user of users) {
+    if (user.role !== "FIELD_TECHNICIAN" || !user.isActive) continue;
+
+    const fix = readTechnicianFix(user, now);
+    if (!fix.position || !fix.recordedAt) continue;
+
+    technicians.push({
+      id: user.id,
+      name: user.name,
+      status: user.status,
+      latitude: fix.position.latitude,
+      longitude: fix.position.longitude,
+      reportedAt: fix.recordedAt.toISOString(),
+      ageMs: fix.ageMs ?? 0,
+      isFresh: fix.isFresh,
+    });
+  }
+
   return {
     sites,
     unlocated,
     faults,
+    technicians,
     totals: {
       sites: buildings.length,
       sitesLocated: sites.length,

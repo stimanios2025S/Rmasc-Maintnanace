@@ -80,7 +80,7 @@ export function FleetMapCard({
   const [filter, setFilter] = useState<AttentionFilter>("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const { payload, sites, faults, loading, error, reload } = useFleetMap({
+  const { payload, sites, faults, technicians, loading, error, reload } = useFleetMap({
     enabled: open,
     intervalMs,
   });
@@ -191,6 +191,7 @@ export function FleetMapCard({
                 <FleetMap
                   sites={visibleSites}
                   faults={faults}
+                  technicians={technicians}
                   selectedId={selectedId}
                   onSelect={(id) =>
                     setSelectedId((current) => (current === id ? null : id))

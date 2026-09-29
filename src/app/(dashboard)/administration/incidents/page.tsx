@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   RotateCcw,
   UserPlus,
+  Ruler,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/states";
@@ -20,6 +21,7 @@ import { ValidationBadge } from "@/components/ui/validation-badge";
 import { DispatchModal } from "@/components/admin/dispatch-modal";
 import { ContractBadge } from "@/components/admin/contract-badge";
 import { allowedTransitions } from "@/lib/incidents/progress";
+import { formatDistance } from "@/lib/geo/geofence";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import type { IncidentStatus } from "@/types";
 
@@ -61,6 +63,24 @@ interface IncidentRow {
     clientType: "CONTRACTED" | "NON_CONTRACTED" | null;
   };
   technician: { id: string; name: string | null; email: string } | null;
+  /**
+   * How far the assignee is from the site, as the server worked it out.
+   *
+   * Optional because a row can reach this screen from a route that does not
+   * shape it — the per-incident endpoint returns the bare record — and a
+   * missing readout is better than a type that lies about always having one.
+   *
+   * `ageMs` and `isFresh` are not decoration: a distance with no age on it
+   * looks the same whether it was measured ten seconds or three hours ago, and
+   * the whole value of this number to a dispatcher is that it is current.
+   */
+  technicianProximity?: {
+    distanceM: number | null;
+    radiusM: number;
+    withinRadius: boolean;
+    ageMs: number | null;
+    isFresh: boolean;
+  } | null;
   workOrder: {
     id: string;
     orderNumber: string;
@@ -101,6 +121,66 @@ const OPEN_STATUSES: readonly IncidentStatus[] = [
   "TECHNICIAN_ASSIGNED",
   "IN_PROGRESS",
 ];
+
+/**
+ * The télémètre, as a dispatcher reads it.
+ *
+ * Shown only on a row that has an assignee. A distance to a job nobody has been
+ * sent to is not a fact anyone can act on, and drawing it on every escalated
+ * row would fill the board with « position inconnue » and teach the eye to skip
+ * the line that matters.
+ *
+ * The three states are three different sentences on purpose. Inside the radius
+ * is "he is there". Outside is a number plus the radius it missed. No position
+ * at all is neither of those — the phone never answered, which says nothing
+ * whatever about where the technician is, and reporting it as zero metres or as
+ * "hors rayon" would both be inventions.
+ *
+ * A stale reading keeps its number and gains its age. Hiding it would lose the
+ * last thing we knew; showing it in the same colour as a live one would present
+ * a phone that went into a basement twenty minutes ago as a technician standing
+ * at the door.
+ */
+function TechnicianDistance({
+  name,
+  proximity,
+}: {
+  name: string;
+  proximity: NonNullable<IncidentRow["technicianProximity"]>;
+}) {
+  const { distanceM, radiusM, withinRadius, ageMs, isFresh } = proximity;
+
+  const tone =
+    distanceM !== null && isFresh && withinRadius
+      ? "text-emerald-700 dark:text-emerald-400"
+      : distanceM !== null && isFresh
+        ? "text-amber-700 dark:text-amber-400"
+        : "text-gray-500 dark:text-gray-400";
+
+  return (
+    <p className={`mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs ${tone}`}>
+      <Ruler className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
+      {distanceM === null ? (
+        <span>Distance au chantier : position de {name} inconnue.</span>
+      ) : (
+        <span>
+          Distance au chantier :{" "}
+          <span className="font-semibold">{formatDistance(distanceM)}</span>
+          {withinRadius
+            ? ` — dans le rayon de ${formatDistance(radiusM)}`
+            : ` — rayon ${formatDistance(radiusM)}`}
+        </span>
+      )}
+      {ageMs !== null && !isFresh && (
+        <span className="opacity-80">
+          · relevé {formatDistanceToNow(new Date(Date.now() - ageMs), {
+            locale: fr,
+          })}
+        </span>
+      )}
+    </p>
+  );
+}
 
 export default function AdminIncidentsPage() {
   const { data: session } = useSession();
@@ -414,6 +494,15 @@ export default function AdminIncidentsPage() {
                         )})`
                       : ""}
                   </p>
+
+                  {incident.technician && incident.technicianProximity && (
+                    <TechnicianDistance
+                      name={
+                        incident.technician.name ?? incident.technician.email
+                      }
+                      proximity={incident.technicianProximity}
+                    />
+                  )}
 
                   <ProgressTrack status={incident.status} className="mt-3" />
 

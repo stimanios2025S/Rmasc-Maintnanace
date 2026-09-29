@@ -228,6 +228,29 @@ model User {
   /// column is safe to add to a populated table: existing rows become
   /// dispatchable, which is what they were before the column existed.
   status        TechnicianStatus @default(AVAILABLE)
+
+  /// Where this account's phone last said it was, and when it said so.
+  ///
+  /// Written only by the technician portal, from the technician's own device,
+  /// while they are on shift — never by an administrator and never on anyone
+  /// else's behalf. That is the whole point of the column: a position an office
+  /// could type in would be worth nothing as a distance, and a dispatcher
+  /// reading it has to be able to trust that it came off the phone.
+  ///
+  /// All three are NULL until the device first reports: location refused, a
+  /// page served over plain HTTP (no `isSecureContext`), or an account that
+  /// has never opened the portal. Every one of those is a normal state, not an
+  /// error, and the admin screens say "position inconnue" rather than falling
+  /// back to the site's own coordinates and inventing a distance.
+  ///
+  /// Deliberately a *last known* position rather than a trail: one row per
+  /// person, overwritten, with no history. A trail would turn a
+  /// "is he nearly there" readout into a movement log of named employees,
+  /// which is a different product and a different conversation.
+  lastLatitude   Float?    @map("last_latitude")
+  lastLongitude  Float?    @map("last_longitude")
+  lastPositionAt DateTime? @map("last_position_at")
+
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 

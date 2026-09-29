@@ -38,7 +38,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LayerGroup, Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { ATTENTION_STYLES } from "@/lib/map/attention";
-import type { FleetMapFault, FleetMapSite } from "@/lib/map/types";
+import type { FleetMapFault, FleetMapSite, FleetMapTechnician } from "@/lib/map/types";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import type { Coordinates } from "@/lib/geo/geofence";
 import { formatDistance } from "@/lib/geo/geofence";
@@ -240,6 +240,77 @@ function faultTooltipHtml(fault: FleetMapFault): string {
   );
 }
 
+// ─── Field staff ────────────────────────────────────────────
+
+/**
+ * The colour the field staff are drawn in.
+ *
+ * Not from `attention.ts`, and not one of the two fault colours either. Those
+ * palettes answer "how bad is this machine" and "has this fault been handled";
+ * a person's position answers neither, and borrowing a severity colour would
+ * make a technician walking past a red site look like part of the problem.
+ *
+ * A blue that is close to the viewer's own dot but clearly a different shape:
+ * the technician's own marker is a small filled circle, these are initials.
+ */
+const TECHNICIAN_COLOR = "#1d4ed8";
+
+/** First and last initial, the same convention the sidebar avatar uses. */
+function initialsFor(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+/**
+ * How long ago a position was reported, in words.
+ *
+ * Written here rather than pulled from a date library because this file runs in
+ * the browser alongside the map, and a full relative-time formatter is a lot of
+ * bundle for three cases. The rounding is coarse on purpose — the exact minute
+ * is not what a dispatcher is deciding on.
+ */
+function humanAge(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  return `il y a ${Math.floor(minutes / 60)} h`;
+}
+
+function technicianMarkerHtml(technician: FleetMapTechnician): string {
+  return (
+    `<div class="ep-map-tech${technician.isFresh ? "" : " ep-map-tech--stale"}"` +
+    ` style="--ep-tech:${TECHNICIAN_COLOR}">` +
+    `<span>${escapeHtml(initialsFor(technician.name))}</span>` +
+    `</div>`
+  );
+}
+
+/**
+ * What a staff pin says when hovered.
+ *
+ * The age is always on it, including when the reading is fresh, because the
+ * whole value of this layer is that it is a *reported* position: a dispatcher
+ * deciding whether to send someone to a fault needs to know whether the pin
+ * beside it is ten seconds or twenty minutes old.
+ */
+function technicianTooltipHtml(technician: FleetMapTechnician): string {
+  return (
+    `<div class="ep-map-tooltip__body" style="--ep-color:${TECHNICIAN_COLOR}">` +
+    `<div class="ep-map-tooltip__name">${escapeHtml(technician.name)}</div>` +
+    `<div class="ep-map-tooltip__meta">${escapeHtml(
+      enumLabel(technician.status)
+    )}</div>` +
+    `<div class="ep-map-tooltip__reason">` +
+    `<span class="ep-map-tooltip__swatch"></span>Position : ${escapeHtml(
+      humanAge(technician.ageMs)
+    )}` +
+    `</div></div>`
+  );
+}
+
 // ─── Component ──────────────────────────────────────────────
 
 export interface FleetMapProps {
@@ -268,6 +339,14 @@ export interface FleetMapProps {
    * diagram. The selected site's circle is drawn regardless, because that is
    * the moment the figure is worth reading.
    */
+  /**
+   * The field staff, at the last position each phone reported.
+   *
+   * Defaults to empty, and empty is the honest state: the endpoint sends this
+   * list only to staff, and only for technicians whose device has actually
+   * reported at least once.
+   */
+  technicians?: FleetMapTechnician[];
   showGeofence?: boolean;
   /** The viewer's own position, drawn as a blue dot. Technicians only. */
   selfPosition?: Coordinates | null;
@@ -293,6 +372,7 @@ export interface FleetMapProps {
 export function FleetMap({
   sites,
   faults = [],
+  technicians = [],
   selectedId = null,
   onSelect,
   showGeofence = false,
@@ -309,6 +389,7 @@ export function FleetMap({
   const selfLayerRef = useRef<LayerGroup | null>(null);
   const draftLayerRef = useRef<LayerGroup | null>(null);
   const faultLayerRef = useRef<LayerGroup | null>(null);
+  const technicianLayerRef = useRef<LayerGroup | null>(null);
 
   /** Set once Leaflet has loaded and the map exists, so the drawing effects
    *  know they have something to draw on. */
@@ -368,6 +449,7 @@ export function FleetMap({
       selfLayerRef.current = L.layerGroup().addTo(map);
       draftLayerRef.current = L.layerGroup().addTo(map);
       faultLayerRef.current = L.layerGroup().addTo(map);
+      technicianLayerRef.current = L.layerGroup().addTo(map);
 
       map.on("click", (event) => {
         onMapClickRef.current?.({
@@ -389,6 +471,7 @@ export function FleetMap({
       selfLayerRef.current = null;
       draftLayerRef.current = null;
       faultLayerRef.current = null;
+      technicianLayerRef.current = null;
       hasFittedRef.current = false;
       flownToRef.current = null;
       setReady(false);
@@ -615,6 +698,51 @@ export function FleetMap({
       marker.addTo(layer);
     }
   }, [ready, faults, sites]);
+
+  // ── Draw the field staff ──────────────────────────────────
+  useEffect(() => {
+    const L = leafletRef.current;
+    const layer = technicianLayerRef.current;
+    if (!ready || !L || !layer) return;
+
+    layer.clearLayers();
+    if (technicians.length === 0) return;
+
+    for (const technician of technicians) {
+      const marker = L.marker([technician.latitude, technician.longitude], {
+        icon: L.divIcon({
+          html: technicianMarkerHtml(technician),
+          className: MARKER_CLASS,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        }),
+        // Under the faults at 500 and under the viewer's own dot at 1000. A
+        // colleague's position is context; an open fault is the news, and
+        // where the reader is standing is the one fact that must never be
+        // covered.
+        zIndexOffset: 250,
+        title: technician.name,
+      });
+
+      marker.bindTooltip(technicianTooltipHtml(technician), {
+        direction: "top",
+        offset: [0, -12],
+        className: "ep-map-tooltip",
+      });
+
+      /**
+       * Swallowed rather than handled.
+       *
+       * The marker stays interactive so its tooltip opens on hover, which is
+       * the only thing it has to say. Without this, the click would also reach
+       * the map — and in pin-placement mode that means opening a colleague's
+       * tooltip would drop a site pin on top of them.
+       */
+      marker.on("click", (event) => L.DomEvent.stopPropagation(event));
+
+      marker.addTo(layer);
+    }
+  }, [ready, technicians]);
 
   return (
     <div

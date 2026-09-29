@@ -287,7 +287,12 @@ function build(): DemoWorld {
   // means anything for a client account. Both demo owners are contracted,
   // because both own buildings in the fixtures and a non-contracted owner with
   // a portfolio is the contradiction the admin screen warns about.
-  const userSeed: Array<Omit<User, "createdAt" | "updatedAt">> = [
+  const userSeed: Array<
+    Omit<
+      User,
+      "createdAt" | "updatedAt" | "lastLatitude" | "lastLongitude" | "lastPositionAt"
+    >
+  > = [
     { id: "usr_admin", email: "admin@elevatorpulse.com", name: "Dana Whitfield", passwordHash: DEMO_HASH, role: "ADMIN", clientType: null, phone: "+1 415 555 0101", avatarUrl: null, isActive: true, status: "AVAILABLE" },
     { id: "usr_mgr", email: "manager@elevatorpulse.com", name: "Marco Reyes", passwordHash: DEMO_HASH, role: "MAINTENANCE_MANAGER", clientType: null, phone: "+1 415 555 0102", avatarUrl: null, isActive: true, status: "AVAILABLE" },
     { id: "usr_tech1", email: "tech1@elevatorpulse.com", name: "Priya Nair", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", clientType: null, phone: "+1 415 555 0103", avatarUrl: null, isActive: true, status: "AVAILABLE" },
@@ -297,8 +302,42 @@ function build(): DemoWorld {
     { id: "usr_owner2", email: "owner@riverside.com", name: "Tomas Bergman", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", clientType: "CONTRACTED", phone: "+1 415 555 0106", avatarUrl: null, isActive: true, status: "AVAILABLE" },
   ];
 
+  /**
+   * A last-known position, attached to exactly one technician.
+   *
+   * `usr_tech2` is the fixture's ON_JOB technician, so the admin board has one
+   * row that shows a real distance and one row per technician that shows none
+   * — which is the honest demo. Giving everybody a position would hide the
+   * state the feature exists to handle: a phone that has never reported, from
+   * which the only true statement is « position inconnue ».
+   *
+   * The point sits roughly 730 m north-east of Metro Plaza Tower, so the demo
+   * covers both ends of `formatDistance` (metres and kilometres) and shows a
+   * technician still some way out rather than one already at the gate.
+   *
+   * `iso(2 * MINUTE)` keeps it inside `POSITION_FRESHNESS_MS`, so the fixture
+   * reads as live. This is synthetic, like every other figure in this file.
+   */
+  const technicianFixesFor: Record<
+    string,
+    Pick<User, "lastLatitude" | "lastLongitude" | "lastPositionAt">
+  > = {
+    usr_tech2: {
+      lastLatitude: 37.7968,
+      lastLongitude: -122.398,
+      lastPositionAt: iso(2 * MINUTE),
+    },
+  };
+
   const users: User[] = userSeed.map((u, i) => ({
     ...u,
+    // Spread as one object rather than written as three literals: a literal
+    // here followed by the fix spread below is a property specified twice, and
+    // TypeScript refuses to compile the intent even though it is exactly the
+    // one wanted — every technician starts with no position, and the one on a
+    // job gets one.
+    ...{ lastLatitude: null, lastLongitude: null, lastPositionAt: null },
+    ...technicianFixesFor[u.id],
     createdAt: iso(400 * 24 * 60 * MINUTE - i * 60 * MINUTE),
     updatedAt: iso(3 * 24 * 60 * MINUTE),
   }));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   CheckCircle2,
@@ -25,6 +25,18 @@ import type { SignatureValue } from "@/components/technician/signature-pad";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { evaluateGeofence, formatDistance } from "@/lib/geo/geofence";
 import type { Coordinates } from "@/lib/geo/geofence";
+
+/**
+ * How often this device tells the office where it is.
+ *
+ * Forty-five seconds, chosen against what the number is *for*: a dispatcher
+ * reading "1,2 km" off a list does not need better than that, and a faster
+ * clock would spend a technician's battery and mobile data redrawing a dot
+ * that has moved the length of a street. The server enforces its own floor of
+ * twenty seconds (see `POST /api/technician/position`), so this cadence is a
+ * courtesy rather than the only thing holding the write rate down.
+ */
+const POSITION_INTERVAL_MS = 45_000;
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -237,6 +249,61 @@ export default function TechnicianPage() {
 
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
+
+  /**
+   * Reports that position to the office, on a slow clock.
+   *
+   * WHY THIS IS A SECOND EFFECT AND NOT PART OF THE WATCH
+   * The watch fires whenever the device has a new fix — on a walk, that can be
+   * several times a second, and sending each one would cost battery and
+   * bandwidth to redraw a dot that has moved four metres. Dispatching reads
+   * distances in hundreds of metres, so the effect samples rather than
+   * forwards: it sends at most one update every 45 seconds, and only when the
+   * position has genuinely changed since the last send.
+   *
+   * The first reading is sent immediately, because the one case that matters
+   * most is a technician who opens the portal in the van and is then watched
+   * for the whole approach.
+   *
+   * A failure is swallowed on purpose. This is telemetry about a person, called
+   * from a background timer, on a phone that may be in a basement: a rejected
+   * request must never surface as an error in front of the technician, whose
+   * work does not depend on it.
+   */
+  const lastSentRef = useRef<{ latitude: number; longitude: number; at: number } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!position) return;
+
+    const last = lastSentRef.current;
+    const moved =
+      last === null ||
+      last.latitude !== position.latitude ||
+      last.longitude !== position.longitude;
+    if (!moved) return;
+    if (last !== null && Date.now() - last.at < POSITION_INTERVAL_MS) return;
+
+    // Recorded before the request rather than after it: a send that never
+    // resolves must not leave the timer free to fire again on the next reading.
+    lastSentRef.current = {
+      latitude: position.latitude,
+      longitude: position.longitude,
+      at: Date.now(),
+    };
+
+    void fetch("/api/technician/position", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        latitude: position.latitude,
+        longitude: position.longitude,
+      }),
+    }).catch(() => {
+      // Deliberately silent. See above.
+    });
+  }, [position]);
 
   /**
    * Whether this job's site accepts a check-in from where the device is.

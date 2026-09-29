@@ -218,6 +218,36 @@
   transform: rotate(45deg) scale(1.25);
 }
 
+/* Field staff, at the last position their own phone reported.
+   Round where the fault pin is a rotated square and the site pin is a disc:
+   three layers, three shapes, so a glance at the map never has to ask which
+   kind of thing it is looking at. The initials carry who, because a fleet's
+   worth of identical dots would say only "somebody, somewhere". */
+.ep-map-tech {
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  background: var(--ep-tech);
+  color: #fff;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+/* A reading too old to be presented as current. Faded rather than removed:
+   the map is not entitled to hide one of its own people, and a pin that
+   vanishes teaches a dispatcher nothing about why. */
+.ep-map-tech--stale {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
 /* Placement mode. The crosshair is the only affordance telling the user that
    the next click on the map does something different from the last one. */
 .ep-map-placing .leaflet-container,

@@ -82,12 +82,36 @@ export const INCIDENT_DISPATCH_SELECT = {
       id: true,
       elevatorCode: true,
       model: true,
-      building: { select: { id: true, name: true, address: true, city: true } },
+      // The site's position travels with the dispatched row for the same
+      // reason it travels with a listed one: the board computes the assignee's
+      // distance from it, and a dispatch response that omitted it would have
+      // the row change shape the moment the next poll replaced it.
+      building: {
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          city: true,
+          latitude: true,
+          longitude: true,
+          geofenceRadiusM: true,
+        },
+      },
     },
   },
   errorCode: { select: { id: true, code: true, title: true } },
   client: { select: { id: true, name: true, email: true, phone: true } },
-  technician: { select: { id: true, name: true, email: true, phone: true } },
+  technician: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      lastLatitude: true,
+      lastLongitude: true,
+      lastPositionAt: true,
+    },
+  },
   workOrder: {
     select: { id: true, orderNumber: true, status: true, priority: true },
   },
