@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "diagnose-auth": "tsx scripts/diagnose-auth.ts",
+    "db:backfill-positions": "tsx scripts/backfill-incident-positions.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
