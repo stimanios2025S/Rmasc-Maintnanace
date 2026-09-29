@@ -86,8 +86,24 @@ export async function POST(request: NextRequest) {
       select: { lastPositionAt: true },
     });
 
+    /**
+     * No row for this session, which is not an error state.
+     *
+     * Open-access mode attributes every request to a sentinel id that is
+     * deliberately not a `User` row (see `src/lib/auth/open-access.ts`), and an
+     * account can be deleted while a phone still has the portal open. Writing
+     * would raise P2025 and reach the browser as a 404 every 45 seconds of a
+     * development session; there is nothing to record either way, so the
+     * answer is the same benign shape a throttled call gets.
+     */
+    if (!current) {
+      return NextResponse.json({
+        data: { saved: false, reason: "unknown-user" },
+      });
+    }
+
     const sinceLast =
-      current?.lastPositionAt === null || current?.lastPositionAt === undefined
+      current.lastPositionAt === null
         ? Number.POSITIVE_INFINITY
         : now.getTime() - current.lastPositionAt.getTime();
 
