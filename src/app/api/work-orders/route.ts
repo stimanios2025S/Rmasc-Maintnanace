@@ -28,6 +28,7 @@ import {
 } from "@/lib/api/guard";
 import { createWorkOrderWithUniqueNumber } from "@/lib/work-orders/service";
 import { syncTechnicianStatus } from "@/lib/dispatch/auto-assign";
+import { notifyTechnicianOfWorkOrderInBackground } from "@/lib/notifications/assignment";
 import {
   WORK_ORDER_PRIORITIES,
   WORK_ORDER_STATUSES,
@@ -253,6 +254,14 @@ export async function POST(request: NextRequest) {
       include: WORK_ORDER_INCLUDE,
     });
 
+    // Creating an order with somebody already on it is an assignment like any
+    // other, so the technician hears about it the same way he would from the
+    // board. Fired and forgotten: the order is committed, and the answer to
+    // this request does not depend on WhatsApp.
+    if (parsed.assignedToId) {
+      notifyTechnicianOfWorkOrderInBackground(workOrder.id);
+    }
+
     return NextResponse.json({ data: enriched }, { status: 201 });
   } catch (error) {
     return handleRouteError(error);
@@ -367,6 +376,25 @@ export async function PATCH(request: NextRequest) {
       data: updateData,
       include: WORK_ORDER_INCLUDE,
     });
+
+    /**
+     * A reassignment is a new instruction to a new person, and he has to hear
+     * about it — the technician who lost the job is not the one who will turn
+     * up.
+     *
+     * The `!== current.assignedToId` guard is the point of this block. Editing
+     * an order that is already assigned to the same technician — adding a note,
+     * correcting a date, moving it to IN_PROGRESS — sends `assignedToId` in the
+     * body like any other field, and without the guard every one of those edits
+     * would text him the same job again. A technician who receives the same
+     * message three times stops reading them.
+     */
+    if (
+      parsed.assignedToId &&
+      parsed.assignedToId !== current.assignedToId
+    ) {
+      notifyTechnicianOfWorkOrderInBackground(workOrder.id);
+    }
 
     /**
      * A finished or abandoned order frees whoever was holding it.

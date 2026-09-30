@@ -26,6 +26,8 @@ import {
   OPEN_WORK_ORDER_STATUSES,
 } from "@/lib/work-orders/service";
 import { DISPATCHABLE_TECHNICIAN_STATUSES } from "@/types";
+import { notify } from "@/lib/notifications/service";
+import { notifyTechnicianOfWorkOrderInBackground } from "@/lib/notifications/assignment";
 
 type Tx = Prisma.TransactionClient;
 
@@ -140,19 +142,28 @@ export async function POST(request: NextRequest) {
     // side effect, so a failure here must not be reported as a failed
     // dispatch — the caller would retry and hit "was modified by another
     // request" on an order that is in fact assigned correctly.
-    try {
-      await prisma.notification.create({
-        data: {
-          userId: claimed,
-          title: `Nouveau bon de travail : ${workOrder.orderNumber}`,
-          message: `${workOrder.title} — ${workOrder.elevator.elevatorCode} à ${workOrder.elevator.building.name}`,
-          type: "work_order",
-          linkUrl: `/bons-de-travail`,
-        },
-      });
-    } catch (error) {
-      console.error("[dispatch] notification failed after assignment", error);
-    }
+    //
+    // `notify` is the shared pipeline and swallows its own failures; the
+    // try/catch that used to wrap this inline write is now that module's
+    // business. See `src/lib/notifications/service.ts`.
+    await notify({
+      userId: claimed,
+      title: `Nouveau bon de travail : ${workOrder.orderNumber}`,
+      message: `${workOrder.title} — ${workOrder.elevator.elevatorCode} à ${workOrder.elevator.building.name}`,
+      type: "work_order",
+      linkUrl: `/bons-de-travail`,
+    });
+
+    /**
+     * And the same job, out of band, on the technician's phone.
+     *
+     * Fired and forgotten on purpose: the dispatcher has already been answered,
+     * and nothing he is looking at depends on WhatsApp. The call records what
+     * happened on the order either way — delivered, rejected or unreachable —
+     * so a technician nobody could reach leaves a dated trace on the board
+     * rather than a silent gap. See `src/lib/notifications/assignment.ts`.
+     */
+    notifyTechnicianOfWorkOrderInBackground(updated.id);
 
     return NextResponse.json({ data: updated });
   } catch (error) {

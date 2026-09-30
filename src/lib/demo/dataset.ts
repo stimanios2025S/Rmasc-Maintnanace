@@ -653,6 +653,48 @@ function build(): DemoWorld {
     };
   };
 
+  /**
+   * The WhatsApp columns on a demo work order.
+   *
+   * An unassigned order has nothing to report: nobody was messaged because
+   * there was nobody to message, and `attemptedAt` staying NULL is the same
+   * distinction the real column makes between "we did not try" and "we tried
+   * and did not reach him".
+   *
+   * The failure is a `rejected` rather than a `transport-error` deliberately:
+   * it is the realistic one in a working deployment — Evolution answered and
+   * refused, because that technician's number is not on WhatsApp — and it is
+   * the one that stays true no matter how the demo is run.
+   */
+  const whatsappHistoryFor = (
+    index: number,
+    assigned: boolean
+  ): Pick<
+    WorkOrder,
+    "whatsappAttemptedAt" | "whatsappDeliveredAt" | "whatsappFailure"
+  > => {
+    if (!assigned) {
+      return {
+        whatsappAttemptedAt: null,
+        whatsappDeliveredAt: null,
+        whatsappFailure: null,
+      };
+    }
+    const attemptedAt = iso((2 + index * 3) * 60 * MINUTE);
+    if (index % 4 === 3) {
+      return {
+        whatsappAttemptedAt: attemptedAt,
+        whatsappDeliveredAt: null,
+        whatsappFailure: "rejected",
+      };
+    }
+    return {
+      whatsappAttemptedAt: attemptedAt,
+      whatsappDeliveredAt: attemptedAt,
+      whatsappFailure: null,
+    };
+  };
+
   const workOrders: WorkOrder[] = workOrderSeed.map((w, i) => {
     const component = w.componentType
       ? components.find(
@@ -712,6 +754,17 @@ function build(): DemoWorld {
       reportedLatitude: null,
       reportedLongitude: null,
       reportedPositionSource: null,
+      /**
+       * A plausible WhatsApp history, because the columns exist to make an
+       * undelivered message *visible* and a fixture that left all three NULL
+       * would render a demo in which that indicator can never appear.
+       *
+       * Nothing here is a measurement — there is no gateway to talk to in a
+       * demo. One order in four carries a failure so the board has something to
+       * show, and the rest carry a delivery, which is roughly the shape of a
+       * working deployment with one flaky phone in it.
+       */
+      ...whatsappHistoryFor(i, w.assignedToId !== null),
       completedAt:
         w.completedHoursAgo === null ? null : iso(w.completedHoursAgo * 60 * MINUTE),
       createdAt: iso((i + 1) * 190 * MINUTE),

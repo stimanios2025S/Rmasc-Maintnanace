@@ -628,6 +628,40 @@ model WorkOrder {
   reportedLongitude      Float?                   @map("reported_longitude")
   reportedPositionSource ReportedPositionSource?  @map("reported_position_source")
 
+  /// What actually happened when this job was sent to the technician's WhatsApp.
+  ///
+  /// WHY THESE EXIST AT ALL
+  /// Sending the job out of band must never fail the dispatch: the assignment is
+  /// committed before the message is attempted, and a WhatsApp gateway that is
+  /// down cannot be allowed to turn a successful dispatch into an error the
+  /// manager retries. That much is a rule about control flow. These three
+  /// columns are the other half of it, and the half that is easy to skip:
+  /// because we swallow the failure, we owe the record of it. Without them,
+  /// "the technician was told" and "the gateway was unreachable and nobody was
+  /// told" look identical from every screen in the product — right up until he
+  /// fails to turn up.
+  ///
+  /// `whatsappDeliveredAt` NULL with `whatsappAttemptedAt` set is the state that
+  /// matters: somebody tried, and the technician was not reached. The admin
+  /// board reads exactly that pair.
+  ///
+  /// NOT A HISTORY
+  /// Overwritten on every attempt, one row per job. The question a dispatcher
+  /// asks is "was he warned about *this* job", not "how many times did we try",
+  /// and an append-only trail of notification attempts is a log, which belongs
+  /// in logs. A later failed attempt clears `whatsappDeliveredAt` rather than
+  /// leaving the earlier success standing — after a reassignment, the previous
+  /// technician's delivery must not read as this one's.
+  ///
+  /// `whatsappFailure` is a plain `String`, like `Notification.type` below, and
+  /// for the same reason: the set of reasons is a diagnostic vocabulary defined
+  /// in `src/lib/notifications/whatsapp.ts`, not a business state anything
+  /// branches on. An enum would mean a schema migration every time a provider
+  /// invents a new way to fail.
+  whatsappAttemptedAt DateTime? @map("whatsapp_attempted_at")
+  whatsappDeliveredAt DateTime? @map("whatsapp_delivered_at")
+  whatsappFailure     String?   @map("whatsapp_failure")
+
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
 

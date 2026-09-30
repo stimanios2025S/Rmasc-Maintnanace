@@ -39,7 +39,7 @@ import {
 import { generateIncidentNumber, generateOrderNumber } from "@/lib/ids";
 import { notifyRoles } from "@/lib/notifications/service";
 import { autoAssignIncident } from "@/lib/dispatch/auto-assign";
-import { sendAdminSmsAlert } from "@/lib/notifications/sms";
+import { sendAdminWhatsAppAlert } from "@/lib/notifications/whatsapp";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoIncidents } from "@/lib/demo/responses";
 import { readCoordinates } from "@/lib/geo/geofence";
@@ -442,12 +442,15 @@ export async function POST(request: NextRequest) {
        * Out of band, because the point of an escalation is that whoever needs
        * to see it may not be looking at a dashboard.
        *
-       * Note what this currently does: with no gateway configured it writes
-       * the message to the server log and delivers nothing. That is stated
-       * plainly here and warned about at boot rather than implied — see the
-       * module header in `src/lib/notifications/sms.ts`.
+       * Awaited rather than fired and forgotten, unlike the technician's
+       * assignment message: this one is the whole point of the escalation, and
+       * the caller is a customer pressing a button rather than a manager
+       * waiting on a board. Even so, the send cannot fail the request — the
+       * transport never throws, and a message that does not go out is logged in
+       * capitals and reported as `delivered: false`. See the module header in
+       * `src/lib/notifications/whatsapp.ts`.
        */
-      await sendAdminSmsAlert({
+      await sendAdminWhatsAppAlert({
         headline: `Incident escaladé – ${elevator.elevatorCode}`,
         lines: [
           created.incidentNumber,

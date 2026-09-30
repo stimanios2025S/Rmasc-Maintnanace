@@ -47,15 +47,57 @@ const ServerEnvSchema = z.object({
   IOT_INGEST_TOKEN: optionalString(z.string().min(1)),
 
   /**
-   * The number an escalated incident is texted to.
+   * The number an escalated incident is messaged on WhatsApp.
    *
    * Optional, because in-app notifications already reach every manager and a
    * deployment that has not chosen an on-call number must still boot. But
    * leaving it unset silently disables the out-of-band alert, and someone
-   * will assume they are being texted — so `getEnv` warns about it in
+   * will assume they are being messaged — so `getEnv` warns about it in
    * production rather than staying quiet (see below).
    */
   ADMIN_PHONE_NUMBER: optionalString(z.string().min(5)),
+
+  // ─── WhatsApp / Evolution API ─────────────────────────────
+  //
+  // All four are optional, and a deployment with none of them is a normal
+  // state rather than a broken one: `src/lib/notifications/whatsapp.ts` stays
+  // completely inert, logs the message it would have sent, and reports
+  // `no-transport` without failing any caller. Nothing needs to be switched
+  // off while the Evolution instance does not exist yet.
+
+  /**
+   * Base URL of the Evolution API instance, e.g. `http://127.0.0.1:8080`.
+   *
+   * A trailing slash is tolerated — it is stripped before the path is joined.
+   */
+  EVOLUTION_API_URL: optionalString(z.string().url()),
+
+  /**
+   * The instance's API key, sent as the `apikey` header.
+   *
+   * A secret. It belongs in `.env` on the server and nowhere else — never in
+   * the repository, never in a chat, never in a log line. The transport
+   * reports Evolution's response body but never this value.
+   */
+  EVOLUTION_API_KEY: optionalString(z.string().min(1)),
+
+  /** The instance name, as it appears in the Evolution dashboard. */
+  EVOLUTION_INSTANCE: optionalString(z.string().min(1)),
+
+  /**
+   * The country code used to complete a number written the local way.
+   *
+   * `0661234567` cannot be sent as it stands: the digits mean nothing without a
+   * country, and sending them anyway is how a message lands on a stranger's
+   * phone. When this is set — `213` for Algeria — a leading zero is replaced
+   * with it. When it is not, a number that is not already in international form
+   * is refused with `bad-number` rather than guessed at.
+   *
+   * Digits only, no `+`.
+   */
+  WHATSAPP_DEFAULT_COUNTRY_CODE: optionalString(
+    z.string().regex(/^\d{1,4}$/, "indicatif du pays attendu, chiffres seulement")
+  ),
 });
 
 export type ServerEnv = z.infer<typeof ServerEnvSchema>;
@@ -132,10 +174,41 @@ export function getEnv(): ServerEnv {
       // dashboard is simply off — which nobody notices until an emergency
       // goes unanswered.
       console.warn(
-        "[env] ADMIN_PHONE_NUMBER n'est pas défini : aucune alerte SMS ne sera envoyée lors d'une escalade. " +
+        "[env] ADMIN_PHONE_NUMBER n'est pas défini : aucune alerte WhatsApp ne sera envoyée lors d'une escalade. " +
           "Les notifications in-app restent actives."
       );
     }
+  }
+
+  /**
+   * A half-configured WhatsApp instance, which is the one shape of this
+   * configuration that lies.
+   *
+   * All three set and the messages go out. None set and the module says so
+   * loudly and does nothing, which is honest and obvious. Two of three set is
+   * the dangerous middle: it looks like a working deployment from `.env`, and
+   * every send quietly reports `no-transport` because one variable is missing.
+   * Checked in every environment rather than only in production, because this
+   * is exactly the mistake made while setting it up for the first time.
+   */
+  const evolutionParts = [
+    ["EVOLUTION_API_URL", env.EVOLUTION_API_URL],
+    ["EVOLUTION_API_KEY", env.EVOLUTION_API_KEY],
+    ["EVOLUTION_INSTANCE", env.EVOLUTION_INSTANCE],
+  ] as const;
+  const evolutionSet = evolutionParts.filter(([, value]) => Boolean(value));
+  if (evolutionSet.length > 0 && evolutionSet.length < evolutionParts.length) {
+    const missing = evolutionParts
+      .filter(([, value]) => !value)
+      .map(([name]) => name)
+      .join(", ");
+    console.warn(
+      `[env] Configuration WhatsApp incomplète : ${missing} manque${
+        missing.includes(",") ? "nt" : ""
+      }. ` +
+        "Aucun message WhatsApp ne partira tant que les trois ne sont pas définies. " +
+        "Voir .env.example."
+    );
   }
 
   if (problems.length > 0) {

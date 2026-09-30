@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   X,
   Zap,
+  MessageCircleWarning,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
@@ -61,6 +62,71 @@ interface WorkOrderRow {
     isDirectTransfer: boolean;
     errorCode: { code: string; title: string } | null;
   } | null;
+  /**
+   * Ce que le technicien a réellement reçu sur son téléphone.
+   *
+   * Les trois colonnes répondent à une seule question — « est-ce qu'il a été
+   * prévenu ? » — et la paire qui compte est `whatsappAttemptedAt` non nul avec
+   * `whatsappDeliveredAt` nul : quelqu'un a essayé, et le technicien n'a pas été
+   * joint. C'est le seul état que ce tableau affiche ; voir `WhatsAppState`.
+   */
+  whatsappAttemptedAt: string | null;
+  whatsappDeliveredAt: string | null;
+  whatsappFailure: string | null;
+}
+
+function whatsappFailureReason(code: string | null): string {
+  switch (code) {
+    case "no-recipient":
+    case "bad-number":
+      return "Aucun numéro WhatsApp utilisable dans la fiche du technicien — appelez-le.";
+    case "no-transport":
+      return "Aucune instance Evolution API n'est configurée sur le serveur.";
+    case "rejected":
+      return "Evolution API a refusé le message (numéro absent de WhatsApp, ou clé invalide).";
+    default:
+      return "Evolution API n'a pas répondu (réseau ou instance arrêtée).";
+  }
+}
+
+/**
+ * Dit qu'un technicien n'a pas pu être joint — et rien d'autre.
+ *
+ * Rien dans le cas normal : le message est parti, l'affectation est en règle, et
+ * afficher « WhatsApp délivré » sur chaque carte apprendrait au gestionnaire à
+ * ignorer un indicateur qui ne veut rien dire la plupart du temps. Cet
+ * indicateur n'existe que pour l'échec.
+ *
+ * `rejected` et `transport-error` sont montrés de la même façon, parce que le
+ * geste est le même : décrocher le téléphone et appeler. La nuance technique est
+ * dans l'infobulle, pour celui qui va réparer l'instance.
+ */
+function WhatsAppState({
+  order,
+}: {
+  order: Pick<
+    WorkOrderRow,
+    "whatsappAttemptedAt" | "whatsappDeliveredAt" | "whatsappFailure" | "assignedTo"
+  >;
+}) {
+  if (!order.whatsappAttemptedAt || order.whatsappDeliveredAt) return null;
+
+  return (
+    <p
+      className="mb-3 flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] font-medium text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+      title={whatsappFailureReason(order.whatsappFailure)}
+    >
+      <MessageCircleWarning
+        className="mt-px h-3.5 w-3.5 flex-none"
+        aria-hidden="true"
+      />
+      <span>
+        WhatsApp non délivré
+        {order.assignedTo ? ` à ${order.assignedTo.name.split(" ")[0]}` : ""} —
+        appelez-le.
+      </span>
+    </p>
+  );
 }
 
 interface ElevatorOption {
@@ -390,6 +456,8 @@ export default function WorkOrdersPage() {
                         </div>
                       )}
 
+                      <WhatsAppState order={wo} />
+
                       <div className="flex items-center justify-between text-xs mb-2">
                         {wo.assignedTo ? (
                           <div className="flex items-center gap-1 text-gray-600 dark:text-gray-300">
@@ -519,7 +587,29 @@ export default function WorkOrdersPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-400">
-                        {wo.assignedTo?.name ?? <span className="text-gray-400 italic">—</span>}
+                        <span className="inline-flex items-center gap-1.5">
+                          {wo.assignedTo?.name ?? (
+                            <span className="text-gray-400 italic">—</span>
+                          )}
+                          {/* Même indicateur que sur la carte, réduit à une
+                              icône : en tableau, la largeur d'une cellule ne
+                              permet pas la phrase entière, et le survol la
+                              donne. */}
+                          {wo.whatsappAttemptedAt && !wo.whatsappDeliveredAt && (
+                            <span
+                              className="inline-flex flex-none"
+                              title={whatsappFailureReason(wo.whatsappFailure)}
+                            >
+                              <MessageCircleWarning
+                                className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400"
+                                aria-hidden="true"
+                              />
+                              <span className="sr-only">
+                                WhatsApp non délivré.
+                              </span>
+                            </span>
+                          )}
+                        </span>
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-500">
                         {wo.scheduledDate ? (

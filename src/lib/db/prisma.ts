@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { getEnv } from "@/lib/config/env";
-import { logSmsTransport } from "@/lib/notifications/sms";
+import { logWhatsAppTransport } from "@/lib/notifications/whatsapp";
 
 // Fail fast and readably on a missing or malformed DATABASE_URL, rather than
 // with a cryptic driver error on the first query.
@@ -12,7 +12,7 @@ const globalForPrisma = globalThis as unknown as {
 
 // Separate global: this one outlives the client across hot reloads.
 const globalForStartup = globalThis as unknown as {
-  __smsNoticeLogged?: true;
+  __whatsappNoticeLogged?: true;
 };
 
 export const prisma =
@@ -34,7 +34,7 @@ if (env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
  *
  * This module is the right host for it because every data-touching route
  * imports `prisma` before it can raise or read an incident, so the warning has
- * certainly run by the time one could be missed. `sms.ts` is safe to import
+ * certainly run by the time one could be missed. `whatsapp.ts` is safe to import
  * here: it reads `getEnv` only inside its functions, never at module scope, so
  * it cannot turn a malformed environment into an import-time crash — and this
  * file already calls `getEnv()` on the line above anyway.
@@ -48,7 +48,7 @@ if (env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
  */
 const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
 
-if (!isBuildPhase && !globalForStartup.__smsNoticeLogged) {
-  globalForStartup.__smsNoticeLogged = true;
-  logSmsTransport();
+if (!isBuildPhase && !globalForStartup.__whatsappNoticeLogged) {
+  globalForStartup.__whatsappNoticeLogged = true;
+  logWhatsAppTransport();
 }

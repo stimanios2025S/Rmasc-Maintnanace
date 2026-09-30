@@ -33,6 +33,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { conflict, notFound } from "@/lib/api/http";
 import { notify } from "@/lib/notifications/service";
+import { notifyTechnicianOfWorkOrderInBackground } from "@/lib/notifications/assignment";
 import {
   DISPATCHABLE_TECHNICIAN_STATUSES,
 } from "@/types";
@@ -214,9 +215,24 @@ export async function assignIncidentToTechnician(
   incidentId: string,
   technicianId: string
 ): Promise<DispatchedIncident> {
-  return withSerializableRetry(() =>
+  /**
+   * The work order this call actually claimed, so the technician can be told
+   * about it once the transaction has committed.
+   *
+   * Captured here rather than inferred from the returned incident, because the
+   * incident's work order is updated *conditionally* — a closed one is left
+   * alone — and the row that comes back does not say whether that happened.
+   * Reset at the top of every attempt: `withSerializableRetry` may run the
+   * transaction more than once, and a value left behind by an attempt that was
+   * rolled back would send a message about work nobody was given.
+   */
+  let claimedWorkOrderId: string | null = null;
+
+  const incident = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
+        claimedWorkOrderId = null;
+
         const incident = await tx.incidentReport.findUnique({
           where: { id: incidentId },
           select: { id: true, incidentNumber: true, workOrderId: true },
@@ -255,6 +271,7 @@ export async function assignIncidentToTechnician(
                 scheduledDate: order.scheduledDate ?? new Date(),
               },
             });
+            claimedWorkOrderId = order.id;
           }
         }
 
@@ -266,6 +283,20 @@ export async function assignIncidentToTechnician(
       { isolationLevel: "Serializable" }
     )
   );
+
+  /**
+   * After the commit, and deliberately not awaited.
+   *
+   * The dispatch is already real. Sending the job to the technician's phone is
+   * the courtesy on top of it, and waiting for a WhatsApp gateway here would
+   * make a customer's escalation hang on a mobile network — see
+   * `notifyTechnicianOfWorkOrderInBackground`.
+   */
+  if (claimedWorkOrderId) {
+    notifyTechnicianOfWorkOrderInBackground(claimedWorkOrderId);
+  }
+
+  return incident;
 }
 
 // ─── The automatic path ─────────────────────────────────────
