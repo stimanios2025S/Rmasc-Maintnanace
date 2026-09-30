@@ -9,7 +9,18 @@ import { prisma } from "@/lib/db/prisma";
 import { generateOrderNumber } from "@/lib/ids";
 import type { Prisma } from "@prisma/client";
 
-/** Open statuses — an order in one of these is still outstanding. */
+/**
+ * Open statuses — an order in one of these is still outstanding.
+ *
+ * `PENDING_APPROVAL` is deliberately absent. The technician has finished on
+ * site and the report is filed; what remains is a review in the office, not
+ * work. Every reader of this list wants the same thing from it — "is there
+ * still a job to place, to schedule, or to dispatch to a technician?" — and an
+ * order waiting to be checked has no such answer. Including it would make a
+ * finished unit count as a busy one on the fleet map, let a dispatcher
+ * reassign a job that is already done, and keep the technician marked
+ * `ON_JOB` after he has gone home.
+ */
 export const OPEN_WORK_ORDER_STATUSES = [
   "OPEN",
   "ASSIGNED",

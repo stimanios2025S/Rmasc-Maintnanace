@@ -106,11 +106,33 @@ export async function GET(request: NextRequest) {
           },
         },
       }),
+      /**
+       * Everything this technician has handed over today — completed orders
+       * *and* reports still waiting in the office.
+       *
+       * The second half is not decoration. A report that lands in
+       * PENDING_APPROVAL drops out of `active` by design (the job is off his
+       * hands), so without this an order would disappear from the screen in the
+       * same second he validated it, with no confirmation that anything was
+       * saved. On a phone, in a lift shaft, that reads as a failed submission
+       * and gets retyped.
+       *
+       * `ORDER BY completed_at DESC` puts the pending rows first on its own:
+       * PostgreSQL's default for a descending sort is NULLS FIRST, and a
+       * pending order has no `completedAt` yet. That is the order we want —
+       * the newest hand-over at the top — but it is a consequence of the SQL
+       * default rather than of anything written here, so it is spelled out.
+       */
       prisma.workOrder.findMany({
         where: {
           assignedToId: technician.id,
-          status: "COMPLETED",
-          completedAt: { gte: startOfToday },
+          OR: [
+            { status: "COMPLETED", completedAt: { gte: startOfToday } },
+            {
+              status: "PENDING_APPROVAL",
+              reportSubmittedAt: { gte: startOfToday },
+            },
+          ],
         },
         orderBy: { completedAt: "desc" },
         include: { elevator: { select: { elevatorCode: true } } },
@@ -142,6 +164,18 @@ export async function GET(request: NextRequest) {
           checkInNotes: wo.checkInNotes,
           notes: wo.notes,
           partsReplaced: wo.partsReplaced,
+          /**
+           * Converted from `Decimal` to a plain number on the way out.
+           *
+           * Prisma hands back a `Decimal` object, which JSON-serialises to a
+           * *string* ("18500.00"). The portal compares it against a number and
+           * would put that string straight into a text field, so the conversion
+           * belongs here, at the boundary, rather than in every reader of the
+           * field. `toNumber()` is safe at this scale: `Decimal(12,2)` maxes
+           * out well inside the range where doubles are exact to the centime.
+           */
+          isBillable: wo.isBillable,
+          invoiceAmount: wo.invoiceAmount === null ? null : wo.invoiceAmount.toNumber(),
           photoUrls: wo.photoUrls,
           elevator: wo.elevator.elevatorCode,
           building: wo.elevator.building.name,
@@ -163,7 +197,14 @@ export async function GET(request: NextRequest) {
           orderNumber: wo.orderNumber,
           title: wo.title,
           elevator: wo.elevator.elevatorCode,
+          /**
+           * `status` travels so the portal can tell an order the office has
+           * accepted from one still sitting in its queue. Both are shown; only
+           * the wording differs.
+           */
+          status: wo.status,
           completedAt: wo.completedAt,
+          reportSubmittedAt: wo.reportSubmittedAt,
           actualHours: wo.actualHours,
         })),
       },

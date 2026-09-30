@@ -70,6 +70,16 @@ const UpdateWorkOrderSchema = z
     notes: z.string().max(10000).nullable().optional(),
     photoUrls: z.array(z.string().url()).max(50).optional(),
     signatureUrl: z.string().url().nullable().optional(),
+    /**
+     * The technician's own report, on its commercial side.
+     *
+     * `invoiceAmount` is capped at ten digits: `invoiceAmount` is a
+     * `Decimal(12,2)` in the schema, and a value beyond it would be a
+     * database-level failure reported as a 500. A ceiling expressed here is a
+     * readable 400 that names the field.
+     */
+    isBillable: z.boolean().optional(),
+    invoiceAmount: z.number().min(0).max(99_999_999.99).nullable().optional(),
   })
   .strict();
 
@@ -108,11 +118,23 @@ const WORK_ORDER_INCLUDE = {
  * the previous implementation let an update walk a COMPLETED order back to
  * ASSIGNED simply by setting `assignedToId`, silently discarding the
  * completion timestamp.
+ *
+ * There is one route to `COMPLETED`, and it runs through `PENDING_APPROVAL`:
+ * a job is finished when a report exists and somebody in the office has read
+ * it. `IN_PROGRESS` no longer reaches `COMPLETED` directly, which is the whole
+ * point of the approval step — a board where the fast path skips the queue is
+ * a board where the queue is never worked.
+ *
+ * The reverse edge is deliberate: `PENDING_APPROVAL -> IN_PROGRESS` is a
+ * rejected report, sent back for correction. Without it the only ways out of
+ * the pending column would be "accept" and "cancel", and a report with a wrong
+ * amount would have to be cancelled and redone from scratch.
  */
 const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
   OPEN: ["ASSIGNED", "IN_PROGRESS", "ON_HOLD", "CANCELLED"],
   ASSIGNED: ["OPEN", "IN_PROGRESS", "ON_HOLD", "CANCELLED"],
-  IN_PROGRESS: ["ASSIGNED", "ON_HOLD", "COMPLETED", "CANCELLED"],
+  IN_PROGRESS: ["ASSIGNED", "ON_HOLD", "PENDING_APPROVAL", "CANCELLED"],
+  PENDING_APPROVAL: ["IN_PROGRESS", "COMPLETED", "CANCELLED"],
   ON_HOLD: ["ASSIGNED", "IN_PROGRESS", "CANCELLED"],
   COMPLETED: [],
   CANCELLED: [],
@@ -282,7 +304,13 @@ export async function PATCH(request: NextRequest) {
 
     const current = await prisma.workOrder.findUnique({
       where: { id },
-      select: { id: true, status: true, assignedToId: true, startedAt: true },
+      select: {
+        id: true,
+        status: true,
+        assignedToId: true,
+        startedAt: true,
+        isBillable: true,
+      },
     });
     if (!current) throw notFound(`Bon de travail introuvable : ${id}`);
 
@@ -313,6 +341,24 @@ export async function PATCH(request: NextRequest) {
       if (parsed.status === "OPEN" || parsed.status === "CANCELLED") {
         updateData.startedAt = null;
         updateData.completedAt = null;
+      }
+
+      /**
+       * `reportSubmittedAt` is the clock the approval queue reads, so it has to
+       * mean exactly one thing: this order is waiting, since then.
+       *
+       * It is set on the way in and cleared on the way back out to IN_PROGRESS,
+       * because a report the office refused is no longer a report that is
+       * waiting. It is deliberately *not* cleared on the way to COMPLETED: once
+       * accepted, "submitted on the 12th, approved on the 15th" is the record.
+       */
+      if (parsed.status === "PENDING_APPROVAL") {
+        updateData.reportSubmittedAt = new Date();
+      } else if (
+        current.status === "PENDING_APPROVAL" &&
+        parsed.status !== "COMPLETED"
+      ) {
+        updateData.reportSubmittedAt = null;
       }
     }
 
@@ -356,6 +402,27 @@ export async function PATCH(request: NextRequest) {
     if (parsed.notes !== undefined) updateData.notes = parsed.notes;
     if (parsed.photoUrls !== undefined) updateData.photoUrls = parsed.photoUrls;
     if (parsed.signatureUrl !== undefined) updateData.signatureUrl = parsed.signatureUrl;
+
+    /**
+     * An amount on a job that is not billable is a number waiting to be
+     * believed.
+     *
+     * The portal sends both fields together and a technician who ticks the box,
+     * types an amount and then thinks better of it would leave the amount
+     * behind — invisible in the form, present in the database, and liable to
+     * turn up on an invoice nobody meant to raise. So the amount follows the
+     * flag: not billable means null, whichever half of the pair arrived.
+     */
+    const nextIsBillable =
+      parsed.isBillable !== undefined ? parsed.isBillable : current.isBillable;
+    if (parsed.isBillable !== undefined) updateData.isBillable = parsed.isBillable;
+    if (!nextIsBillable) {
+      if (parsed.invoiceAmount !== undefined || parsed.isBillable === false) {
+        updateData.invoiceAmount = null;
+      }
+    } else if (parsed.invoiceAmount !== undefined) {
+      updateData.invoiceAmount = parsed.invoiceAmount;
+    }
 
     // An ASSIGNED order with no assignee is a dead end: it shows in the
     // "Assigned" column, is invisible to every technician's queue (which is
@@ -405,9 +472,17 @@ export async function PATCH(request: NextRequest) {
      * helper decides whether they are actually free — it re-counts their open
      * work rather than assuming this was the last one, and never touches an
      * OFF_DUTY or ON_LEAVE row.
+     *
+     * `PENDING_APPROVAL` belongs in this list even though the order is not
+     * finished: the technician's part of it is. He has filed his report and
+     * left the site, and the office review that follows is exactly the kind of
+     * work he should not be held on the clock for — otherwise the busiest
+     * technician is the one whose paperwork is slowest.
      */
     if (
-      (parsed.status === "COMPLETED" || parsed.status === "CANCELLED") &&
+      (parsed.status === "COMPLETED" ||
+        parsed.status === "CANCELLED" ||
+        parsed.status === "PENDING_APPROVAL") &&
       workOrder.assignedToId
     ) {
       await syncTechnicianStatus(prisma, workOrder.assignedToId);

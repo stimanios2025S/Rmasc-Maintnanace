@@ -22,6 +22,7 @@ export const ENUM_LABELS: Record<string, string> = {
   OPEN: "Ouvert",
   ASSIGNED: "Assigné",
   IN_PROGRESS: "En cours",
+  PENDING_APPROVAL: "En attente de validation",
   ON_HOLD: "En attente",
   COMPLETED: "Terminé",
   CANCELLED: "Annulé",

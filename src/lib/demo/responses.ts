@@ -475,6 +475,15 @@ export function demoTechnician(requestedId: string | null) {
       notes: wo.notes,
       partsReplaced: wo.partsReplaced,
       photoUrls: wo.photoUrls,
+      /**
+       * Converted to a plain number, exactly as the live route does, so the
+       * portal's `initialAmount` prop receives the same type from either
+       * source. A `Decimal` here would serialise to a string and land in the
+       * amount field as "18500" versus 18500 — the kind of difference that
+       * makes a demo-only bug.
+       */
+      isBillable: wo.isBillable,
+      invoiceAmount: wo.invoiceAmount === null ? null : wo.invoiceAmount.toNumber(),
       elevator: unit?.elevatorCode ?? "—",
       building: building?.name ?? "—",
       address: building?.address ?? "—",
@@ -499,13 +508,25 @@ export function demoTechnician(requestedId: string | null) {
     )
     .map(describe);
 
+  /**
+   * Today's hand-overs: accepted orders and reports still in the office queue.
+   *
+   * Mirrors the live route exactly, including its ordering accident — a
+   * pending order has no `completedAt`, so sorting on that field descending
+   * puts it first, which is the order we want. Reproduced rather than fixed
+   * here so that a change to the route shows up as a difference between the
+   * two, instead of a demo that quietly disagrees.
+   */
   const completedToday = workOrders
     .filter(
       (w) =>
         w.assignedToId === technician.id &&
-        w.status === "COMPLETED" &&
-        w.completedAt !== null &&
-        w.completedAt.getTime() >= startOfToday.getTime()
+        ((w.status === "COMPLETED" &&
+          w.completedAt !== null &&
+          w.completedAt.getTime() >= startOfToday.getTime()) ||
+          (w.status === "PENDING_APPROVAL" &&
+            w.reportSubmittedAt !== null &&
+            w.reportSubmittedAt.getTime() >= startOfToday.getTime()))
     )
     .sort(byDesc((w) => w.completedAt?.getTime() ?? 0))
     .map((wo) => ({
@@ -513,7 +534,9 @@ export function demoTechnician(requestedId: string | null) {
       orderNumber: wo.orderNumber,
       title: wo.title,
       elevator: elevators.find((e) => e.id === wo.elevatorId)?.elevatorCode ?? "—",
+      status: wo.status,
       completedAt: wo.completedAt,
+      reportSubmittedAt: wo.reportSubmittedAt,
       actualHours: wo.actualHours,
     }));
 

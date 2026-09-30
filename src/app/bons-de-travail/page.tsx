@@ -13,6 +13,8 @@ import {
   X,
   Zap,
   MessageCircleWarning,
+  ClipboardCheck,
+  Banknote,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
@@ -26,9 +28,20 @@ import type { IncidentStatus } from "@/types";
 
 // ─── Types ────────────────────────────────────────────────────
 
-type StatusKey = "OPEN" | "ASSIGNED" | "IN_PROGRESS" | "COMPLETED";
+type StatusKey =
+  | "OPEN"
+  | "ASSIGNED"
+  | "IN_PROGRESS"
+  | "PENDING_APPROVAL"
+  | "COMPLETED";
 
-const STATUSES: StatusKey[] = ["OPEN", "ASSIGNED", "IN_PROGRESS", "COMPLETED"];
+const STATUSES: StatusKey[] = [
+  "OPEN",
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "PENDING_APPROVAL",
+  "COMPLETED",
+];
 
 const STATUS_CONFIG: Record<
   StatusKey,
@@ -37,6 +50,12 @@ const STATUS_CONFIG: Record<
   OPEN: { label: "Ouvert", icon: Clock, color: "bg-gray-100 text-gray-600", headerColor: "bg-gray-500" },
   ASSIGNED: { label: "Assigné", icon: User, color: "bg-blue-100 text-blue-600", headerColor: "bg-blue-500" },
   IN_PROGRESS: { label: "En cours", icon: Wrench, color: "bg-yellow-100 text-yellow-600", headerColor: "bg-yellow-500" },
+  /**
+   * Amber, not green: this column is work, not an archive. It is the only one
+   * on this board that somebody has to *do* something about, and the colour is
+   * the one signal that survives a glance.
+   */
+  PENDING_APPROVAL: { label: "À valider", icon: ClipboardCheck, color: "bg-amber-100 text-amber-700", headerColor: "bg-amber-500" },
   COMPLETED: { label: "Terminé", icon: CheckCircle2, color: "bg-green-100 text-green-600", headerColor: "bg-green-500" },
 };
 
@@ -73,6 +92,62 @@ interface WorkOrderRow {
   whatsappAttemptedAt: string | null;
   whatsappDeliveredAt: string | null;
   whatsappFailure: string | null;
+  /**
+   * Le rapport du technicien, du côté commercial.
+   *
+   * `reportSubmittedAt` est l'horloge de la colonne « À valider » : sans elle,
+   * un rapport envoyé ce matin et un rapport oublié depuis trois semaines se
+   * ressemblent exactement, et c'est le second qui coûte.
+   *
+   * `invoiceAmount` arrive en chaîne de caractères quand Prisma sérialise un
+   * `Decimal` — le formatage passe par `formatAmount`, qui accepte les deux.
+   */
+  isBillable: boolean;
+  invoiceAmount: string | number | null;
+  reportSubmittedAt: string | null;
+}
+
+/**
+ * Combien de temps un rapport attend.
+ *
+ * Arrondi vers le bas, et en une seule unité : « il y a 2 j » se lit d'un coup
+ * d'œil dans une colonne, « il y a 2 jours 4 heures et 12 minutes » se lit une
+ * fois. Au-delà d'un mois on passe aux semaines, parce que le nombre de jours
+ * cesse d'être une information à ce stade — c'est le rapport lui-même qu'il
+ * faut aller chercher.
+ */
+function waitingFor(iso: string | null): string | null {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return "il y a moins d'une heure";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `il y a ${days} j`;
+  const weeks = Math.floor(days / 7);
+  return `il y a ${weeks} sem.`;
+}
+
+/**
+ * Un montant lisible, en dinars.
+ *
+ * `fr-DZ` groupe les milliers par une espace et utilise la virgule décimale,
+ * ce qui est la façon dont le montant sera écrit sur la facture. Les centimes
+ * ne sont affichés que lorsqu'il y en a : « 18 500 DZD » plutôt que
+ * « 18 500,00 DZD », qui laisse croire à une précision qui n'existe pas.
+ */
+function formatAmount(raw: string | number | null): string | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const value = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(value)) return null;
+  const hasCents = Math.round(value * 100) % 100 !== 0;
+  return `${value.toLocaleString("fr-FR", {
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: 2,
+  })} DZD`;
 }
 
 function whatsappFailureReason(code: string | null): string {
@@ -155,9 +230,17 @@ const TYPE_COLORS: Record<string, string> = {
 // technician is attached, so an open order advances via "Auto-dispatch"
 // (or by editing the order), not by a bare status change. The API rejects
 // ASSIGNED-without-assignee outright.
+//
+// IN_PROGRESS no longer jumps straight to COMPLETED. That shortcut is exactly
+// what the approval step exists to close — a board where the fast path bypasses
+// the queue is a board where the queue is never worked — and the API refuses
+// the transition outright. A job whose technician never filed a report is
+// carried through the queue by hand, in two clicks, leaving a trace that it
+// passed that way.
 const NEXT_STATUS: Record<string, string> = {
   ASSIGNED: "IN_PROGRESS",
-  IN_PROGRESS: "COMPLETED",
+  IN_PROGRESS: "PENDING_APPROVAL",
+  PENDING_APPROVAL: "COMPLETED",
 };
 
 export default function WorkOrdersPage() {
@@ -302,7 +385,17 @@ export default function WorkOrdersPage() {
     [orders]
   );
 
-  const activeCount = orders.filter((wo) => wo.status !== "COMPLETED").length;
+  // "Actif" means somebody still has work to do on it. A cancelled order is
+  // not active, and neither is one waiting in the approval queue — that one is
+  // counted on its own line, because a total that lumps it in with the jobs
+  // still on site hides the only number that is actually a to-do list.
+  const activeCount = orders.filter(
+    (wo) => wo.status !== "COMPLETED" && wo.status !== "CANCELLED"
+  ).length;
+
+  const pendingCount = orders.filter(
+    (wo) => wo.status === "PENDING_APPROVAL"
+  ).length;
 
   if (loading) {
     return (
@@ -327,6 +420,18 @@ export default function WorkOrdersPage() {
           <p className="text-gray-500 mt-1">
             {orders.length} {orders.length > 1 ? "bons" : "bon"} au total •{" "}
             {activeCount} {activeCount > 1 ? "actifs" : "actif"}
+            {pendingCount > 0 && (
+              <>
+                {" "}
+                •{" "}
+                <Link
+                  href="#a-valider"
+                  className="font-medium text-amber-600 hover:text-amber-700 dark:text-amber-400"
+                >
+                  {pendingCount} à valider
+                </Link>
+              </>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -365,11 +470,15 @@ export default function WorkOrdersPage() {
 
       {/* Kanban View */}
       {view === "kanban" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           {ordersByStatus.map(({ status, orders: col }) => {
             const config = STATUS_CONFIG[status];
             return (
-              <div key={status} className="flex flex-col">
+              <div
+                key={status}
+                id={status === "PENDING_APPROVAL" ? "a-valider" : undefined}
+                className="flex flex-col scroll-mt-6"
+              >
                 <div className={`${config.headerColor} text-white px-4 py-2.5 rounded-t-lg flex items-center justify-between`}>
                   <div className="flex items-center gap-2">
                     <config.icon className="w-4 h-4" />
@@ -381,7 +490,10 @@ export default function WorkOrdersPage() {
                 </div>
 
                 <div className="bg-gray-50 dark:bg-gray-800/50 rounded-b-lg p-3 space-y-3 min-h-[200px]">
-                  {col.map((wo) => (
+                  {col.map((wo) => {
+                    const waiting = waitingFor(wo.reportSubmittedAt);
+                    const amount = formatAmount(wo.invoiceAmount);
+                    return (
                     <div
                       key={wo.id}
                       className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow"
@@ -490,6 +602,36 @@ export default function WorkOrdersPage() {
                         )}
                       </div>
 
+                      {/* Ce que contient un rapport en attente, et depuis
+                          quand. Les deux questions que se pose celui qui
+                          ouvre cette colonne — « depuis quand » et « pour
+                          combien » — sans avoir à ouvrir chaque fiche pour
+                          savoir laquelle traiter d'abord. */}
+                      {wo.status === "PENDING_APPROVAL" && (
+                        <div className="mb-3 space-y-1 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-900/10 px-2.5 py-2">
+                          <p className="text-[11px] font-medium text-amber-800 dark:text-amber-300">
+                            {waiting ?? "Rapport envoyé"}
+                          </p>
+                          {!wo.isBillable ? (
+                            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80">
+                              Non facturable
+                            </p>
+                          ) : amount ? (
+                            <p className="flex items-center gap-1 text-[11px] text-amber-800 dark:text-amber-300">
+                              <Banknote className="w-3 h-3 shrink-0" />
+                              <span className="tabular-nums">
+                                {amount} à facturer
+                              </span>
+                            </p>
+                          ) : (
+                            <p className="flex items-center gap-1 text-[11px] font-medium text-amber-800 dark:text-amber-300">
+                              <Banknote className="w-3 h-3 shrink-0" />
+                              Montant à compléter
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       <div className="pt-2 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs text-gray-400">
                         <span>Est. {wo.estimatedHours ?? "—"} h</span>
                         {NEXT_STATUS[wo.status] && canManage ? (
@@ -509,14 +651,23 @@ export default function WorkOrdersPage() {
                           <span className="text-gray-400">
                             En attente d&apos;affectation
                           </span>
-                        ) : (
+                        ) : wo.status === "COMPLETED" ? (
                           <span className="flex items-center gap-1 text-green-600">
                             <CheckCircle2 className="w-3 h-3" /> Terminé
+                          </span>
+                        ) : (
+                          // Everything else — en attente, annulé, à valider sans
+                          // droit de gestion — porte son propre libellé. Le
+                          // « Terminé » vert servait de cas par défaut, si bien
+                          // qu'un bon en pause s'affichait comme un bon fini.
+                          <span className="text-gray-400">
+                            {formatEnum(wo.status)}
                           </span>
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
 
                   {col.length === 0 && (
                     <div className="text-center py-8 text-gray-400 text-sm">

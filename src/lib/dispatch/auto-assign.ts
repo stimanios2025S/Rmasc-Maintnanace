@@ -56,6 +56,13 @@ type Db = Tx | typeof prisma;
  * reused: it includes `OPEN`, and an order cannot be OPEN *and* assigned, so
  * that entry would never match and would only imply the two lists agree when
  * they do not.
+ *
+ * `PENDING_APPROVAL` is absent for the opposite reason: the technician has
+ * handed the job over. Counting it here would leave him `ON_JOB` on the
+ * strength of work he has already finished and reported — which is how a
+ * technician who closed his last job on Friday is still offered as "En
+ * intervention" on Monday. `syncTechnicianStatus` reads this list, and this
+ * entry is what frees him the moment he validates his report.
  */
 const OPEN_ASSIGNMENT_STATUSES = ["ASSIGNED", "IN_PROGRESS", "ON_HOLD"] as const;
 

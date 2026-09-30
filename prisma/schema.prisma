@@ -97,6 +97,17 @@ enum WorkOrderStatus {
   OPEN
   ASSIGNED
   IN_PROGRESS
+  /// The technician has finished on site and filed his report; the office has
+  /// not yet accepted it.
+  ///
+  /// Distinct from COMPLETED on purpose. Between the two there is a person
+  /// reading a report, and a board that cannot tell "done" from "done and
+  /// checked" hides the one queue that still needs working through.
+  ///
+  /// It is also deliberately *not* an open status for dispatch. The job has
+  /// left the technician's hands, so he is free for the next one — see
+  /// `OPEN_ASSIGNMENT_STATUSES` in `src/lib/dispatch/auto-assign.ts`.
+  PENDING_APPROVAL
   ON_HOLD
   COMPLETED
   CANCELLED
@@ -574,6 +585,40 @@ model WorkOrder {
   notes           String?
   photoUrls       String[]          @map("photo_urls")
   signatureUrl    String?           @map("signature_url")
+
+  /// Whether this job carries payable work — a part supplied, a callout
+  /// outside the maintenance contract.
+  ///
+  /// Defaults to false, and false is the honest default: most visits are
+  /// covered by a contract, and a flag that defaulted to "billable" would turn
+  /// every forgotten checkbox into an invoice sent to a client.
+  isBillable      Boolean           @default(false) @map("is_billable")
+
+  /// The total to bill, in Algerian dinars, as the technician entered it.
+  ///
+  /// `Decimal(12, 2)` and not `Float`: a currency amount has to be exact, and a
+  /// binary float that renders 12345.6 as 12345.599999999999 is a number nobody
+  /// can be asked to pay. DZD has no subdivision in practice; the scale of 2 is
+  /// kept so the column does not have to change the day a price list arrives
+  /// with centimes.
+  ///
+  /// Null is meaningful here and is not zero. A non-billable job leaves it
+  /// null, and so does a billable job whose amount the technician left blank —
+  /// an incomplete report the office fills in while validating it.
+  ///
+  /// No VAT column and no invoice number yet: those belong to the invoicing
+  /// work, and a numbering scheme invented here would produce numbers that have
+  /// to be thrown away.
+  invoiceAmount   Decimal?          @db.Decimal(12, 2) @map("invoice_amount")
+
+  /// When the technician filed his report — i.e. when this order entered
+  /// PENDING_APPROVAL. Cleared if the office sends it back for correction.
+  ///
+  /// Kept apart from `completedAt` because the two are different facts and only
+  /// one of them is true at this stage: the site work is over, the order is
+  /// not. It is also the only column an approval queue can honestly sort by —
+  /// "en attente depuis mardi" is what gets a pending report read.
+  reportSubmittedAt DateTime?       @map("report_submitted_at")
 
   scheduledDate   DateTime?         @map("scheduled_date")
   startedAt       DateTime?         @map("started_at")

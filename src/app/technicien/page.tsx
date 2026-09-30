@@ -22,6 +22,11 @@ import { FleetMapCard } from "@/components/map/fleet-map-card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { SignaturePad } from "@/components/technician/signature-pad";
 import type { SignatureValue } from "@/components/technician/signature-pad";
+import {
+  CompletionReportForm,
+  completionActionLabel,
+} from "@/components/technician/completion-report-form";
+import type { CompletionReport } from "@/components/technician/completion-report-form";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { evaluateGeofence, formatDistance } from "@/lib/geo/geofence";
 import type { Coordinates } from "@/lib/geo/geofence";
@@ -62,6 +67,16 @@ interface ActiveJob {
   checkInNotes: string | null;
   notes: string | null;
   partsReplaced: Array<{ name: string; partNumber?: string; qty: number }> | null;
+  /**
+   * What the technician already entered on a previous report attempt.
+   *
+   * Carried even though the completion form is only reachable before the first
+   * submission: a report the office sends back comes round again, and arriving
+   * at an empty form to retype a part list is how a correction turns into a
+   * second, different report.
+   */
+  isBillable: boolean;
+  invoiceAmount: number | null;
   photoUrls: string[];
   elevator: string;
   building: string;
@@ -136,7 +151,14 @@ interface CompletedJob {
   orderNumber: string;
   title: string;
   elevator: string;
+  /**
+   * `COMPLETED` once the office has accepted the report, `PENDING_APPROVAL`
+   * while it is still in their queue. The two are listed together on purpose —
+   * see the note on the "Aujourd'hui" panel.
+   */
+  status: string;
   completedAt: string | null;
+  reportSubmittedAt: string | null;
   actualHours: number | null;
 }
 
@@ -178,6 +200,16 @@ export default function TechnicianPage() {
   const [checklist, setChecklist] = useState<Record<string, CheckState[]>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  /**
+   * The job whose completion report is open, if any.
+   *
+   * Held as the whole job rather than its id so the form has its order number,
+   * type and site to render without another lookup, and so a background refresh
+   * of the queue cannot swap the report under the technician's cursor.
+   */
+  const [reportFor, setReportFor] = useState<ActiveJob | null>(null);
+  /** A failure reported by the API, kept out of the form's own validation. */
+  const [reportError, setReportError] = useState("");
   const [showNotes, setShowNotes] = useState<string | null>(null);
   /** jobId → checklist index → photo URL documenting that line. */
   const [photos, setPhotos] = useState<Record<string, Record<number, string>>>({});
@@ -528,27 +560,36 @@ export default function TechnicianPage() {
   };
 
   /**
-   * File the inspection report, then close the work order.
+   * File the inspection report and the completion report, then hand the order
+   * to the office for validation.
    *
-   * The order matters: if the report fails to save we must not mark the job
-   * complete, otherwise the checklist that gated completion is lost and the
-   * work order closes with no evidence of what was inspected.
+   * The order of the two writes matters, and it is the one the screen used
+   * before: evidence first. If the inspection report fails to save, nothing
+   * else is attempted — otherwise the checklist that gated completion is lost
+   * and the order lands in the approval queue with no record of what was
+   * inspected. The reverse failure is tolerable: a report filed with the status
+   * unchanged is an order the technician can simply send again.
    *
-   * Every line must carry a result before the job closes — but "result" now
-   * includes FAIL and N/A. A job that found a fault is a completed inspection,
-   * and blocking it would push the technician to tick boxes that are not true.
+   * The work order is *not* completed here. It moves to PENDING_APPROVAL, which
+   * takes it off this technician's queue and frees him — `syncTechnicianStatus`
+   * on the server counts that transition as the end of his part — and puts it
+   * in front of the office. Completing it would mean an amount typed on a phone
+   * reached a client with nobody having read it.
    */
-  const completeJob = async (job: ActiveJob) => {
+  const submitCompletionReport = async (
+    job: ActiveJob,
+    report: CompletionReport
+  ) => {
     const checks = checklist[job.id] ?? DEFAULT_CHECKLIST.map(() => null);
     if (checks.some((c) => c === null)) {
-      setError(
-        "Renseignez un résultat pour chaque point de contrôle avant de clôturer l'intervention."
+      setReportError(
+        "Renseignez un résultat pour chaque point de contrôle avant de valider le rapport."
       );
       return;
     }
 
     setBusyId(job.id);
-    setError("");
+    setReportError("");
     try {
       if (!job.inspection) {
         const jobPhotos = photos[job.id] ?? {};
@@ -559,7 +600,7 @@ export default function TechnicianPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             workOrderId: job.id,
-            summary: notes[job.id]?.trim() || undefined,
+            summary: report.description,
             items: DEFAULT_CHECKLIST.map((checkName, index) => ({
               checkName,
               result: checks[index] as CheckResult,
@@ -581,19 +622,38 @@ export default function TechnicianPage() {
       const res = await fetch(`/api/work-orders?id=${job.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "COMPLETED" }),
+        body: JSON.stringify({
+          status: "PENDING_APPROVAL",
+          /**
+           * The description is written onto the order as well as into the
+           * report, and this is the one duplication in the flow. The two are
+           * not the same record: the report's summary is the evidence filed at
+           * the moment of completion and is never rewritten, while `notes` is
+           * the current account of the job that the office can correct while
+           * validating it. Keeping only the first would freeze a typo; keeping
+           * only the second would leave an approved order whose report says
+           * something else.
+           */
+          notes: report.description,
+          partsReplaced: report.parts,
+          isBillable: report.isBillable,
+          invoiceAmount: report.isBillable ? report.invoiceAmount : null,
+        }),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         throw new Error(
-          json.error ?? "Échec de la clôture du bon de travail"
+          json.error ?? "Échec de l'envoi du rapport au bureau"
         );
       }
 
+      setReportFor(null);
       await load();
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Échec de la clôture de l'intervention"
+      setReportError(
+        e instanceof Error
+          ? e.message
+          : "Échec de l'envoi du rapport au bureau"
       );
     } finally {
       setBusyId(null);
@@ -1236,8 +1296,11 @@ export default function TechnicianPage() {
                     : "Signature numérique"}
                 </button>
                 <button
-                  onClick={() => completeJob(job)}
-                  className={`flex items-center justify-center gap-2 p-3 rounded-lg text-sm font-bold transition-colors ${
+                  onClick={() => {
+                    setReportError("");
+                    setReportFor(job);
+                  }}
+                  className={`col-span-2 flex items-center justify-center gap-2 p-3 rounded-lg text-sm font-bold transition-colors ${
                     progress === 100
                       ? "bg-green-600 text-white hover:bg-green-700"
                       : "bg-gray-200 text-gray-400 cursor-not-allowed"
@@ -1247,7 +1310,7 @@ export default function TechnicianPage() {
                   <CheckCircle2 className="w-4 h-4" />
                   {busyId === job.id
                     ? "Enregistrement…"
-                    : "Clôturer l'intervention"}
+                    : completionActionLabel(job.type)}
                 </button>
               </div>
             </Card>
@@ -1255,42 +1318,93 @@ export default function TechnicianPage() {
         })
       )}
 
-      {/* Completed Today */}
+      {/*
+        Today's hand-overs, accepted and waiting together.
+
+        A report leaves the technician's queue the moment he validates it — the
+        job is off his hands and the office has it — so if this panel kept only
+        the accepted ones, the order he just sent would vanish from the screen
+        in the same second, with no confirmation that anything was saved. The
+        badge is the confirmation.
+      */}
       <Card className="p-5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
-          Terminées aujourd&apos;hui
+          Aujourd&apos;hui
         </h3>
         {completed.length === 0 ? (
           <p className="text-sm text-gray-500">
             Aucune intervention terminée aujourd&apos;hui.
           </p>
         ) : (
-          completed.map((job) => (
-            <div
-              key={job.id}
-              className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/10 rounded-lg border border-green-200 dark:border-green-800 mb-2"
-            >
-              <div className="flex items-center gap-3">
-                <CheckCircle2 className="w-5 h-5 text-green-500" />
-                <div>
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">{job.title}</p>
-                  <p className="text-xs text-gray-500 font-mono">{job.elevator}</p>
+          completed.map((job) => {
+            const pending = job.status === "PENDING_APPROVAL";
+            const stamp = job.completedAt ?? job.reportSubmittedAt;
+            return (
+              <div
+                key={job.id}
+                className={`flex items-center justify-between gap-3 p-3 rounded-lg border mb-2 ${
+                  pending
+                    ? "bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800"
+                    : "bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800"
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  {pending ? (
+                    <Clock className="w-5 h-5 shrink-0 text-amber-500" />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5 shrink-0 text-green-500" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                      {job.title}
+                    </p>
+                    <p className="text-xs text-gray-500 font-mono">
+                      {job.elevator}
+                    </p>
+                    {pending && (
+                      <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300 mt-0.5">
+                        Envoyé au bureau — en attente de validation
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-xs text-gray-500 tabular-nums">
+                    {stamp ? new Date(stamp).toLocaleTimeString("fr-FR") : "—"}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    {job.actualHours ?? "—"} h
+                  </p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-gray-500">
-                  {job.completedAt
-                    ? new Date(job.completedAt).toLocaleTimeString("fr-FR")
-                    : "—"}
-                </p>
-                <p className="text-xs text-gray-400">
-                  {job.actualHours ?? "—"} h
-                </p>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </Card>
+
+      {reportFor && (
+        <CompletionReportForm
+          job={{
+            orderNumber: reportFor.orderNumber,
+            type: reportFor.type,
+            elevator: reportFor.elevator,
+            building: reportFor.building,
+          }}
+          initialDescription={
+            notes[reportFor.id] ?? reportFor.notes ?? ""
+          }
+          initialParts={reportFor.partsReplaced}
+          initialIsBillable={reportFor.isBillable}
+          initialAmount={reportFor.invoiceAmount}
+          busy={busyId === reportFor.id}
+          serverError={reportError}
+          onCancel={() => {
+            setReportFor(null);
+            setReportError("");
+          }}
+          onSubmit={(report) => submitCompletionReport(reportFor, report)}
+        />
+      )}
     </div>
   );
 }

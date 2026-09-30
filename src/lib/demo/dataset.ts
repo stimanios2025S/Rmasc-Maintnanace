@@ -41,6 +41,17 @@ import type {
   User,
   WorkOrder,
 } from "@prisma/client";
+/**
+ * Imported as a *value*, where everything else from this package is a type.
+ *
+ * `WorkOrder.invoiceAmount` is a `Decimal`, and a fixture that put a plain
+ * number there would satisfy nothing but the eye: it compiles only because the
+ * field is typed from the schema, and the first reader that calls a Decimal
+ * method on it would fail — in the demo, which is the one path nobody tests.
+ * Constructing the real class keeps the fixture and the database telling the
+ * same story.
+ */
+import { Prisma } from "@prisma/client";
 import { ELEVATOR_ERROR_CODES } from "@/lib/incidents/error-code-catalogue";
 
 // ─── Tunables ───────────────────────────────────────────────
@@ -545,13 +556,33 @@ function build(): DemoWorld {
     description: string;
     type: "PREVENTIVE" | "PREDICTIVE" | "CORRECTIVE" | "EMERGENCY" | "INSPECTION";
     priority: "LOW" | "MEDIUM" | "HIGH" | "EMERGENCY" | "CRITICAL";
-    status: "OPEN" | "ASSIGNED" | "IN_PROGRESS" | "ON_HOLD" | "COMPLETED" | "CANCELLED";
+    status:
+      | "OPEN"
+      | "ASSIGNED"
+      | "IN_PROGRESS"
+      | "PENDING_APPROVAL"
+      | "ON_HOLD"
+      | "COMPLETED"
+      | "CANCELLED";
     assignedToId: string | null;
     componentType: string | null;
     estimatedHours: number | null;
     actualHours: number | null;
     scheduledInDays: number | null;
     completedHoursAgo: number | null;
+    /**
+     * The completion report, only on the orders that have one.
+     *
+     * All four are optional, and a PENDING_APPROVAL row that omitted them would
+     * still compile — which is why `reportSubmittedHoursAgo` is what makes the
+     * seeded row coherent: an order in the approval column with no
+     * `reportSubmittedAt` renders as "Rapport envoyé" with no clock, a state
+     * the real API cannot produce.
+     */
+    reportSubmittedHoursAgo?: number | null;
+    billable?: boolean;
+    amount?: number | null;
+    parts?: Array<{ name: string; partNumber?: string; qty: number }>;
   }> = [
     { elevatorId: "elv_6", title: "URGENCE : arrêt sur surchauffe moteur", description: "Appareil arrêté sur une température moteur critique à 97 °C. Vérifier le refroidissement, la résistance des enroulements et les paramètres du variateur avant de remettre la cabine en service.", type: "EMERGENCY", priority: "EMERGENCY", status: "IN_PROGRESS", assignedToId: "usr_tech1", componentType: "TRACTION_MOTOR", estimatedHours: 6, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
     { elevatorId: "elv_6", title: "Remplacer les roulements du moteur de traction", description: "Une vibration de 9,6 mm/s indique une usure avancée des roulements. Remplacer les deux roulements et réaligner la poulie.", type: "CORRECTIVE", priority: "CRITICAL", status: "ASSIGNED", assignedToId: "usr_tech2", componentType: "TRACTION_MOTOR", estimatedHours: 8, actualHours: null, scheduledInDays: 2, completedHoursAgo: null },
@@ -567,6 +598,18 @@ function build(): DemoWorld {
     { elevatorId: "elv_7", title: "Mise à jour du micrologiciel de la carte de commande", description: "Micrologiciel mis à jour vers la version courante ; paramètres revérifiés après le flashage.", type: "CORRECTIVE", priority: "LOW", status: "COMPLETED", assignedToId: "usr_tech1", componentType: "CONTROLLER_BOARD", estimatedHours: 1.5, actualHours: 1.25, scheduledInDays: null, completedHoursAgo: 26 },
     { elevatorId: "elv_2", title: "Remplacement des patins de guidage", description: "Annulé à la demande du client ; replanifié sur le prochain arrêt programmé.", type: "CORRECTIVE", priority: "LOW", status: "CANCELLED", assignedToId: null, componentType: "GUIDE_SHOES", estimatedHours: 4, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
     { elevatorId: "elv_4", title: "Vérification de la télémétrie de référence", description: "Contrôle après mise en service confirmant que tous les capteurs relèvent dans les plages attendues.", type: "INSPECTION", priority: "LOW", status: "COMPLETED", assignedToId: "usr_tech2", componentType: null, estimatedHours: 1, actualHours: 0.75, scheduledInDays: null, completedHoursAgo: 52 },
+    /**
+     * The two rows that make the approval column exist in a demo.
+     *
+     * Deliberately one of each shape, because they are the two states the
+     * column has to render and the difference is the point: a billable report
+     * with an amount the office can act on, and a report sent yesterday that
+     * nobody has opened. Without the second, the waiting clock in the card
+     * would never show anything but "moins d'une heure", and the column would
+     * look like it empties itself.
+     */
+    { elevatorId: "elv_3", title: "Remplacement du contacteur de porte", description: "Contacteur de fin de course remplacé : la porte ne se réouvrait plus en position fermée. Réglage du ralentissement vérifié sur dix cycles complets.", type: "CORRECTIVE", priority: "HIGH", status: "PENDING_APPROVAL", assignedToId: "usr_tech1", componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: 1.5, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 3, billable: true, amount: 18500, parts: [{ name: "Contacteur de fin de course", partNumber: "CFC-24V", qty: 1 }] },
+    { elevatorId: "elv_8", title: "Contrôle du niveau d'huile du groupe hydraulique", description: "Niveau complété et absence de fuite confirmée sous le groupe. Aucune pièce remplacée ; intervention couverte par le contrat.", type: "PREVENTIVE", priority: "MEDIUM", status: "PENDING_APPROVAL", assignedToId: "usr_tech2", componentType: "HYDRAULIC_UNIT", estimatedHours: 1.5, actualHours: 1, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 26, billable: false },
   ];
 
   /**
@@ -717,10 +760,24 @@ function build(): DemoWorld {
       createdById: "usr_mgr",
       estimatedHours: w.estimatedHours,
       actualHours: w.actualHours,
-      partsReplaced: null,
+      partsReplaced: w.parts ?? null,
       notes: null,
       photoUrls: [],
       signatureUrl: null,
+      /**
+       * The completion report, where the seeded row declares one.
+       *
+       * `reportSubmittedHoursAgo` and `completedHoursAgo` are separate clocks
+       * on purpose, mirroring the real columns: an order can be filed and not
+       * yet accepted, and only the accepted ones carry a `completedAt`.
+       */
+      isBillable: w.billable ?? false,
+      invoiceAmount:
+        w.billable && w.amount != null ? new Prisma.Decimal(w.amount) : null,
+      reportSubmittedAt:
+        w.reportSubmittedHoursAgo == null
+          ? null
+          : iso(w.reportSubmittedHoursAgo * 60 * MINUTE),
       scheduledDate:
         w.scheduledInDays === null ? null : new Date(now + w.scheduledInDays * 24 * 60 * MINUTE),
       startedAt: w.status === "IN_PROGRESS" ? iso(3 * 60 * MINUTE) : null,
