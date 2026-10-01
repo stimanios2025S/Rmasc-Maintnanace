@@ -36,7 +36,8 @@ import {
   readJson,
 } from "@/lib/api/http";
 import { requireRole } from "@/lib/api/guard";
-import { CLIENT_TYPES } from "@/types";
+import { generateClientPassword } from "@/lib/auth/passwords";
+import { CLIENT_TYPES, SLA_TIERS } from "@/types";
 
 /** Matches the cost factor the seed uses, so both produce interchangeable hashes. */
 const BCRYPT_ROUNDS = 12;
@@ -51,6 +52,65 @@ const BCRYPT_ROUNDS = 12;
  * account silently gets the wrong one. Making the choice explicit means the
  * administrator states it, which is exactly what was asked for.
  */
+/**
+ * Le premier site, quand l'administrateur le déclare en même temps que le
+ * compte.
+ *
+ * Un sous-ensemble de ce qu'accepte `POST /api/buildings`, et volontairement :
+ * l'ouverture d'un compte se fait avec ce qu'on a sous les yeux — une adresse et
+ * un contact. L'état, le code postal et le rayon de géorepérage se règlent plus
+ * tard, depuis la fiche du client, qui appelle la route complète.
+ *
+ * Pas d'ascenseurs non plus. Un appareil ne s'enregistre que lorsque ses
+ * caractéristiques techniques sont relevées — voir la note sur `Elevator` — et
+ * les inventer pour remplir un formulaire mettrait des valeurs fabriquées
+ * derrière les seuils d'alerte et le calcul de durée de vie des pièces.
+ */
+const FirstBuildingSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Le nom de l'immeuble est obligatoire")
+      .max(200),
+    address: z
+      .string()
+      .trim()
+      .min(1, "L'adresse de l'immeuble est obligatoire")
+      .max(300),
+    city: z.string().trim().min(1, "La ville est obligatoire").max(100),
+    contactPerson: z
+      .string()
+      .trim()
+      .min(1, "Le contact sur site est obligatoire")
+      .max(200),
+    contactEmail: z
+      .string()
+      .trim()
+      .email("Adresse e-mail du contact invalide")
+      .optional(),
+    contactPhone: z.string().trim().max(50).optional(),
+    slaTier: z.enum(SLA_TIERS).default("STANDARD"),
+    /**
+     * La position du site, telle qu'elle sera utilisée par le géorepérage des
+     * pointages. Les deux ensemble ou aucune : une latitude seule place le site
+     * sur un méridien, et le contrôle de distance qui s'en sert accepterait
+     * alors un pointage à des milliers de kilomètres.
+     */
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      (value.latitude === undefined) === (value.longitude === undefined),
+    {
+      message:
+        "La latitude et la longitude doivent être fournies ensemble, ou pas du tout",
+      path: ["longitude"],
+    }
+  );
+
 const CreateClientSchema = z
   .object({
     name: z
@@ -64,20 +124,35 @@ const CreateClientSchema = z
       .toLowerCase()
       .email("Adresse e-mail invalide")
       .max(200, "L'adresse e-mail ne peut pas dépasser 200 caractères"),
-    password: z
-      .string()
-      .min(8, "Le mot de passe doit contenir au moins 8 caractères")
-      .max(200, "Le mot de passe ne peut pas dépasser 200 caractères"),
     phone: z
       .string()
       .trim()
       .max(40, "Le téléphone ne peut pas dépasser 40 caractères")
+      .optional(),
+    /**
+     * L'adresse du client — siège, facturation — distincte de celle de ses
+     * immeubles. Voir la note sur `User.address`.
+     */
+    address: z
+      .string()
+      .trim()
+      .max(300, "L'adresse ne peut pas dépasser 300 caractères")
       .optional(),
     clientType: z.enum(CLIENT_TYPES, {
       errorMap: () => ({
         message: "Type de client invalide : « CONTRACTED » ou « NON_CONTRACTED »",
       }),
     }),
+    /** Le premier site du client, si l'administrateur le connaît déjà. */
+    building: FirstBuildingSchema.optional(),
+    /**
+     * Aucun mot de passe dans ce schéma, et c'est délibéré.
+     *
+     * Il était accepté ici jusqu'ici, ce qui laissait le bureau choisir — donc
+     * choisir faible, ou réutiliser. La route en engendre un et le renvoie une
+     * seule fois ; voir `src/lib/auth/passwords.ts`. Un appel qui en envoie un
+     * reçoit un 400 plutôt que de le voir ignoré en silence.
+     */
   })
   .strict();
 
@@ -107,6 +182,7 @@ const CLIENT_SELECT = {
   name: true,
   email: true,
   phone: true,
+  address: true,
   clientType: true,
   isActive: true,
   createdAt: true,
@@ -161,23 +237,77 @@ export async function POST(request: NextRequest) {
       throw conflict("Un compte utilise déjà cette adresse e-mail.");
     }
 
-    const client = await prisma.user.create({
-      data: {
-        name: parsed.name,
-        email: parsed.email,
-        passwordHash: await bcrypt.hash(parsed.password, BCRYPT_ROUNDS),
-        phone: parsed.phone && parsed.phone.length > 0 ? parsed.phone : null,
-        // Hard-coded rather than taken from the body: this endpoint opens
-        // *customer* accounts. Letting a caller pass a role would make it a
-        // privilege-escalation route, since ADMIN is a role.
-        role: "BUILDING_OWNER",
-        clientType: parsed.clientType,
-        isActive: true,
-      },
-      select: CLIENT_SELECT,
+    /**
+     * Engendré ici, haché, et renvoyé en clair une seule fois.
+     *
+     * Le hachage est calculé avant la transaction plutôt que dedans : bcrypt à
+     * 12 tours prend quelques centaines de millisecondes, et les passer en
+     * tenant une transaction ouverte immobilise une connexion pour rien.
+     */
+    const password = generateClientPassword();
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+    /**
+     * Le compte et son premier immeuble sont créés ensemble ou pas du tout.
+     *
+     * Deux écritures séparées laisseraient, sur une erreur au milieu, un compte
+     * client ouvert sur un parc vide — l'état exact que l'écran des clients
+     * signale comme une anomalie de données, et qu'un administrateur devrait
+     * alors réparer à la main sans savoir ce qui a échoué.
+     */
+    const client = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          name: parsed.name,
+          email: parsed.email,
+          passwordHash,
+          phone: parsed.phone && parsed.phone.length > 0 ? parsed.phone : null,
+          address:
+            parsed.address && parsed.address.length > 0 ? parsed.address : null,
+          // Hard-coded rather than taken from the body: this endpoint opens
+          // *customer* accounts. Letting a caller pass a role would make it a
+          // privilege-escalation route, since ADMIN is a role.
+          role: "BUILDING_OWNER",
+          clientType: parsed.clientType,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+
+      if (parsed.building) {
+        await tx.building.create({
+          data: {
+            name: parsed.building.name,
+            address: parsed.building.address,
+            city: parsed.building.city,
+            // The same default `POST /api/buildings` applies. Written out here
+            // rather than left to the column's own default, so the two entry
+            // points to the same table cannot drift apart on a value neither
+            // form asks for.
+            country: "DZ",
+            contactPerson: parsed.building.contactPerson,
+            contactEmail: parsed.building.contactEmail ?? null,
+            contactPhone: parsed.building.contactPhone ?? null,
+            slaTier: parsed.building.slaTier,
+            latitude: parsed.building.latitude ?? null,
+            longitude: parsed.building.longitude ?? null,
+            ownerId: created.id,
+          },
+          select: { id: true },
+        });
+      }
+
+      // Re-read rather than reusing the create's payload: `CLIENT_SELECT`
+      // carries a `_count` of owned buildings, and the one returned by the
+      // insert was computed before this transaction's building existed — the
+      // response would announce a client with no site. Correct, and one query.
+      return tx.user.findUniqueOrThrow({
+        where: { id: created.id },
+        select: CLIENT_SELECT,
+      });
     });
 
-    return jsonOk(client, 201);
+    return jsonOk({ client, password }, 201);
   } catch (error) {
     return handleRouteError(error);
   }
@@ -218,7 +348,10 @@ export async function PATCH(request: NextRequest) {
       select: CLIENT_SELECT,
     });
 
-    return jsonOk(client);
+    // Enveloppé comme la création, qui répond `{ client, password }`. Deux
+    // formes pour la même ressource dans le même fichier, c'est la dérive qui
+    // finit par faire lire `data.email` là où il faut lire `data.client.email`.
+    return jsonOk({ client });
   } catch (error) {
     return handleRouteError(error);
   }

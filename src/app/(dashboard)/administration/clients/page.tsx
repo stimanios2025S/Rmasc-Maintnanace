@@ -1,11 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, CheckCircle2, Loader2, Plus, RefreshCw, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Building2,
+  Check,
+  ChevronRight,
+  Copy,
+  KeyRound,
+  Loader2,
+  Plus,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { parseDecimalInput } from "@/lib/ui/numbers";
 import { CLIENT_TYPE_LABELS } from "@/types";
 import type { ClientType } from "@/types";
 
@@ -56,7 +69,18 @@ export default function ClientsAdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("ALL");
   const [formOpen, setFormOpen] = useState(false);
-  const [created, setCreated] = useState<string | null>(null);
+  /**
+   * L'accès engendré, gardé en mémoire le temps de la session d'écran.
+   *
+   * Le mot de passe n'est renvoyé qu'une fois par l'API et n'est stocké nulle
+   * part en clair : ce state est la seule copie qui existe encore, et il
+   * disparaît au rechargement de la page. C'est voulu — l'écran sert à le
+   * transmettre tout de suite, pas à le retrouver plus tard.
+   */
+  const [created, setCreated] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -162,23 +186,18 @@ export default function ClientsAdminPage() {
       </div>
 
       {created && (
-        <p
-          role="status"
-          className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
-        >
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>
-            Le compte <strong>{created}</strong> a été créé. Communiquez le mot
-            de passe au client par un autre canal que cette application.
-          </span>
-        </p>
+        <CredentialsPanel
+          email={created.email}
+          password={created.password}
+          onDismiss={() => setCreated(null)}
+        />
       )}
 
       {formOpen && (
         <CreateClientForm
-          onCreated={(email) => {
+          onCreated={(credentials) => {
             setFormOpen(false);
-            setCreated(email);
+            setCreated(credentials);
             void load();
           }}
           onCancel={() => setFormOpen(false)}
@@ -263,9 +282,16 @@ function ClientCard({
       <div className="flex flex-wrap items-start gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-gray-900 dark:text-white">
+            {/* Le nom mène à la fiche du client, où vivent ses immeubles et ses
+                appareils. La carte porte aussi un sélecteur de type : un lien
+                qui envelopperait la carte entière transformerait chaque clic
+                manqué sur le sélecteur en navigation. */}
+            <Link
+              href={`/administration/clients/${client.id}`}
+              className="font-semibold text-gray-900 hover:text-blue-600 hover:underline dark:text-white dark:hover:text-blue-400"
+            >
               {client.name}
-            </span>
+            </Link>
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                 type === "CONTRACTED"
@@ -327,6 +353,108 @@ function ClientCard({
           Aucun immeuble rattaché à ce compte.
         </p>
       )}
+
+      {/* La seule action de cette carte qui ne soit pas le sélecteur de type :
+          on y va pour déclarer une adresse, un appareil, ou réémettre un accès.
+          Le survol du nom y mène aussi, mais rien ne l'annonce. */}
+      <Link
+        href={`/administration/clients/${client.id}`}
+        className="mt-3 inline-flex items-center gap-1 border-t border-gray-100 pt-3 text-sm font-medium text-blue-600 hover:text-blue-700 dark:border-gray-800 dark:text-blue-400"
+      >
+        <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
+        Gérer le parc et l&apos;accès
+        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+      </Link>
+    </Card>
+  );
+}
+
+// ─── Access panel ───────────────────────────────────────────
+
+/**
+ * L'accès qui vient d'être engendré, montré une fois.
+ *
+ * Il est mis en avant plutôt que glissé dans un message de confirmation : c'est
+ * la seule fois où ce mot de passe sera lisible par qui que ce soit, et un texte
+ * qu'on ne remarque pas est un texte qu'on ne transmet pas. La disparition est
+ * annoncée explicitement, sans quoi l'administrateur compte sur l'écran pour le
+ * retrouver plus tard.
+ */
+function CredentialsPanel({
+  email,
+  password,
+  onDismiss,
+}: {
+  email: string;
+  password: string;
+  onDismiss: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // `navigator.clipboard` n'existe pas hors contexte sécurisé — un accès par
+      // IP sur http, par exemple. Le mot de passe reste à l'écran, sélectionnable
+      // à la main ; inutile d'alerter pour une commodité qui n'a pas marché.
+    }
+  };
+
+  return (
+    <Card className="border-emerald-300 p-5 dark:border-emerald-800">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <KeyRound
+            className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+            aria-hidden="true"
+          />
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+              Accès créé
+            </h2>
+            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+              Compte <strong className="text-gray-900 dark:text-white">{email}</strong>
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Masquer l'accès"
+          className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <code className="flex-1 select-all rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 font-mono text-base tracking-wide text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
+          {password}
+        </code>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          {copied ? (
+            <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+          ) : (
+            <Copy className="h-4 w-4" aria-hidden="true" />
+          )}
+          {copied ? "Copié" : "Copier"}
+        </button>
+      </div>
+
+      <p className="mt-3 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        Ce mot de passe ne sera plus jamais affiché — il n&apos;est conservé nulle
+        part en clair. Notez-le maintenant, et transmettez-le au client par un
+        autre canal que cette application. S&apos;il est perdu, un nouveau pourra
+        être engendré depuis la fiche du client.
+      </p>
     </Card>
   );
 }
@@ -337,19 +465,67 @@ function CreateClientForm({
   onCreated,
   onCancel,
 }: {
-  onCreated: (email: string) => void;
+  onCreated: (credentials: { email: string; password: string }) => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
+  const [address, setAddress] = useState("");
   const [clientType, setClientType] = useState<ClientType>("CONTRACTED");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Le premier site, facultatif et replié par défaut.
+   *
+   * Replié parce qu'un client non contractuel n'en a aucun, et qu'un formulaire
+   * qui ouvre sur six champs d'adresse pour un compte qui n'en veut pas est un
+   * formulaire qu'on remplit mal. Ouvert, il n'ajoute qu'un aller-retour.
+   */
+  const [withBuilding, setWithBuilding] = useState(false);
+  const [bName, setBName] = useState("");
+  const [bAddress, setBAddress] = useState("");
+  const [bCity, setBCity] = useState("");
+  const [bContact, setBContact] = useState("");
+  const [bPhone, setBPhone] = useState("");
+  const [bLat, setBLat] = useState("");
+  const [bLng, setBLng] = useState("");
+
   async function submit() {
     setError(null);
+
+    /**
+     * Les coordonnées sont validées ici avant l'envoi.
+     *
+     * L'API refuserait une latitude seule, mais son message parle de champs
+     * `latitude` et `longitude` — deux noms qu'aucun libellé de ce formulaire ne
+     * porte. Le dire ici évite un aller-retour réseau pour une phrase que
+     * l'administrateur doit ensuite traduire.
+     */
+    let latitude: number | undefined;
+    let longitude: number | undefined;
+    if (withBuilding && (bLat.trim() !== "" || bLng.trim() !== "")) {
+      const lat = parseDecimalInput(bLat, { allowNegative: true });
+      const lng = parseDecimalInput(bLng, { allowNegative: true });
+      if (lat === null || lng === null) {
+        setError(
+          "Renseignez la latitude et la longitude ensemble, ou laissez les deux vides."
+        );
+        return;
+      }
+      if (lat < -90 || lat > 90) {
+        setError("La latitude doit être comprise entre -90 et 90.");
+        return;
+      }
+      if (lng < -180 || lng > 180) {
+        setError("La longitude doit être comprise entre -180 et 180.");
+        return;
+      }
+      latitude = lat;
+      longitude = lng;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch("/api/clients", {
@@ -358,11 +534,25 @@ function CreateClientForm({
         body: JSON.stringify({
           name,
           email,
-          password,
           clientType,
           // Omitted rather than sent empty: the API's schema takes an optional
           // string and an empty one would be stored as "" instead of NULL.
           ...(phone.trim() ? { phone: phone.trim() } : {}),
+          ...(address.trim() ? { address: address.trim() } : {}),
+          ...(withBuilding
+            ? {
+                building: {
+                  name: bName.trim(),
+                  address: bAddress.trim(),
+                  city: bCity.trim(),
+                  contactPerson: bContact.trim(),
+                  ...(bPhone.trim() ? { contactPhone: bPhone.trim() } : {}),
+                  ...(latitude !== undefined && longitude !== undefined
+                    ? { latitude, longitude }
+                    : {}),
+                },
+              }
+            : {}),
         }),
       });
 
@@ -376,7 +566,19 @@ function CreateClientForm({
       }
 
       const payload = await res.json();
-      onCreated(payload?.data?.email ?? email);
+      const createdEmail: string = payload?.data?.client?.email ?? email;
+      const password: string | undefined = payload?.data?.password;
+
+      // Sans mot de passe dans la réponse, l'écran n'aurait rien à montrer et le
+      // compte serait ouvert sans que personne ne puisse s'y connecter. Le dire
+      // franchement vaut mieux que d'afficher un panneau vide.
+      if (!password) {
+        throw new Error(
+          "Le compte a été créé mais l'accès n'a pas été renvoyé. Réémettre un mot de passe depuis la fiche du client."
+        );
+      }
+
+      onCreated({ email: createdEmail, password });
     } catch (e) {
       setError(e instanceof Error ? e.message : "La création du compte a échoué.");
     } finally {
@@ -390,8 +592,9 @@ function CreateClientForm({
         Nouveau compte client
       </h2>
       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-        Le client se connecte avec l&apos;adresse e-mail et le mot de passe
-        définis ici.
+        Le compte est ouvert avec l&apos;adresse e-mail saisie ici, et un mot de
+        passe engendré par le système — affiché une seule fois, juste après la
+        création.
       </p>
 
       <form
@@ -451,32 +654,42 @@ function CreateClientForm({
             />
           </div>
 
-          <div>
+          <div className="sm:col-span-2">
             <label
-              htmlFor="client-mot-de-passe"
+              htmlFor="client-adresse"
               className="block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
-              Mot de passe
+              Adresse du client{" "}
+              <span className="text-gray-400">(facultatif)</span>
             </label>
             <input
-              id="client-mot-de-passe"
-              type="text"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-              minLength={8}
-              autoComplete="new-password"
-              aria-describedby="client-mot-de-passe-aide"
+              id="client-adresse"
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+              placeholder="Siège, adresse de facturation"
+              aria-describedby="client-adresse-aide"
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
             />
             <p
-              id="client-mot-de-passe-aide"
+              id="client-adresse-aide"
               className="mt-1 text-xs text-gray-500 dark:text-gray-400"
             >
-              Au moins 8 caractères. Affiché en clair pour que vous puissiez le
-              transmettre — ne le laissez pas à l&apos;écran.
+              L&apos;adresse du client, pas celle de ses immeubles : c&apos;est
+              ici qu&apos;une facture se poste, alors qu&apos;une intervention
+              part à l&apos;adresse du site.
             </p>
           </div>
+        </div>
+
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+          <p className="flex items-start gap-2 text-xs text-blue-800 dark:text-blue-300">
+            <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              Le mot de passe du client est engendré par le système et affiché
+              une seule fois après la création. Il n&apos;est conservé nulle part
+              en clair.
+            </span>
+          </p>
         </div>
 
         <fieldset>
@@ -517,6 +730,170 @@ function CreateClientForm({
               );
             })}
           </div>
+        </fieldset>
+
+        {/* ─── Premier immeuble ─────────────────────────────── */}
+        <fieldset className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+          <legend className="px-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+            Premier immeuble <span className="text-gray-400">(facultatif)</span>
+          </legend>
+
+          <label
+            htmlFor="client-avec-immeuble"
+            className="flex cursor-pointer items-start gap-3"
+          >
+            <input
+              id="client-avec-immeuble"
+              type="checkbox"
+              checked={withBuilding}
+              onChange={(event) => setWithBuilding(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-blue-600"
+            />
+            <span>
+              <span className="block text-sm text-gray-900 dark:text-white">
+                Déclarer une adresse de site maintenant
+              </span>
+              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                Les appareils s&apos;ajouteront ensuite, depuis la fiche du
+                client, quand leurs caractéristiques techniques seront relevées.
+                Un ascenseur ne s&apos;enregistre pas sans sa plaque
+                constructeur : les seuils d&apos;alerte et la durée de vie des
+                pièces se calculent sur ces chiffres.
+              </span>
+            </span>
+          </label>
+
+          {withBuilding && (
+            <div className="mt-4 grid gap-4 border-t border-gray-100 pt-4 sm:grid-cols-2 dark:border-gray-800">
+              <div className="sm:col-span-2">
+                <label
+                  htmlFor="immeuble-nom"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Nom de l&apos;immeuble
+                </label>
+                <input
+                  id="immeuble-nom"
+                  value={bName}
+                  onChange={(event) => setBName(event.target.value)}
+                  required={withBuilding}
+                  placeholder="Résidence Les Oliviers"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label
+                  htmlFor="immeuble-adresse"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Adresse du site
+                </label>
+                <input
+                  id="immeuble-adresse"
+                  value={bAddress}
+                  onChange={(event) => setBAddress(event.target.value)}
+                  required={withBuilding}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="immeuble-ville"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Ville
+                </label>
+                <input
+                  id="immeuble-ville"
+                  value={bCity}
+                  onChange={(event) => setBCity(event.target.value)}
+                  required={withBuilding}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="immeuble-contact"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Contact sur site
+                </label>
+                <input
+                  id="immeuble-contact"
+                  value={bContact}
+                  onChange={(event) => setBContact(event.target.value)}
+                  required={withBuilding}
+                  placeholder="Le concierge, le syndic…"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="immeuble-telephone"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Téléphone du contact{" "}
+                  <span className="text-gray-400">(facultatif)</span>
+                </label>
+                <input
+                  id="immeuble-telephone"
+                  value={bPhone}
+                  onChange={(event) => setBPhone(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="immeuble-latitude"
+                    className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    Latitude
+                  </label>
+                  <input
+                    id="immeuble-latitude"
+                    value={bLat}
+                    onChange={(event) => setBLat(event.target.value)}
+                    inputMode="decimal"
+                    placeholder="36.7538"
+                    aria-describedby="immeuble-coordonnees-aide"
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm tabular-nums text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="immeuble-longitude"
+                    className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    Longitude
+                  </label>
+                  <input
+                    id="immeuble-longitude"
+                    value={bLng}
+                    onChange={(event) => setBLng(event.target.value)}
+                    inputMode="decimal"
+                    placeholder="3.0588"
+                    aria-describedby="immeuble-coordonnees-aide"
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm tabular-nums text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+                  />
+                </div>
+                <p
+                  id="immeuble-coordonnees-aide"
+                  className="col-span-2 text-xs text-gray-500 dark:text-gray-400"
+                >
+                  Facultatives, mais les deux ensemble ou aucune. Elles servent au
+                  contrôle de distance lors du pointage d&apos;arrivée du
+                  technicien : sans elles, un pointage est accepté sans
+                  vérification.
+                </p>
+              </div>
+            </div>
+          )}
         </fieldset>
 
         {error && (

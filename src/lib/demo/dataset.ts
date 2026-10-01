@@ -319,10 +319,39 @@ function build(): DemoWorld {
   // means anything for a client account. Both demo owners are contracted,
   // because both own buildings in the fixtures and a non-contracted owner with
   // a portfolio is the contradiction the admin screen warns about.
+  /**
+   * L'adresse des deux clients de la démonstration — leur siège, pas leurs
+   * sites.
+   *
+   * Délibérément différentes des adresses de `buildingSeed` : c'est la seule
+   * façon de montrer à l'écran que les deux existent et ne se confondent pas.
+   * Une fixture où le siège et l'immeuble partageaient la même adresse laisserait
+   * croire qu'un seul champ suffit, et c'est précisément l'erreur que la
+   * colonne `User.address` a été ajoutée pour éviter.
+   */
+  const CLIENT_ADDRESSES: Record<string, string> = {
+    usr_owner1: "1 Ferry Building, bureau 300, San Francisco",
+    usr_owner2: "2201 Broadway, Oakland",
+  };
+
   const userSeed: Array<
     Omit<
       User,
-      "createdAt" | "updatedAt" | "lastLatitude" | "lastLongitude" | "lastPositionAt"
+      | "createdAt"
+      | "updatedAt"
+      | "lastLatitude"
+      | "lastLongitude"
+      | "lastPositionAt"
+      /**
+       * L'adresse du client, absente des fixtures.
+       *
+       * Omise plutôt que renseignée à `null` sur chaque ligne : c'est un champ
+       * qui n'existe que sur un compte client, et l'écrire neuf fois pour dire
+       * « rien » noierait les deux lignes où il vaudrait quelque chose. La
+       * reconstruire à `null` plus bas, à l'endroit où le monde de démo est
+       * assemblé, garde les deux visibles.
+       */
+      | "address"
     >
   > = [
     { id: "usr_admin", email: "admin@elevatorpulse.com", name: "Dana Whitfield", passwordHash: DEMO_HASH, role: "ADMIN", clientType: null, phone: "+1 415 555 0101", avatarUrl: null, isActive: true, status: "AVAILABLE" },
@@ -369,6 +398,13 @@ function build(): DemoWorld {
     // one wanted — every technician starts with no position, and the one on a
     // job gets one.
     ...{ lastLatitude: null, lastLongitude: null, lastPositionAt: null },
+    // Renseignée pour les deux comptes clients seulement, et laissée nulle sur
+    // le personnel : la colonne ne veut dire quelque chose que pour un
+    // propriétaire d'immeuble, et une adresse de facturation sur le compte d'un
+    // technicien serait une donnée qui ne désigne rien.
+    ...(u.role === "BUILDING_OWNER"
+      ? { address: CLIENT_ADDRESSES[u.id] ?? null }
+      : { address: null }),
     ...technicianFixesFor[u.id],
     createdAt: iso(400 * 24 * 60 * MINUTE - i * 60 * MINUTE),
     updatedAt: iso(3 * 24 * 60 * MINUTE),

@@ -15,6 +15,8 @@
  * conversion oubliée est un montant qui s'affiche « NaN » sur une facture.
  */
 
+import { parseDecimalInput } from "./numbers";
+
 /**
  * Formate un montant, ou renvoie `null` s'il n'y a rien à afficher.
  *
@@ -31,22 +33,17 @@
 /**
  * Lit un montant tel qu'une personne le tape.
  *
- * Un clavier de téléphone réglé sur `decimal` produit une virgule sur un
- * combiné français, et « 18500,50 » n'est pas un nombre que `Number()` accepte.
- * Les espaces partent aussi : « 18 500 » est l'écriture d'une facture, et la
- * refuser serait le formulaire qui pinaille sur la seule chose qu'il existe pour
- * recueillir.
+ * Un montant n'est jamais négatif : une facture se rembourse par un avoir, pas
+ * par un nombre en dessous de zéro. La lecture elle-même — virgule décimale,
+ * espaces de milliers — vit dans `lib/ui/numbers.ts`, partagée avec les
+ * coordonnées et tout autre champ numérique.
  *
- * Renvoie `null` quand il n'y a rien à lire — champ vide, texte, ou négatif.
- * L'appelant décide si c'est une erreur : au bureau un montant illisible bloque
- * la validation, sur un rapport non facturable il n'y a rien à lire du tout.
+ * Renvoie `null` quand il n'y a rien à lire. L'appelant décide si c'est une
+ * erreur : au bureau un montant illisible bloque la validation, sur un rapport
+ * non facturable il n'y a rien à lire du tout.
  */
 export function parseDzdInput(raw: string): number | null {
-  const cleaned = raw.replace(/\s/g, "").replace(",", ".");
-  if (cleaned === "") return null;
-  const value = Number(cleaned);
-  if (!Number.isFinite(value) || value < 0) return null;
-  return value;
+  return parseDecimalInput(raw);
 }
 
 export function formatDzd(raw: string | number | null | undefined): string | null {

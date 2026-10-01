@@ -233,6 +233,21 @@ model User {
   /// and read as CONTRACTED on a client. See the enum's doc comment.
   clientType    ClientType? @map("client_type")
   phone         String?
+
+  /// L'adresse du client lui-même — siège, facturation — et non celle de ses
+  /// immeubles.
+  ///
+  /// Les deux existent et ne se confondent pas : `Building.address` est l'endroit
+  /// où l'on envoie un technicien, celle-ci est l'endroit où l'on envoie une
+  /// facture. Un gestionnaire peut avoir son siège en centre-ville et dix
+  /// machines réparties dans la wilaya ; recopier l'un dans l'autre donnerait
+  /// soit des factures adressées à une machinerie, soit des interventions
+  /// envoyées à un bureau.
+  ///
+  /// Nullable : un client non contractuel n'a pas de dossier, et l'ouverture
+  /// d'un compte ne doit pas être bloquée par une adresse qu'on n'a pas encore.
+  address       String?
+
   avatarUrl     String?  @map("avatar_url")
   isActive      Boolean  @default(true) @map("is_active")
   /// Whether this technician can be dispatched. Defaults to AVAILABLE so the
