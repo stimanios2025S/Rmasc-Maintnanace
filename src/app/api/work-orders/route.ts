@@ -28,6 +28,7 @@ import {
   requireRole,
 } from "@/lib/api/guard";
 import { createWorkOrderWithUniqueNumber } from "@/lib/work-orders/service";
+import { statusesLeadingTo } from "@/lib/incidents/progress";
 import { WORK_ORDER_INCLUDE } from "@/lib/work-orders/includes";
 import {
   decimalToText,
@@ -529,10 +530,61 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const workOrder = await prisma.workOrder.update({
-      where: { id },
-      data: updateData,
-      include: WORK_ORDER_INCLUDE,
+    /**
+     * Le bon et le ticket de l'occupant avancé ensemble.
+     *
+     * C'est la moitié manquante de la boucle. Un incident signalé depuis
+     * l'espace client crée un bon de travail, et la barre de progression que le
+     * client regarde lit le statut de *l'incident*. Jusqu'ici rien ne le
+     * faisait avancer au-delà de « intervention en cours » : les travaux
+     * pouvaient être finis, le rapport validé et la facture émise, le client
+     * voyait toujours un technicien censé être chez lui. Le seul écran qui
+     * aurait pu le lui dire était celui de l'entreprise.
+     *
+     * Les deux écritures sont dans une transaction, contrairement aux
+     * notifications et à la facture qui vivent volontairement à côté. La
+     * différence est ce qui est raconté : une notification annonce un fait
+     * déjà écrit, une facture est un document qui suit un autre document. Ici
+     * les deux lignes disent la *même* chose — cette panne est terminée — et
+     * deux états qui se contredisent sur ce point sont exactement ce que le
+     * produit existe pour éviter.
+     */
+    const workOrder = await prisma.$transaction(async (tx) => {
+      const updated = await tx.workOrder.update({
+        where: { id },
+        data: updateData,
+        include: WORK_ORDER_INCLUDE,
+      });
+
+      if (updated.status === "COMPLETED") {
+        // Les statuts depuis lesquels la clôture est permise, pris à la machine
+        // à états : ceux qui sont déjà terminaux — CLOSED, et surtout
+        // RESOLVED_BY_CLIENT — n'y sont pas, donc une panne que l'occupant a
+        // résolue seul garde sa conclusion.
+        await tx.incidentReport.updateMany({
+          where: {
+            workOrderId: updated.id,
+            status: { in: statusesLeadingTo("CLOSED") },
+          },
+          data: { status: "CLOSED", resolvedAt: new Date() },
+        });
+      } else if (updated.status === "CANCELLED") {
+        /**
+         * Un bon annulé renvoie le ticket en arrière, il ne le laisse pas sur
+         * « intervention en cours ».
+         *
+         * Personne ne vient plus, et la panne n'est pas réglée pour autant :
+         * l'occupant doit lire qu'un technicien reste à affecter, pas qu'un
+         * technicien est en route. C'est la seule transition inverse que la
+         * machine à états autorise depuis IN_PROGRESS.
+         */
+        await tx.incidentReport.updateMany({
+          where: { workOrderId: updated.id, status: "IN_PROGRESS" },
+          data: { status: "TECHNICIAN_ASSIGNED" },
+        });
+      }
+
+      return updated;
     });
 
     /**

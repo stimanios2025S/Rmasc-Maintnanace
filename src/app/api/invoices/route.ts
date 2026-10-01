@@ -32,7 +32,7 @@ import {
   parsePagination,
   readJson,
 } from "@/lib/api/http";
-import { MANAGEMENT_ROLES, OPS_ROLES, requireRole } from "@/lib/api/guard";
+import { MANAGEMENT_ROLES, requireRole } from "@/lib/api/guard";
 import { issueInvoiceForWorkOrder } from "@/lib/invoices/service";
 
 /**
@@ -57,7 +57,17 @@ const INVOICE_LIST_SELECT = {
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireRole(...OPS_ROLES, "BUILDING_OWNER");
+    /**
+     * Les rôles de gestion et les clients — les techniciens en sont exclus.
+     *
+     * Ce point de terminaison est un *relevé* : toutes les factures, avec le nom
+     * du client et le montant. Un technicien de terrain n'a aucune raison de le
+     * parcourir, et l'y laisser ouvrait la facturation complète de l'entreprise
+     * à quiconque possède un compte de terrain. Il reste autorisé sur le PDF
+     * d'une facture — un document qu'on atteint depuis un bon de travail qu'il
+     * peut déjà ouvrir — mais pas sur la liste de tout le monde.
+     */
+    const session = await requireRole(...MANAGEMENT_ROLES, "BUILDING_OWNER");
     const { searchParams } = new URL(request.url);
     const { page, limit, skip } = parsePagination(searchParams);
 

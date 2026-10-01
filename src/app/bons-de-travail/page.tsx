@@ -15,6 +15,8 @@ import {
   MessageCircleWarning,
   ClipboardCheck,
   Banknote,
+  CirclePause,
+  CircleX,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
@@ -29,28 +31,52 @@ import type { IncidentStatus } from "@/types";
 
 // ─── Types ────────────────────────────────────────────────────
 
+/** Les statuts qu'une colonne du tableau peut porter, dans l'ordre du flux. */
 type StatusKey =
   | "OPEN"
   | "ASSIGNED"
   | "IN_PROGRESS"
+  | "ON_HOLD"
   | "PENDING_APPROVAL"
   | "COMPLETED";
+
+/**
+ * Tous les statuts qu'un bon peut porter — colonne ou pas.
+ *
+ * `CANCELLED` en est et n'a pourtant pas de colonne, ce qui est un choix et non
+ * un oubli : un bon annulé n'est pas une étape du travail, c'est une archive, et
+ * une colonne qui ne se remplit jamais apprend à ne plus la regarder. Il reste
+ * visible dans la vue Liste, et l'en-tête annonce combien il y en a — sans quoi
+ * un bon annulé disparaîtrait purement et simplement de l'écran.
+ *
+ * `ON_HOLD`, lui, a sa colonne. Un bon en attente est du travail en suspens :
+ * c'est exactement ce qu'un répartiteur doit voir pour le relancer, et il
+ * figure déjà dans les statuts « ouverts » du produit.
+ */
+type StatusStyleKey = StatusKey | "CANCELLED";
 
 const STATUSES: StatusKey[] = [
   "OPEN",
   "ASSIGNED",
   "IN_PROGRESS",
+  "ON_HOLD",
   "PENDING_APPROVAL",
   "COMPLETED",
 ];
 
 const STATUS_CONFIG: Record<
-  StatusKey,
+  StatusStyleKey,
   { label: string; icon: typeof Clock; color: string; headerColor: string }
 > = {
   OPEN: { label: "Ouvert", icon: Clock, color: "bg-gray-100 text-gray-600", headerColor: "bg-gray-500" },
   ASSIGNED: { label: "Assigné", icon: User, color: "bg-blue-100 text-blue-600", headerColor: "bg-blue-500" },
   IN_PROGRESS: { label: "En cours", icon: Wrench, color: "bg-yellow-100 text-yellow-600", headerColor: "bg-yellow-500" },
+  /**
+   * Orange, entre l'en-cours et l'à-valider : un bon en attente n'est ni en
+   * train d'être fait, ni terminé. Il est en suspens, et c'est ce que la couleur
+   * doit dire — un gris l'aurait rangé avec les archives.
+   */
+  ON_HOLD: { label: "En attente", icon: CirclePause, color: "bg-orange-100 text-orange-700", headerColor: "bg-orange-500" },
   /**
    * Amber, not green: this column is work, not an archive. It is the only one
    * on this board that somebody has to *do* something about, and the colour is
@@ -58,6 +84,13 @@ const STATUS_CONFIG: Record<
    */
   PENDING_APPROVAL: { label: "À valider", icon: ClipboardCheck, color: "bg-amber-100 text-amber-700", headerColor: "bg-amber-500" },
   COMPLETED: { label: "Terminé", icon: CheckCircle2, color: "bg-green-100 text-green-600", headerColor: "bg-green-500" },
+  /**
+   * Sans colonne, mais avec un style : la vue Liste s'en sert pour la pastille
+   * de statut, et sans cette entrée un bon annulé y tombait sur le gris par
+   * défaut — la couleur de « rien de particulier », qui est justement ce qu'un
+   * bon annulé n'est pas.
+   */
+  CANCELLED: { label: "Annulé", icon: CircleX, color: "bg-gray-200 text-gray-500 line-through", headerColor: "bg-gray-400" },
 };
 
 interface WorkOrderRow {
@@ -231,6 +264,14 @@ const NEXT_STATUS: Record<string, string> = {
   ASSIGNED: "IN_PROGRESS",
   IN_PROGRESS: "PENDING_APPROVAL",
   PENDING_APPROVAL: "COMPLETED",
+  /**
+   * Un bon en attente se reprend, il ne se termine pas.
+   *
+   * Sans cette entrée, la seule façon de ressortir un bon suspendu était
+   * l'API — et comme il n'avait pas non plus de colonne, il était invisible et
+   * irrécupérable depuis cet écran. Les deux manques allaient ensemble.
+   */
+  ON_HOLD: "IN_PROGRESS",
 };
 
 export default function WorkOrdersPage() {
@@ -375,13 +416,27 @@ export default function WorkOrdersPage() {
     [orders]
   );
 
-  // "Actif" means somebody still has work to do on it. A cancelled order is
-  // not active, and neither is one waiting in the approval queue — that one is
-  // counted on its own line, because a total that lumps it in with the jobs
-  // still on site hides the only number that is actually a to-do list.
+  /**
+   * « Actif » veut dire : quelqu'un a encore quelque chose à faire dessus.
+   *
+   * Un bon annulé n'est pas actif. Un bon terminé non plus. Et un bon en
+   * attente de validation non plus — il compte sur sa propre ligne, parce qu'un
+   * total qui le confond avec les interventions encore sur le terrain cache le
+   * seul chiffre qui soit une liste de choses à faire.
+   *
+   * Les trois exclusions sont écrites, et pas seulement les deux que le bon
+   * sens suggère : la version précédente ne retirait que TERMINÉ et ANNULÉ tout
+   * en portant un commentaire qui annonçait trois exclusions. L'en-tête
+   * annonçait donc « 8 actifs » sur un tableau qui en montrait 5, et le même
+   * bon était compté deux fois — une fois dans les actifs, une fois dans les
+   * « à valider ».
+   */
+  const INACTIVE_STATUSES = ["COMPLETED", "CANCELLED", "PENDING_APPROVAL"];
   const activeCount = orders.filter(
-    (wo) => wo.status !== "COMPLETED" && wo.status !== "CANCELLED"
+    (wo) => !INACTIVE_STATUSES.includes(wo.status)
   ).length;
+
+  const cancelledCount = orders.filter((wo) => wo.status === "CANCELLED").length;
 
   const pendingCount = orders.filter(
     (wo) => wo.status === "PENDING_APPROVAL"
@@ -422,6 +477,22 @@ export default function WorkOrdersPage() {
                 </Link>
               </>
             )}
+            {/* Les bons annulés n'ont pas de colonne — voir `StatusStyleKey` —
+                et ils resteraient donc invisibles si l'en-tête se taisait. Le
+                lien bascule sur la vue Liste, qui les affiche tous. */}
+            {cancelledCount > 0 && (
+              <>
+                {" "}
+                •{" "}
+                <button
+                  type="button"
+                  onClick={() => setView("list")}
+                  className="font-medium text-gray-500 hover:text-gray-700 hover:underline dark:text-gray-400 dark:hover:text-gray-200"
+                >
+                  {cancelledCount} annulé{cancelledCount > 1 ? "s" : ""}
+                </button>
+              </>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -460,7 +531,7 @@ export default function WorkOrdersPage() {
 
       {/* Kanban View */}
       {view === "kanban" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           {ordersByStatus.map(({ status, orders: col }) => {
             const config = STATUS_CONFIG[status];
             return (
@@ -737,7 +808,7 @@ export default function WorkOrdersPage() {
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${STATUS_CONFIG[wo.status as StatusKey]?.color ?? "bg-gray-100 text-gray-600"}`}>
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${STATUS_CONFIG[wo.status as StatusStyleKey]?.color ?? "bg-gray-100 text-gray-600"}`}>
                           {formatEnum(wo.status)}
                         </span>
                       </td>

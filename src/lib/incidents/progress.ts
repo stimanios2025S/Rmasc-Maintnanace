@@ -223,3 +223,23 @@ export function allowedTransitions(
 ): readonly IncidentStatus[] {
   return ALLOWED_TRANSITIONS[from];
 }
+
+/**
+ * Les statuts depuis lesquels `target` est atteignable.
+ *
+ * L'inverse de `ALLOWED_TRANSITIONS`, et **calculé** plutôt que recopié.
+ *
+ * Il existe pour un appelant précis : la clôture d'un bon de travail doit clore
+ * l'incident qui l'a fait naître, et elle écrit cette clôture en `updateMany` —
+ * une requête qui ne peut pas appeler `canTransition` ligne par ligne. Sans
+ * cette fonction, la route devrait porter sa propre liste de statuts, et deux
+ * listes qui décrivent la même règle finissent par diverger. Ici, la
+ * divergence se traduirait par un incident que le système refuse silencieusement
+ * de clore : le client verrait sa panne « en cours » indéfiniment, sans qu'aucun
+ * écran ne signale d'erreur.
+ */
+export function statusesLeadingTo(target: IncidentStatus): IncidentStatus[] {
+  return (Object.keys(ALLOWED_TRANSITIONS) as IncidentStatus[]).filter((from) =>
+    ALLOWED_TRANSITIONS[from].includes(target)
+  );
+}
