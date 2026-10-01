@@ -22,6 +22,7 @@ import { ValidationBadge } from "@/components/ui/validation-badge";
 import { ProgressTrack } from "@/components/ui/progress-track";
 import { formatEnum } from "@/lib/utils";
 import { enumLabel } from "@/lib/ui/enum-labels";
+import { formatDzd } from "@/lib/ui/money";
 import { useSession } from "next-auth/react";
 import { OPS_ROLES } from "@/types";
 import type { IncidentStatus } from "@/types";
@@ -100,7 +101,7 @@ interface WorkOrderRow {
    * ressemblent exactement, et c'est le second qui coûte.
    *
    * `invoiceAmount` arrive en chaîne de caractères quand Prisma sérialise un
-   * `Decimal` — le formatage passe par `formatAmount`, qui accepte les deux.
+   * `Decimal` — le formatage passe par `formatDzd`, qui accepte les deux.
    */
   isBillable: boolean;
   invoiceAmount: string | number | null;
@@ -139,17 +140,6 @@ function waitingFor(iso: string | null): string | null {
  * ne sont affichés que lorsqu'il y en a : « 18 500 DZD » plutôt que
  * « 18 500,00 DZD », qui laisse croire à une précision qui n'existe pas.
  */
-function formatAmount(raw: string | number | null): string | null {
-  if (raw === null || raw === undefined || raw === "") return null;
-  const value = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(value)) return null;
-  const hasCents = Math.round(value * 100) % 100 !== 0;
-  return `${value.toLocaleString("fr-FR", {
-    minimumFractionDigits: hasCents ? 2 : 0,
-    maximumFractionDigits: 2,
-  })} DZD`;
-}
-
 function whatsappFailureReason(code: string | null): string {
   switch (code) {
     case "no-recipient":
@@ -492,7 +482,7 @@ export default function WorkOrdersPage() {
                 <div className="bg-gray-50 dark:bg-gray-800/50 rounded-b-lg p-3 space-y-3 min-h-[200px]">
                   {col.map((wo) => {
                     const waiting = waitingFor(wo.reportSubmittedAt);
-                    const amount = formatAmount(wo.invoiceAmount);
+                    const amount = formatDzd(wo.invoiceAmount);
                     return (
                     <div
                       key={wo.id}
@@ -510,9 +500,17 @@ export default function WorkOrdersPage() {
                       <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
                         {wo.title}
                       </h4>
-                      <p className="text-[10px] font-mono text-gray-400 mb-2">
+                      {/* Le numéro est le lien vers la fiche, et non la carte
+                          entière : la carte contient déjà des boutons
+                          (affectation, changement de statut), et un lien qui
+                          enveloppe des boutons fait de chaque clic manqué une
+                          navigation. */}
+                      <Link
+                        href={`/bons-de-travail/${wo.id}`}
+                        className="mb-2 inline-block text-[10px] font-mono text-gray-400 hover:text-blue-600 hover:underline dark:hover:text-blue-400"
+                      >
                         {wo.orderNumber}
-                      </p>
+                      </Link>
 
                       <div className="text-xs text-gray-500 space-y-0.5 mb-3">
                         <p className="font-mono">{wo.elevator.elevatorCode}</p>
@@ -629,6 +627,13 @@ export default function WorkOrdersPage() {
                               Montant à compléter
                             </p>
                           )}
+                          <Link
+                            href={`/bons-de-travail/${wo.id}`}
+                            className="flex items-center gap-0.5 pt-0.5 text-[11px] font-semibold text-amber-700 hover:text-amber-800 hover:underline dark:text-amber-400"
+                          >
+                            Lire le rapport et valider
+                            <ChevronRight className="w-3 h-3" />
+                          </Link>
                         </div>
                       )}
 
@@ -704,8 +709,22 @@ export default function WorkOrdersPage() {
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                   {orders.map((wo) => (
                     <tr key={wo.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                      <td className="px-6 py-4 text-xs font-mono text-blue-600">{wo.orderNumber}</td>
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">{wo.title}</td>
+                      <td className="px-6 py-4 text-xs font-mono">
+                        <Link
+                          href={`/bons-de-travail/${wo.id}`}
+                          className="text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          {wo.orderNumber}
+                        </Link>
+                      </td>
+                      <td className="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">
+                        <Link
+                          href={`/bons-de-travail/${wo.id}`}
+                          className="hover:text-blue-600 dark:hover:text-blue-400"
+                        >
+                          {wo.title}
+                        </Link>
+                      </td>
                       <td className="px-6 py-4 text-xs font-mono text-gray-500">{wo.elevator.elevatorCode}</td>
                       <td className="px-6 py-4">
                         <span className={`px-2 py-0.5 text-[10px] font-medium rounded border ${TYPE_COLORS[wo.type] ?? TYPE_COLORS.INSPECTION}`}>

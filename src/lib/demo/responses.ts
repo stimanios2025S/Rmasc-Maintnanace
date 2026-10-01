@@ -433,6 +433,75 @@ export function demoWorkOrders(filters: {
   };
 }
 
+/**
+ * `GET /api/work-orders/:id` — un bon, avec son rapport et ses corrections.
+ *
+ * Construit à partir du même `WORK_ORDER_INCLUDE` que la liste, puis élargi,
+ * exactement comme la route : une fiche de démo qui inventerait sa propre forme
+ * cesserait de prouver quoi que ce soit sur la vraie.
+ */
+export function demoWorkOrderById(id: string) {
+  const { workOrders, elevators, workOrderRevisions, users } = demoWorld();
+
+  const workOrder = workOrders.find((w) => w.id === id);
+  if (!workOrder) return null;
+
+  const unit = elevators.find((e) => e.id === workOrder.elevatorId);
+  const building = unit ? buildingById(unit.buildingId) : null;
+
+  return {
+    ...WORK_ORDER_INCLUDE(workOrder),
+    elevator: {
+      id: workOrder.elevatorId,
+      elevatorCode: unit?.elevatorCode ?? "—",
+      model: unit?.model ?? "—",
+      brand: unit?.brand ?? "—",
+      floorsServed: unit?.floorsServed ?? 0,
+      status: unit?.status ?? "OPERATIONAL",
+      nextMaintenance: unit?.nextMaintenance ?? null,
+      building: {
+        id: building?.id ?? "—",
+        name: building?.name ?? "—",
+        address: building?.address ?? "—",
+        city: building?.city ?? "—",
+        contactPerson: building?.contactPerson ?? "—",
+        contactPhone: building?.contactPhone ?? null,
+      },
+    },
+    // Le select de la route, au champ près : un rapport résumé, jamais ses
+    // `checkItems` ni ses signatures — la page renvoie vers le rapport
+    // imprimable pour ça.
+    inspectionReports: buildInspectionReports()
+      .filter((report) => report.workOrderId === workOrder.id)
+      .map((report) => ({
+        id: report.base.id,
+        reportNumber: report.base.reportNumber,
+        title: report.base.title,
+        overallResult: report.base.overallResult,
+        submittedAt: report.base.submittedAt,
+      })),
+    // Du plus ancien au plus récent, comme la route : une chronologie se lit
+    // dans le sens du temps.
+    revisions: workOrderRevisions
+      .filter((revision) => revision.workOrderId === workOrder.id)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map((revision) => {
+        const author = revision.authorId
+          ? users.find((u) => u.id === revision.authorId)
+          : undefined;
+        return {
+          id: revision.id,
+          field: revision.field,
+          oldValue: revision.oldValue,
+          newValue: revision.newValue,
+          note: revision.note,
+          createdAt: revision.createdAt,
+          author: author ? { id: author.id, name: author.name } : null,
+        };
+      }),
+  };
+}
+
 // ─── GET /api/technician ────────────────────────────────────
 
 export function demoTechnician(requestedId: string | null) {
@@ -863,11 +932,28 @@ function worstResult(results: readonly DemoCheckResult[]): DemoCheckResult {
 function buildInspectionReports() {
   const { workOrders, elevators, users } = demoWorld();
 
-  const completed = workOrders
-    .filter((w) => w.status === "COMPLETED" && w.completedAt !== null)
-    .sort((a, b) => b.completedAt!.getTime() - a.completedAt!.getTime());
+  /**
+   * Les bons qui ont un rapport, et pas seulement ceux qui sont clos.
+   *
+   * Un rapport existe dès que le technicien le dépose, et c'est précisément ce
+   * dépôt qui fait passer le bon en `PENDING_APPROVAL`. Filtrer sur `COMPLETED`
+   * reviendrait à cacher le rapport des seuls bons qu'un valideur s'apprête à
+   * ouvrir : la fiche d'un bon en attente n'aurait rien à montrer, et la
+   * fonctionnalité serait invisible en mode démo.
+   *
+   * Les deux horloges restent distinctes dans le tri, comme dans le schéma —
+   * un bon déposé n'est pas un bon terminé, et `reportSubmittedAt` est la seule
+   * date qu'un bon en attente possède.
+   */
+  const withReport = workOrders
+    .filter((w) => w.completedAt !== null || w.reportSubmittedAt !== null)
+    .sort(
+      (a, b) =>
+        ((b.completedAt ?? b.reportSubmittedAt) as Date).getTime() -
+        ((a.completedAt ?? a.reportSubmittedAt) as Date).getTime()
+    );
 
-  return completed.map((order, index) => {
+  return withReport.map((order, index) => {
     const unit = elevators.find((e) => e.id === order.elevatorId);
     const building = unit ? buildingById(unit.buildingId) : null;
     const technician = order.assignedToId
@@ -907,7 +993,9 @@ function buildInspectionReports() {
       };
     });
 
-    const submittedAt = order.completedAt as Date;
+    // A closed order was submitted when it was completed; a pending one was
+    // submitted when its report was filed and has no completion date yet.
+    const submittedAt = (order.completedAt ?? order.reportSubmittedAt) as Date;
     const reportNumber = `RPT-${submittedAt.getUTCFullYear()}-${String(
       1001 + index
     ).padStart(4, "0")}`;

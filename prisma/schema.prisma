@@ -274,6 +274,12 @@ model User {
   notifications        Notification[]
   sessions             Session[]
 
+  /// Corrections this account made to reports awaiting approval — see
+  /// `WorkOrderRevision`. Named, unlike the unqualified relations above,
+  /// because `User` already carries two roles pointing at `WorkOrder` and a
+  /// third unlabelled edge would have to be guessed at.
+  workOrderRevisions   WorkOrderRevision[] @relation("WorkOrderRevisionAuthor")
+
   // Two distinct roles on the same model, so both need naming: a client
   // account that *reports* a fault is a different person from the field
   // technician who *resolves* it.
@@ -719,11 +725,71 @@ model WorkOrder {
   createdBy       User?             @relation("CreatorWorkOrders", fields: [createdById], references: [id], onDelete: SetNull)
   inspectionReports InspectionReport[]
   incident        IncidentReport?
+  revisions       WorkOrderRevision[]
 
   @@index([elevatorId, status])
   @@index([assignedToId, status])
   @@index([status, priority])
   @@map("work_orders")
+}
+
+/// A change the office made to a report that was already waiting for approval.
+///
+/// WHY THIS IS A TABLE, WHEN THE COLUMNS ABOVE REFUSE TO BE ONE
+/// `whatsappAttemptedAt` and its neighbours are deliberately *not* a history,
+/// and the reason is the question they answer: a dispatcher asks "was he warned
+/// about this job?", which has one answer and one row. This table answers a
+/// different question — "the amount on this invoice is not what the technician
+/// wrote; who changed it, and what did he write?" — and that question has no
+/// single-row answer. The original figure has to survive the correction, or the
+/// correction is indistinguishable from having typed it in the first place,
+/// which is exactly the thing a client disputes.
+///
+/// It is bounded on purpose. A row is written only when an order *already* in
+/// `PENDING_APPROVAL` has one of its report fields changed, so this is a ledger
+/// of the office's edits to submitted reports and not a general audit log of
+/// every write in the product. Editing an open job, dispatching it, or checking
+/// in writes nothing here.
+///
+/// Values are stored as text, not as the columns' own types. A revision row
+/// records a historical fact ("this read 18500, it now reads 185000"), and a
+/// fact about the past must not change shape when a column's type does. The one
+/// place they are read back — the revision timeline on the work-order page —
+/// prints them, so the string is the honest storage.
+model WorkOrderRevision {
+  id          String   @id @default(cuid())
+  workOrderId String   @map("work_order_id")
+
+  /// Who made the change. Nullable, and null is meaningful: the account may be
+  /// deleted years later, and the correction has to outlive the person who made
+  /// it. `onDelete: SetNull` keeps the record and loses only the attribution —
+  /// the alternative, cascading the revision away, would let deleting a user
+  /// quietly rewrite a client's billing history.
+  authorId    String?  @map("author_id")
+
+  /// Which field was corrected. `invoiceAmount`, `isBillable`, `notes`,
+  /// `partsReplaced` — and `status`, used for the single most important entry
+  /// on this table: a report the office sent back for correction.
+  field       String
+
+  /// The value before and after. Null on either side is real: a description
+  /// that was empty and is now written, or an amount that was set and is now
+  /// cleared because the job turned out to be covered by the contract.
+  oldValue    String?  @map("old_value")
+  newValue    String?  @map("new_value")
+
+  /// A remark the author chose to attach. Carries the reason a report was
+  /// refused, which is the whole message the technician reads.
+  note        String?
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  author      User?     @relation("WorkOrderRevisionAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  /// The only query there is: every revision of one order, oldest first.
+  @@index([workOrderId, createdAt])
+  @@map("work_order_revisions")
 }
 
 // ─── INSPECTION REPORTS ─────────────────────────────────────

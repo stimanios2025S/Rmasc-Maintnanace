@@ -258,6 +258,26 @@ const COMPONENT_BLUEPRINTS: ReadonlyArray<{
 
 // ─── World ──────────────────────────────────────────────────
 
+/**
+ * Une correction du bureau sur un rapport, telle que la fixture la porte.
+ *
+ * Le modèle `WorkOrderRevision` n'est pas encore réexporté par le client Prisma
+ * que ce fichier importe, et il n'a pas à l'être : rien ici ne lit ses
+ * contraintes, seulement sa forme. La redéclarer garde la fixture lisible et
+ * signale que le jeu de démonstration n'est pas une source de vérité sur le
+ * schéma — `schema.prisma` l'est.
+ */
+export interface DemoWorkOrderRevision {
+  id: string;
+  workOrderId: string;
+  authorId: string | null;
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  note: string | null;
+  createdAt: Date;
+}
+
 export interface DemoWorld {
   users: User[];
   buildings: Building[];
@@ -267,6 +287,7 @@ export interface DemoWorld {
   snapshots: TelemetrySnapshot[];
   alerts: Alert[];
   workOrders: WorkOrder[];
+  workOrderRevisions: DemoWorkOrderRevision[];
   scores: PredictiveScore[];
   errorCodes: ErrorCode[];
   incidents: IncidentReport[];
@@ -583,6 +604,32 @@ function build(): DemoWorld {
     billable?: boolean;
     amount?: number | null;
     parts?: Array<{ name: string; partNumber?: string; qty: number }>;
+    /**
+     * Le texte du rapport tel que le technicien l'a écrit — `WorkOrder.notes`.
+     *
+     * Distinct de `description`, qui reste ce que le bon *demandait*. Les deux
+     * se ressemblent souvent (« remplacer le contacteur » / « contacteur
+     * remplacé »), et c'est justement pourquoi ils ne doivent pas être le même
+     * champ : la fiche affiche l'un au-dessus de l'autre, et une fixture qui
+     * les confondrait donnerait à lire deux fois la même phrase.
+     */
+    reportNotes?: string | null;
+    /**
+     * Les corrections déjà apportées à ce rapport avant validation.
+     *
+     * Déclarées par la ligne du bon plutôt que dans une table à part : l'ordre
+     * des bons génère les identifiants (`wo_1`, `wo_2`…), donc une correction
+     * écrite ailleurs devrait deviner l'index de son bon — et se tromperait au
+     * premier bon inséré.
+     */
+    revisions?: Array<{
+      field: string;
+      oldValue: string | null;
+      newValue: string | null;
+      note?: string;
+      authorId: string;
+      hoursAgo: number;
+    }>;
   }> = [
     { elevatorId: "elv_6", title: "URGENCE : arrêt sur surchauffe moteur", description: "Appareil arrêté sur une température moteur critique à 97 °C. Vérifier le refroidissement, la résistance des enroulements et les paramètres du variateur avant de remettre la cabine en service.", type: "EMERGENCY", priority: "EMERGENCY", status: "IN_PROGRESS", assignedToId: "usr_tech1", componentType: "TRACTION_MOTOR", estimatedHours: 6, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
     { elevatorId: "elv_6", title: "Remplacer les roulements du moteur de traction", description: "Une vibration de 9,6 mm/s indique une usure avancée des roulements. Remplacer les deux roulements et réaligner la poulie.", type: "CORRECTIVE", priority: "CRITICAL", status: "ASSIGNED", assignedToId: "usr_tech2", componentType: "TRACTION_MOTOR", estimatedHours: 8, actualHours: null, scheduledInDays: 2, completedHoursAgo: null },
@@ -608,8 +655,8 @@ function build(): DemoWorld {
      * would never show anything but "moins d'une heure", and the column would
      * look like it empties itself.
      */
-    { elevatorId: "elv_3", title: "Remplacement du contacteur de porte", description: "Contacteur de fin de course remplacé : la porte ne se réouvrait plus en position fermée. Réglage du ralentissement vérifié sur dix cycles complets.", type: "CORRECTIVE", priority: "HIGH", status: "PENDING_APPROVAL", assignedToId: "usr_tech1", componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: 1.5, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 3, billable: true, amount: 18500, parts: [{ name: "Contacteur de fin de course", partNumber: "CFC-24V", qty: 1 }] },
-    { elevatorId: "elv_8", title: "Contrôle du niveau d'huile du groupe hydraulique", description: "Niveau complété et absence de fuite confirmée sous le groupe. Aucune pièce remplacée ; intervention couverte par le contrat.", type: "PREVENTIVE", priority: "MEDIUM", status: "PENDING_APPROVAL", assignedToId: "usr_tech2", componentType: "HYDRAULIC_UNIT", estimatedHours: 1.5, actualHours: 1, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 26, billable: false },
+    { elevatorId: "elv_3", title: "Remplacement du contacteur de porte", description: "La porte ne se réouvrait plus en position fermée ; le contacteur de fin de course est suspecté. Contrôler le circuit de commande de porte.", reportNotes: "Contacteur de fin de course remplacé : la porte ne se réouvrait plus en position fermée. Réglage du ralentissement vérifié sur dix cycles complets.", type: "CORRECTIVE", priority: "HIGH", status: "PENDING_APPROVAL", assignedToId: "usr_tech1", componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: 1.5, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 3, billable: true, amount: 18500, parts: [{ name: "Contacteur de fin de course", partNumber: "CFC-24V", qty: 1 }], revisions: [{ field: "invoiceAmount", oldValue: "185000", newValue: "18500", note: "Montant corrigé : le technicien avait saisi un zéro de trop.", authorId: "usr_mgr", hoursAgo: 2 }] },
+    { elevatorId: "elv_8", title: "Contrôle du niveau d'huile du groupe hydraulique", description: "Niveau d'huile du groupe hydraulique à contrôler ; aucune fuite signalée par l'exploitant.", reportNotes: "Niveau complété et absence de fuite confirmée sous le groupe. Aucune pièce remplacée ; intervention couverte par le contrat.", type: "PREVENTIVE", priority: "MEDIUM", status: "PENDING_APPROVAL", assignedToId: "usr_tech2", componentType: "HYDRAULIC_UNIT", estimatedHours: 1.5, actualHours: 1, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 26, billable: false },
   ];
 
   /**
@@ -761,7 +808,7 @@ function build(): DemoWorld {
       estimatedHours: w.estimatedHours,
       actualHours: w.actualHours,
       partsReplaced: w.parts ?? null,
-      notes: null,
+      notes: w.reportNotes ?? null,
       photoUrls: [],
       signatureUrl: null,
       /**
@@ -828,6 +875,27 @@ function build(): DemoWorld {
       updatedAt: iso(60 * MINUTE),
     };
   });
+
+  /**
+   * Les corrections du bureau, aplaties depuis les lignes de bons.
+   *
+   * Elles sont construites *après* les bons parce qu'elles en dépendent : c'est
+   * la position de la ligne dans `workOrderSeed` qui donne son `workOrderId`,
+   * et une correction ne peut pas exister avant le bon qu'elle corrige.
+   */
+  const workOrderRevisions: DemoWorkOrderRevision[] = workOrderSeed.flatMap(
+    (w, i) =>
+      (w.revisions ?? []).map((revision, j) => ({
+        id: `wor_${i + 1}_${j + 1}`,
+        workOrderId: `wo_${i + 1}`,
+        authorId: revision.authorId,
+        field: revision.field,
+        oldValue: revision.oldValue,
+        newValue: revision.newValue,
+        note: revision.note ?? null,
+        createdAt: iso(revision.hoursAgo * 60 * MINUTE),
+      }))
+  );
 
   // ── Predictive scores ─────────────────────────────────────
   const scores: PredictiveScore[] = components.map((c) => {
@@ -1068,7 +1136,7 @@ function build(): DemoWorld {
 
   return {
     users, buildings, elevators, components, telemetry, snapshots, alerts,
-    workOrders, scores, errorCodes, incidents, notifications,
+    workOrders, workOrderRevisions, scores, errorCodes, incidents, notifications,
   };
 }
 

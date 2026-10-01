@@ -23,12 +23,23 @@ import {
   assignableUserWhere,
   buildingScopeFor,
   isSelfOrManager,
+  MANAGEMENT_ROLES,
   OPS_ROLES,
   requireRole,
 } from "@/lib/api/guard";
 import { createWorkOrderWithUniqueNumber } from "@/lib/work-orders/service";
+import { WORK_ORDER_INCLUDE } from "@/lib/work-orders/includes";
+import {
+  decimalToText,
+  diffReport,
+  rejectionDraft,
+  type ReportSnapshot,
+  type RevisionDraft,
+} from "@/lib/work-orders/report-revisions";
 import { syncTechnicianStatus } from "@/lib/dispatch/auto-assign";
+import { notify, notifyRoles } from "@/lib/notifications/service";
 import { notifyTechnicianOfWorkOrderInBackground } from "@/lib/notifications/assignment";
+import { formatDzd } from "@/lib/ui/money";
 import {
   WORK_ORDER_PRIORITIES,
   WORK_ORDER_STATUSES,
@@ -80,38 +91,18 @@ const UpdateWorkOrderSchema = z
      */
     isBillable: z.boolean().optional(),
     invoiceAmount: z.number().min(0).max(99_999_999.99).nullable().optional(),
+    /**
+     * Why a submitted report is being sent back to the technician.
+     *
+     * Declared optional and enforced as mandatory further down, on the one
+     * transition where it is required. A field that is optional in general but
+     * obligatory in a single case cannot say so in a flat Zod object — and
+     * marking it required here would demand a reason for editing an open job,
+     * which is not a refusal of anything.
+     */
+    rejectionReason: z.string().trim().min(1).max(2000).optional(),
   })
   .strict();
-
-const WORK_ORDER_INCLUDE = {
-  elevator: {
-    select: {
-      id: true,
-      elevatorCode: true,
-      building: { select: { name: true } },
-    },
-  },
-  assignedTo: { select: { id: true, name: true, email: true } },
-  component: { select: { name: true, componentType: true } },
-  /**
-   * The incident this order was raised from, when there was one.
-   *
-   * Read-only context for the board, and the reason it is on the include
-   * rather than left to the incident endpoint: a dispatcher looking at a
-   * corrective order needs to know it came from a customer escalation, and
-   * which fault code, *before* deciding who to send. Most orders have none —
-   * the relation is nullable and the field reads as absent.
-   */
-  incident: {
-    select: {
-      id: true,
-      incidentNumber: true,
-      status: true,
-      isDirectTransfer: true,
-      errorCode: { select: { code: true, title: true } },
-    },
-  },
-} as const;
 
 /**
  * Permitted status transitions. Terminal states are genuinely terminal —
@@ -302,14 +293,28 @@ export async function PATCH(request: NextRequest) {
 
     const parsed = UpdateWorkOrderSchema.parse(await readJson(request));
 
+    /**
+     * The row as it stands, read before anything is decided.
+     *
+     * `notes`, `partsReplaced` and `invoiceAmount` are here for the correction
+     * journal rather than for the update itself: a revision is the difference
+     * between these values and the ones arriving in the body, so both halves of
+     * that comparison have to be in hand before the write. Reading them
+     * afterwards would be reading what the update just wrote — a diff against
+     * itself, which is always empty.
+     */
     const current = await prisma.workOrder.findUnique({
       where: { id },
       select: {
         id: true,
+        orderNumber: true,
         status: true,
         assignedToId: true,
         startedAt: true,
         isBillable: true,
+        invoiceAmount: true,
+        notes: true,
+        partsReplaced: true,
       },
     });
     if (!current) throw notFound(`Bon de travail introuvable : ${id}`);
@@ -322,6 +327,24 @@ export async function PATCH(request: NextRequest) {
     }
 
     const updateData: Record<string, unknown> = {};
+
+    /**
+     * The one transition that is a refusal: a waiting report sent back.
+     *
+     * Deliberately not "any move out of PENDING_APPROVAL" — accepting a report
+     * and cancelling one are decisions too, but only this one leaves work on a
+     * technician's desk. He is the person who pays for a silent refusal: his
+     * job reappears in his queue with no indication of what to change, and the
+     * only way to find out is to ring the office.
+     */
+    const isRejection =
+      current.status === "PENDING_APPROVAL" && parsed.status === "IN_PROGRESS";
+
+    if (isRejection && !parsed.rejectionReason) {
+      throw badRequest(
+        "Indiquez au technicien ce qu'il doit corriger avant de lui renvoyer le rapport."
+      );
+    }
 
     if (parsed.status && parsed.status !== current.status) {
       const allowed = ALLOWED_TRANSITIONS[current.status] ?? [];
@@ -424,6 +447,73 @@ export async function PATCH(request: NextRequest) {
       updateData.invoiceAmount = parsed.invoiceAmount;
     }
 
+    /**
+     * The office's corrections to a report it is reviewing, collected before
+     * the write so that they land *inside* it.
+     *
+     * Written through the nested create on the update below rather than in a
+     * second statement afterwards, and the reason is not tidiness. A correction
+     * and its record are one fact; two statements can be separated by a crash,
+     * a timeout, or a later deploy, and the failure mode is the worst one this
+     * feature has — an amount changed with nothing to show it was changed. In
+     * a single statement they either both happen or neither does.
+     *
+     * Scoped to rows that are *already* pending. An order entering
+     * PENDING_APPROVAL in this same request is the technician filing his
+     * report, and his own first version of it is not a correction of itself;
+     * journaling it would bury the office's edits under a line per submission.
+     */
+    const reportRevisions: RevisionDraft[] = [];
+
+    if (current.status === "PENDING_APPROVAL") {
+      // Read back out of `updateData` where the billing block decided them:
+      // re-deriving "what the amount will be" here would be a second
+      // implementation of the same invariant, and the two would eventually
+      // disagree — with the journal recording a value the row does not hold.
+      const effectiveInvoiceAmount =
+        "invoiceAmount" in updateData
+          ? decimalToText(
+              updateData.invoiceAmount as { toString(): string } | null
+            )
+          : decimalToText(current.invoiceAmount);
+
+      reportRevisions.push(
+        ...diffReport(
+          {
+            notes: current.notes,
+            isBillable: current.isBillable,
+            invoiceAmount: decimalToText(current.invoiceAmount),
+            partsReplaced: current.partsReplaced,
+          },
+          {
+            notes: parsed.notes !== undefined ? parsed.notes : current.notes,
+            isBillable: nextIsBillable,
+            invoiceAmount: effectiveInvoiceAmount,
+            partsReplaced:
+              parsed.partsReplaced !== undefined
+                ? parsed.partsReplaced
+                : current.partsReplaced,
+          }
+        )
+      );
+
+      if (isRejection && parsed.rejectionReason) {
+        reportRevisions.push(rejectionDraft(parsed.rejectionReason));
+      }
+    }
+
+    if (reportRevisions.length > 0) {
+      updateData.revisions = {
+        create: reportRevisions.map((draft) => ({
+          authorId: session.user.id ?? null,
+          field: draft.field,
+          oldValue: draft.oldValue,
+          newValue: draft.newValue,
+          note: draft.note ?? null,
+        })),
+      };
+    }
+
     // An ASSIGNED order with no assignee is a dead end: it shows in the
     // "Assigned" column, is invisible to every technician's queue (which is
     // filtered by `assignedToId`), and cannot be dispatched. The kanban's
@@ -486,6 +576,65 @@ export async function PATCH(request: NextRequest) {
       workOrder.assignedToId
     ) {
       await syncTechnicianStatus(prisma, workOrder.assignedToId);
+    }
+
+    /**
+     * A filed report tells the office it is waiting.
+     *
+     * Without this the queue fills in silence. The only notification this
+     * product sent on a work order before now was the *failure* path — a
+     * reassignment, a refused check-in, an inspection that came back FAIL — so
+     * the normal, successful end of a job reached nobody, and a report could sit
+     * unread until somebody happened to look at the board. A queue nobody is
+     * told about is a queue nobody works.
+     *
+     * Sent only when a *technician* files it. A manager moving an order into the
+     * pending column is doing the office's own work, on the office's own screen,
+     * and notifying the office about it would be a notification that tells
+     * people what they just did.
+     */
+    if (
+      parsed.status === "PENDING_APPROVAL" &&
+      current.status !== "PENDING_APPROVAL" &&
+      session.user.role === "FIELD_TECHNICIAN"
+    ) {
+      const billing = workOrder.isBillable
+        ? formatDzd(decimalToText(workOrder.invoiceAmount)) ??
+          "montant à compléter"
+        : "non facturable";
+
+      await notifyRoles(MANAGEMENT_ROLES, {
+        title: "Rapport à valider",
+        message:
+          `${session.user.name ?? "Un technicien"} a soumis le rapport du bon ` +
+          `${workOrder.orderNumber} (${workOrder.elevator.elevatorCode} — ` +
+          `${workOrder.elevator.building.name}). Facturation : ${billing}.`,
+        type: "work_order",
+        linkUrl: `/bons-de-travail/${workOrder.id}`,
+      });
+    }
+
+    /**
+     * A report sent back reaches the person who has to redo it.
+     *
+     * The reason travels in the message rather than only on the work-order
+     * page: he reads it on a phone, in a machine room, and a notification that
+     * says "rapport renvoyé — voir le bon" is a notification that makes him go
+     * looking for the thing it should have told him.
+     *
+     * Pointed at his own portal, not at the work-order page: that page carries
+     * the office's controls and he has no business approving his own report.
+     */
+    if (isRejection && parsed.rejectionReason && workOrder.assignedToId) {
+      await notify({
+        userId: workOrder.assignedToId,
+        title: "Rapport à corriger",
+        message:
+          `Le bureau a renvoyé le rapport du bon ${workOrder.orderNumber} : ` +
+          parsed.rejectionReason,
+        type: "work_order",
+        linkUrl: "/technicien",
+      });
     }
 
     return NextResponse.json({ data: workOrder });

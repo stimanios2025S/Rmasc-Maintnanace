@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AlertTriangle, Loader2, Plus, Trash2, X } from "lucide-react";
 import { enumLabel } from "@/lib/ui/enum-labels";
+import { parseDzdInput } from "@/lib/ui/money";
 
 /**
  * The report a technician files to finish a job.
@@ -101,22 +102,6 @@ export function CompletionReportForm({
     );
   };
 
-  /**
-   * Reads the amount the way a person types one.
-   *
-   * A phone keyboard set to `decimal` produces a comma on a French handset, and
-   * "18500,50" is not a number `Number()` will accept. Spaces are stripped too:
-   * "18 500" is how the same amount is written on an invoice, and refusing it
-   * would be the form being pedantic about the thing it exists to collect.
-   */
-  const parseAmount = (raw: string): number | null => {
-    const cleaned = raw.replace(/\s/g, "").replace(",", ".");
-    if (cleaned === "") return null;
-    const value = Number(cleaned);
-    if (!Number.isFinite(value) || value < 0) return null;
-    return value;
-  };
-
   const submit = () => {
     const trimmed = description.trim();
     if (trimmed === "") {
@@ -154,7 +139,7 @@ export function CompletionReportForm({
 
     let invoiceAmount: number | null = null;
     if (isBillable) {
-      const parsedAmount = parseAmount(amount);
+      const parsedAmount = parseDzdInput(amount);
       if (parsedAmount === null) {
         setError(
           "Indiquez le montant total à facturer, ou décochez « intervention payante »."
