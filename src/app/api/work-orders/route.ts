@@ -36,6 +36,7 @@ import {
   type ReportSnapshot,
   type RevisionDraft,
 } from "@/lib/work-orders/report-revisions";
+import { issueInvoiceForWorkOrder } from "@/lib/invoices/service";
 import { syncTechnicianStatus } from "@/lib/dispatch/auto-assign";
 import { notify, notifyRoles } from "@/lib/notifications/service";
 import { notifyTechnicianOfWorkOrderInBackground } from "@/lib/notifications/assignment";
@@ -635,6 +636,33 @@ export async function PATCH(request: NextRequest) {
         type: "work_order",
         linkUrl: "/technicien",
       });
+    }
+
+    /**
+     * Un bon facturable qui se clôture reçoit sa facture.
+     *
+     * L'échec est avalé, et c'est une décision, pas de la négligence.
+     *
+     * L'émission ne peut pas vivre dans la transaction ci-dessus — la séquence
+     * des numéros se lit, et une collision avorte la transaction PostgreSQL
+     * entière, ce qui ferait échouer une validation parfaitement valide. Elle se
+     * fait donc après, dans la sienne. Mais alors la clôture est déjà commitée :
+     * relancer l'erreur ferait afficher « la validation a échoué » à un
+     * administrateur dont la validation a réussi, et il la referait.
+     *
+     * Ce qui reste, c'est un bon clos sans facture. C'est un état visible — la
+     * fiche du bon affiche « aucune facture émise » et propose de l'émettre — et
+     * c'est un état réparable, ce que ne serait pas une validation perdue.
+     */
+    if (workOrder.status === "COMPLETED" && workOrder.isBillable) {
+      try {
+        await issueInvoiceForWorkOrder(workOrder.id, session.user.id ?? null);
+      } catch (error) {
+        console.error(
+          `[invoices] émission échouée pour le bon ${workOrder.orderNumber}`,
+          error
+        );
+      }
     }
 
     return NextResponse.json({ data: workOrder });

@@ -122,4 +122,21 @@ export const WORK_ORDER_DETAIL_INCLUDE = {
     },
     orderBy: { createdAt: "asc" },
   },
+  /**
+   * La facture, quand le bon a été facturé.
+   *
+   * Sélectionnée au minimum : la fiche n'a besoin que de renvoyer vers le PDF,
+   * et le document lui-même se lit dans le fichier, pas à l'écran. Charger les
+   * adresses figées ici les ferait voyager à chaque ouverture de la fiche pour
+   * un contenu que personne n'y lit.
+   */
+  invoice: {
+    select: {
+      id: true,
+      number: true,
+      issuedAt: true,
+      amount: true,
+      currency: true,
+    },
+  },
 } as const satisfies Prisma.WorkOrderInclude;

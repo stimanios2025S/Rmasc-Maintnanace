@@ -482,6 +482,11 @@ export function demoWorkOrderById(id: string) {
       })),
     // Du plus ancien au plus récent, comme la route : une chronologie se lit
     // dans le sens du temps.
+    // Aucune facture dans les fixtures : une facture est un document numéroté
+    // et figé, et en inventer un numéro de pièce comptable dans un jeu de
+    // démonstration n'apprendrait rien sur le vrai circuit. Le champ existe
+    // quand même, nul, pour que la fiche ait la même forme avec ou sans base.
+    invoice: null,
     revisions: workOrderRevisions
       .filter((revision) => revision.workOrderId === workOrder.id)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())

@@ -1,0 +1,15 @@
+Ce dossier reçoit le tampon de l'entreprise.
+
+Déposez ici un fichier nommé exactement « cachet.png » — un PNG à fond
+transparent, qui sera posé en bas à droite de chaque facture émise.
+
+Tant que ce fichier est absent, les factures s'impriment sans tampon. C'est
+volontaire : un document sans cachet est une facture non signée, alors qu'un
+document portant un cachet de remplacement serait un document falsifié.
+
+Pour déposer l'image ailleurs, renseignez INVOICE_STAMP_PATH dans .env avec son
+chemin absolu.
+
+Ce fichier-ci peut être supprimé dès que cachet.png est en place — il n'existe
+que pour que ce dossier apparaisse dans le dépôt et que le chemin attendu soit
+visible.

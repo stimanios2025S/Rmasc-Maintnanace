@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ClipboardList, RefreshCw } from "lucide-react";
+import { ClipboardList, Download, Receipt, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/states";
+import { formatDzd } from "@/lib/ui/money";
 import { ProgressTrack } from "@/components/ui/progress-track";
 import { ValidationBadge } from "@/components/ui/validation-badge";
 import { EmergencyButton } from "@/components/client/emergency-button";
@@ -67,10 +68,23 @@ interface ElevatorRow {
   building: { id: string; name: string };
 }
 
+interface InvoiceRow {
+  id: string;
+  number: string;
+  issuedAt: string;
+  amount: string | number;
+  currency: string;
+  orderNumber: string;
+  orderTitle: string;
+  buildingName: string;
+}
+
 export default function ClientPortalPage() {
   const { data: session, status } = useSession();
   const [elevators, setElevators] = useState<EmergencyElevator[]>([]);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [invoiceError, setInvoiceError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -118,6 +132,31 @@ export default function ClientPortalPage() {
     }
   }, []);
 
+  /**
+   * Les factures sont chargées à part, et leur échec ne contamine rien.
+   *
+   * C'est délibéré. Ce portail porte le bouton d'urgence, et ce bouton doit
+   * rester disponible même si la facturation est en panne : demander les
+   * factures dans le même `Promise.all` que les ascenseurs ferait basculer
+   * l'écran entier sur une erreur, et une personne devant une cabine bloquée
+   * verrait un message d'erreur à la place du seul bouton qui compte.
+   */
+  const loadInvoices = useCallback(async () => {
+    setInvoiceError("");
+    try {
+      const res = await fetch("/api/invoices?limit=20");
+      if (!res.ok) {
+        throw new Error(`Impossible de charger vos factures (${res.status})`);
+      }
+      const json = await res.json();
+      setInvoices(json.data ?? []);
+    } catch (e) {
+      setInvoiceError(
+        e instanceof Error ? e.message : "Impossible de charger vos factures."
+      );
+    }
+  }, []);
+
   useEffect(() => {
     // Wait for the session before fetching: until it resolves we do not know
     // which portal this account gets, and firing both requests for a
@@ -131,11 +170,13 @@ export default function ClientPortalPage() {
     }
 
     void load();
-  }, [load, nonContracted, status]);
+    void loadInvoices();
+  }, [load, loadInvoices, nonContracted, status]);
 
   const refresh = useCallback(() => {
     void load({ silent: true });
-  }, [load]);
+    void loadInvoices();
+  }, [load, loadInvoices]);
 
   // Checked before the loading state so a non-contracted client never sees the
   // emergency skeleton of a portal that is not theirs.
@@ -266,6 +307,67 @@ export default function ClientPortalPage() {
                     </span>
                   </p>
                 )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {/* Une section, et non un onglet : ce portail n'a aucun onglet — tout y
+          est empilé, et en introduire un pour la seule facturation ferait de ce
+          bloc le seul endroit qu'on ne trouve pas en faisant défiler la page.
+          L'ordre suit celui du parcours : signaler, suivre, puis payer. */}
+      <Card className="p-5">
+        <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
+          <Receipt className="h-5 w-5 text-gray-400" aria-hidden="true" />
+          Mes factures
+        </h2>
+
+        {invoiceError ? (
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            {invoiceError}
+          </p>
+        ) : invoices.length === 0 ? (
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            Aucune facture pour le moment. Les interventions couvertes par votre
+            contrat ne sont pas facturées.
+          </p>
+        ) : (
+          <ul className="mt-4 divide-y divide-gray-100 dark:divide-gray-800">
+            {invoices.map((invoice) => (
+              <li
+                key={invoice.id}
+                className="flex flex-wrap items-center justify-between gap-3 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="font-mono text-sm font-medium text-gray-900 dark:text-white">
+                    {invoice.number}
+                  </p>
+                  <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">
+                    {invoice.orderTitle}
+                  </p>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {invoice.buildingName} ·{" "}
+                    {new Date(invoice.issuedAt).toLocaleDateString("fr-FR", {
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">
+                    {formatDzd(invoice.amount) ?? "—"}
+                  </span>
+                  <a
+                    href={`/api/invoices/${invoice.id}/pdf`}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    Télécharger
+                  </a>
+                </div>
               </li>
             ))}
           </ul>

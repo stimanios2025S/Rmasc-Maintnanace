@@ -78,6 +78,23 @@ const nextConfig = {
     ];
   },
 
+  experimental: {
+    /**
+     * `pdfkit` doit rester hors du bundle serveur.
+     *
+     * Ce n'est pas une optimisation, c'est ce qui le fait fonctionner. La
+     * bibliothèque charge ses polices standard — Helvetica, Times, Courier —
+     * depuis des fichiers `.afm` posés à côté d'elle et lus avec `fs` à partir
+     * de son propre `__dirname`. Une fois le paquet avalé par le bundler, ce
+     * chemin ne désigne plus rien, et la première facture échoue sur un
+     * `ENOENT` qui ne mentionne ni la facture ni la police manquante.
+     *
+     * Exclue du bundle, elle est chargée par `require` au moment de l'exécution,
+     * depuis `node_modules`, où ses fichiers sont bien à côté d'elle.
+     */
+    serverComponentsExternalPackages: ["pdfkit"],
+  },
+
   // NOTE: the previous config declared `experimental.serverActions.bodySizeLimit`
   // but the codebase contains no Server Actions — every mutation goes through a
   // route handler. The dead block has been removed.

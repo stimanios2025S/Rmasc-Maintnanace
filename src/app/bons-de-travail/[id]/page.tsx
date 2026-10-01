@@ -12,12 +12,14 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock,
+  Download,
   ExternalLink,
   FileText,
   History,
   Loader2,
   MapPin,
   Package,
+  Receipt,
   Undo2,
   User,
   Wrench,
@@ -121,6 +123,13 @@ interface WorkOrderDetail {
     submittedAt: string;
   }>;
   revisions: WorkOrderRevisionRow[];
+  invoice: {
+    id: string;
+    number: string;
+    issuedAt: string;
+    amount: string | number;
+    currency: string;
+  } | null;
 }
 
 /** Couleurs de statut, alignées sur les colonnes du tableau. */
@@ -407,6 +416,41 @@ export default function WorkOrderDetailPage() {
     } catch (e) {
       setActionError(
         e instanceof Error ? e.message : "Échec de l'enregistrement de la décision"
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Émet la facture d'un bon clos.
+   *
+   * Sert au rattrapage : dans le cas normal la facture existe déjà, émise au
+   * moment de la validation. La route est idempotente, donc ce bouton ne peut
+   * pas produire de doublon même pressé deux fois.
+   */
+  const issueInvoice = async () => {
+    if (!data) return;
+    setBusy(true);
+    setActionError("");
+    setNotice("");
+    try {
+      const res = await fetch("/api/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workOrderId: data.id }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json.error ?? "L'émission de la facture a échoué.");
+      }
+      setNotice(
+        json?.data?.number ? `Facture ${json.data.number} émise.` : "Facture émise."
+      );
+      await load();
+    } catch (e) {
+      setActionError(
+        e instanceof Error ? e.message : "L'émission de la facture a échoué."
       );
     } finally {
       setBusy(false);
@@ -749,6 +793,78 @@ export default function WorkOrderDetailPage() {
               </ul>
             )}
           </Card>
+
+          {/* ── Facture ───────────────────────────────────────── */}
+          {(data.invoice || (data.status === "COMPLETED" && data.isBillable)) && (
+            <Card className="p-5">
+              <div className="flex items-center gap-2">
+                <Receipt className="h-4 w-4 text-gray-400" aria-hidden="true" />
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Facture
+                </h2>
+              </div>
+
+              {data.invoice ? (
+                <>
+                  <div className="mt-3 flex flex-wrap items-baseline justify-between gap-3">
+                    <div>
+                      <p className="font-mono text-sm font-medium text-gray-900 dark:text-white">
+                        {data.invoice.number}
+                      </p>
+                      <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        Émise le {formatDateTime(data.invoice.issuedAt)}
+                      </p>
+                    </div>
+                    <p className="text-lg font-semibold tabular-nums text-gray-900 dark:text-white">
+                      {formatDzd(data.invoice.amount) ?? "—"}
+                    </p>
+                  </div>
+
+                  <a
+                    href={`/api/invoices/${data.invoice.id}/pdf`}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"
+                  >
+                    <Download className="h-4 w-4" aria-hidden="true" />
+                    Télécharger la facture
+                  </a>
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    Le document reprend les valeurs figées à l&apos;émission. Une
+                    correction ultérieure du bon ne le modifie pas.
+                  </p>
+                </>
+              ) : (
+                <>
+                  {/* Ce cas ne devrait pas durer : la facture s'émet à la
+                      clôture. S'il est visible, c'est que l'émission a échoué —
+                      base momentanément injoignable, par exemple — et le bon
+                      reste facturable sans facture. Le dire, et permettre de
+                      réparer, vaut mieux que de laisser un bon clos dont
+                      personne ne saura qu'il n'a jamais été facturé. */}
+                  <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
+                    <AlertTriangle
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                    Ce bon est clôturé et facturable, mais aucune facture
+                    n&apos;a été émise.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void issueInvoice()}
+                    className="mt-3 inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    {busy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Receipt className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    Émettre la facture
+                  </button>
+                </>
+              )}
+            </Card>
+          )}
 
           {/* ── Chronologie ───────────────────────────────────── */}
           <Card className="p-5">

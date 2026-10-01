@@ -295,6 +295,15 @@ model User {
   /// third unlabelled edge would have to be guessed at.
   workOrderRevisions   WorkOrderRevision[] @relation("WorkOrderRevisionAuthor")
 
+  /// Invoices billed *to* this customer account. Named for the same reason as
+  /// the line above: `User` already stands on both sides of `WorkOrder`, and an
+  /// invoice has two distinct people attached — the one who owes and the one who
+  /// issued — so neither edge can go unlabelled.
+  invoices             Invoice[]           @relation("ClientInvoices")
+  /// Invoices this account issued, when a manager or an administrator closed the
+  /// job that produced them.
+  issuedInvoices       Invoice[]           @relation("IssuedInvoices")
+
   // Two distinct roles on the same model, so both need naming: a client
   // account that *reports* a fault is a different person from the field
   // technician who *resolves* it.
@@ -741,11 +750,99 @@ model WorkOrder {
   inspectionReports InspectionReport[]
   incident        IncidentReport?
   revisions       WorkOrderRevision[]
+  invoice         Invoice?
 
   @@index([elevatorId, status])
   @@index([assignedToId, status])
   @@index([status, priority])
   @@map("work_orders")
+}
+
+/// Une facture émise pour un bon de travail clos.
+///
+/// POURQUOI ELLE RECOPIE TOUT AU LIEU DE LE RELIRE
+/// Une facture est un document opposable : celle que le client a reçue doit
+/// pouvoir être reproduite à l'identique des années plus tard. Or tout ce
+/// qu'elle imprime peut changer — le client change d'adresse, le bon est
+/// renommé, un montant est corrigé au bureau, un appareil est renommé. Recalculer
+/// le PDF depuis le bon à chaque téléchargement produirait donc, pour la même
+/// facture, deux documents différents selon le jour où on l'ouvre ; et personne
+/// ne pourrait dire lequel a été envoyé. Les valeurs du document sont donc
+/// figées ici, à l'émission, et l'écran de la facture ne consulte jamais le bon.
+///
+/// Le lien vers le bon reste, lui, pour la navigation et pour l'audit — mais
+/// il n'alimente pas le document.
+///
+/// LA NUMÉROTATION
+/// `year` et `sequence` sont la vérité ; `number` en est la forme lisible
+/// (`FA-2026-0042`), stockée pour être recherchée et affichée. La séquence est
+/// un entier plutôt qu'un compteur déduit du dernier numéro : trier des chaînes
+/// zero-paddées fonctionne jusqu'à ce qu'une année dépasse 9999 factures, et
+/// « fonctionne jusqu'à » n'est pas une propriété qu'on veut sur un registre.
+/// La contrainte `@@unique([year, sequence])` est ce qui garantit qu'aucun
+/// numéro n'est attribué deux fois — la route réessaie sur collision.
+model Invoice {
+  id          String   @id @default(cuid())
+  /// La forme imprimée, `FA-2026-0042`.
+  number      String   @unique
+  year        Int
+  sequence    Int
+
+  /// Un bon ne donne qu'une facture. S'il fallait la refaire, l'ancienne serait
+  /// annulée et une nouvelle émise — jamais deux factures vivantes pour un bon.
+  workOrderId String   @unique
+
+  /// Le compte client facturé, quand il existe. Nullable : un bon peut avoir été
+  /// clos pour un occupant sans compte, et la facture reste due.
+  clientId    String?  @map("client_id")
+  issuedById  String?  @map("issued_by_id")
+  issuedAt    DateTime @default(now()) @map("issued_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // ─── Le client, tel qu'il était le jour de l'émission ───
+  clientName    String  @map("client_name")
+  clientAddress String? @map("client_address")
+  clientEmail   String? @map("client_email")
+  clientPhone   String? @map("client_phone")
+
+  // ─── Le lieu et l'appareil ───
+  buildingName    String @map("building_name")
+  buildingAddress String @map("building_address")
+  buildingCity    String @map("building_city")
+  elevatorCode    String @map("elevator_code")
+
+  // ─── Le bon dont elle découle ───
+  orderNumber String         @map("order_number")
+  orderTitle  String         @map("order_title")
+  orderType   WorkOrderType  @map("order_type")
+  completedAt DateTime?      @map("completed_at")
+
+  // ─── Ce qui a été fait et posé ───
+  reportNotes   String? @map("report_notes")
+  partsReplaced Json?   @map("parts_replaced")
+
+  // ─── Le montant ───
+  /// `Decimal(12,2)` comme `WorkOrder.invoiceAmount`, et pour la même raison :
+  /// un montant en virgule flottante finit par afficher 12 345,599999.
+  ///
+  /// Aucune TVA et aucun taux : le régime n'est pas tranché, et une colonne
+  /// inventée ici produirait des factures dont le total ne correspond à rien.
+  amount   Decimal @db.Decimal(12, 2)
+  currency String  @default("DZD")
+
+  /// `Restrict`, et non `Cascade` : une facture est une pièce comptable, et
+  /// supprimer le bon ne doit pas l'effacer avec lui. C'est ce qui rend
+  /// impossible la suppression d'un bon déjà facturé — ce qui est le
+  /// comportement voulu, pas un obstacle à contourner.
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  client    User?     @relation("ClientInvoices", fields: [clientId], references: [id], onDelete: SetNull)
+  issuedBy  User?     @relation("IssuedInvoices", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  /// Le portail client lit cette liste : « mes factures, les plus récentes
+  /// d'abord ».
+  @@index([clientId, issuedAt])
+  @@index([year, sequence])
+  @@map("invoices")
 }
 
 /// A change the office made to a report that was already waiting for approval.
