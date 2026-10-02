@@ -9,6 +9,7 @@ import {
   // shadow it inside this module for no reason.
   Map as MapIcon,
   ClipboardList,
+  CalendarClock,
   FileSpreadsheet,
   Wrench,
   Bell,
@@ -51,6 +52,17 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/carte", label: "Carte du parc", icon: MapIcon },
   { href: "/ascenseurs", label: "Ascenseurs", icon: Activity },
   { href: "/bons-de-travail", label: "Bons de travail", icon: ClipboardList },
+  // Le programme d'entretien — la moitié préventive du métier, à côté du
+  // tableau des bons qui ne porte que le curatif. Filtré aux rôles de gestion
+  // pour la même raison que le tableau des incidents : planifier une visite est
+  // un engagement d'heures et une date convenue avec un client, pas une
+  // information destinée à tous.
+  {
+    href: "/entretien",
+    label: "Entretien programmé",
+    icon: CalendarClock,
+    roles: MANAGEMENT_ROLES,
+  },
   // The « Fiche Technique » board for non-contract clients. Same reasoning as
   // /technicien below: the middleware gates it to OPS_ROLES, so the link is
   // filtered to exactly those roles rather than offered and then refused.

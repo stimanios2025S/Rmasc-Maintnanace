@@ -80,6 +80,18 @@ export default withAuth(
       }
     }
 
+    // Le programme d'entretien : les échéances contractuelles de tout le parc,
+    // avec le nom de chaque client et l'état de chaque contrat. Un propriétaire
+    // d'immeuble qui l'atteindrait lirait le portefeuille entier de
+    // l'entreprise. Même liste que le tableau des incidents, et
+    // `/api/maintenance-schedules` applique la même règle.
+    if (pathname === "/entretien" || pathname.startsWith("/entretien/")) {
+      const role = token?.role;
+      if (!role || !MANAGEMENT_ROLES.includes(role)) {
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
+      }
+    }
+
     // Account administration. Narrower than the management gate that covers
     // the rest of `/administration`: opening a customer account and deciding
     // whether it holds a maintenance contract is the administrator's job
@@ -162,6 +174,7 @@ export const config = {
     "/ascenseurs/:path*",
     "/carte/:path*",
     "/bons-de-travail/:path*",
+    "/entretien/:path*",
     "/technicien/:path*",
     "/fiches-techniques/:path*",
     "/client/:path*",

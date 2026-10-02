@@ -92,6 +92,12 @@ interface ActiveJob {
   siteLongitude: number | null;
   geofenceRadiusM: number | null;
   component: string | null;
+  /**
+   * Les points que ce bon doit couvrir, tels que le programme d'entretien les
+   * définit. Vide sur un dépannage : un bon de panne n'a pas de programme, et
+   * la liste standard prend alors le relais — voir `checklistFor`.
+   */
+  checklist: string[];
   inspection: {
     id: string;
     reportNumber: string;
@@ -182,6 +188,25 @@ const DEFAULT_CHECKLIST = [
   "Extraction du journal d'erreurs de la commande",
   "Essai de fonctionnement après action corrective",
 ];
+
+/**
+ * La liste de points d'un bon : celle du programme d'entretien s'il en a un,
+ * la liste standard sinon.
+ *
+ * Un bon de dépannage n'a pas de programme et garde donc la liste générique ;
+ * une visite planifiée porte celle du contrat, et c'est celle-là que le
+ * technicien doit cocher. Se tromper de liste ne se verrait pas à l'écran : le
+ * rapport partirait simplement avec des lignes qui ne répondent pas à
+ * l'obligation pour laquelle la visite a été ouverte.
+ *
+ * Une liste vide est traitée comme « pas de liste » plutôt que comme « rien à
+ * contrôler » : un programme dont les points ont été effacés ne doit pas
+ * envoyer quelqu'un sur site avec un formulaire vide et un bouton de
+ * validation qui refuse tout.
+ */
+function checklistFor(job: ActiveJob): string[] {
+  return job.checklist.length > 0 ? job.checklist : DEFAULT_CHECKLIST;
+}
 
 const PRIORITY_STYLES: Record<string, string> = {
   CRITICAL: "bg-red-100 text-red-800 border-red-300",
@@ -381,11 +406,11 @@ export default function TechnicianPage() {
         for (const j of activeJobs) {
           const saved = j.inspection?.checkItems ?? [];
           if (saved.length === 0) {
-            if (!next[j.id]) next[j.id] = DEFAULT_CHECKLIST.map(() => null);
+            if (!next[j.id]) next[j.id] = checklistFor(j).map(() => null);
             continue;
           }
           const byName = new Map(saved.map((c) => [c.checkName, c.result]));
-          next[j.id] = DEFAULT_CHECKLIST.map((name) => byName.get(name) ?? null);
+          next[j.id] = checklistFor(j).map((name) => byName.get(name) ?? null);
         }
         return next;
       });
@@ -400,7 +425,7 @@ export default function TechnicianPage() {
             saved.filter((c) => c.photoUrl).map((c) => [c.checkName, c.photoUrl as string])
           );
           const restored: Record<number, string> = {};
-          DEFAULT_CHECKLIST.forEach((name, index) => {
+          checklistFor(j).forEach((name, index) => {
             const url = byName.get(name);
             if (url) restored[index] = url;
           });
@@ -428,13 +453,13 @@ export default function TechnicianPage() {
     load();
   }, [load]);
 
-  const cycleCheck = (jobId: string, index: number) => {
+  const cycleCheck = (job: ActiveJob, index: number) => {
     setChecklist((prev) => {
-      const arr = [...(prev[jobId] ?? DEFAULT_CHECKLIST.map(() => null))];
+      const arr = [...(prev[job.id] ?? checklistFor(job).map(() => null))];
       const current = arr[index] ?? null;
       const position = RESULT_CYCLE.indexOf(current);
       arr[index] = RESULT_CYCLE[(position + 1) % RESULT_CYCLE.length];
-      return { ...prev, [jobId]: arr };
+      return { ...prev, [job.id]: arr };
     });
   };
 
@@ -580,7 +605,7 @@ export default function TechnicianPage() {
     job: ActiveJob,
     report: CompletionReport
   ) => {
-    const checks = checklist[job.id] ?? DEFAULT_CHECKLIST.map(() => null);
+    const checks = checklist[job.id] ?? checklistFor(job).map(() => null);
     if (checks.some((c) => c === null)) {
       setReportError(
         "Renseignez un résultat pour chaque point de contrôle avant de valider le rapport."
@@ -601,7 +626,7 @@ export default function TechnicianPage() {
           body: JSON.stringify({
             workOrderId: job.id,
             summary: report.description,
-            items: DEFAULT_CHECKLIST.map((checkName, index) => ({
+            items: checklistFor(job).map((checkName, index) => ({
               checkName,
               result: checks[index] as CheckResult,
               ...(jobPhotos[index] ? { photoUrl: jobPhotos[index] } : {}),
@@ -741,7 +766,7 @@ export default function TechnicianPage() {
           // `null` means "not yet recorded" and is not the same as a recorded
           // NOT_APPLICABLE — an item nobody assessed must not count towards
           // completion, and must not be silently filed as a Pass either.
-          const checks = checklist[job.id] ?? DEFAULT_CHECKLIST.map(() => null);
+          const checks = checklist[job.id] ?? checklistFor(job).map(() => null);
           const done = checks.filter((c) => c !== null).length;
           const progress = checks.length > 0 ? (done / checks.length) * 100 : 0;
 
@@ -772,7 +797,7 @@ export default function TechnicianPage() {
           const signature = signatures[job.id] ?? null;
           // The button opens the first item still missing evidence, so the
           // technician does not have to hunt for which row has a slot free.
-          const nextUnphotographed = DEFAULT_CHECKLIST.findIndex(
+          const nextUnphotographed = checklistFor(job).findIndex(
             (_, i) => !recordedPhotos[i]
           );
           const isCritical = job.priority === "CRITICAL" || job.priority === "EMERGENCY";
@@ -1037,6 +1062,11 @@ export default function TechnicianPage() {
                     )}
                   </span>
                 </div>
+                {job.checklist.length > 0 && (
+                  <p className="mb-2 text-xs text-blue-700 dark:text-blue-400">
+                    Liste du programme d&apos;entretien de ce site.
+                  </p>
+                )}
                 {job.inspection && (
                   <p className="text-xs text-green-600 dark:text-green-400 mb-2 font-mono">
                     Enregistré sous{" "}
@@ -1056,7 +1086,7 @@ export default function TechnicianPage() {
                 </div>
 
                 <div className="space-y-2">
-                  {DEFAULT_CHECKLIST.map((item, i) => {
+                  {checklistFor(job).map((item, i) => {
                     const result = checks[i] ?? null;
                     const Icon = result ? RESULT_ICON[result] : Circle;
                     const photo = (photos[job.id] ?? {})[i];
@@ -1074,7 +1104,7 @@ export default function TechnicianPage() {
                               N/A → unset. One control, no menu, usable with
                               gloves on. */}
                           <button
-                            onClick={() => cycleCheck(job.id, i)}
+                            onClick={() => cycleCheck(job, i)}
                             aria-label={`${item} — ${
                               result
                                 ? `actuellement ${enumLabel(result).toLowerCase()}`

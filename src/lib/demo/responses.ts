@@ -510,7 +510,8 @@ export function demoWorkOrderById(id: string) {
 // ─── GET /api/technician ────────────────────────────────────
 
 export function demoTechnician(requestedId: string | null) {
-  const { users, workOrders, elevators, buildings, components } = demoWorld();
+  const { users, workOrders, elevators, buildings, components, maintenanceSchedules } =
+    demoWorld();
 
   const technician =
     (requestedId ? users.find((u) => u.id === requestedId) : undefined) ??
@@ -564,6 +565,16 @@ export function demoTechnician(requestedId: string | null) {
       component: wo.componentId
         ? (components.find((c) => c.id === wo.componentId)?.name ?? null)
         : null,
+      /**
+       * Les points du programme dont ce bon découle, ou une liste vide pour un
+       * dépannage. La route vivante rend la même chose ; le monde de
+       * démonstration rattache un bon ouvert à un programme précisément pour
+       * que cette branche soit exerçable sans base de données.
+       */
+      checklist:
+        maintenanceSchedules
+          .find((s) => s.id === wo.scheduleId)
+          ?.checklistItems.map((item) => item.name) ?? [],
       inspection: null,
     };
   };
@@ -625,6 +636,84 @@ export function demoTechnician(requestedId: string | null) {
     active,
     completedToday,
   };
+}
+
+// ─── GET /api/maintenance-schedules ─────────────────────────
+
+/**
+ * Le programme d'entretien, dans la forme exacte que rend la route.
+ *
+ * `nextDueDate` n'est pas converti en « jours restants » ici : le verdict —
+ * en retard, bientôt, à l'usage — est calculé à l'affichage, à partir de
+ * `src/lib/maintenance/schedule.ts`. Un nombre de jours figé dans la fixture
+ * aurait l'air d'une donnée et vieillirait tout seul, puisque le monde de
+ * démonstration est reconstruit à chaque expiration de cache.
+ *
+ * Aucun filtre sur `isActive` : la route les rend tous, y compris les
+ * programmes suspendus, et c'est à l'écran de les présenter comme tels. Les
+ * masquer ici reproduirait exactement le défaut corrigé sur le tableau des bons
+ * — un état chargé, compté, et visible nulle part.
+ */
+export function demoMaintenanceSchedules(filters?: {
+  elevatorId?: string | null;
+}) {
+  const { maintenanceSchedules, elevators, workOrders, users } = demoWorld();
+
+  const scoped = filters?.elevatorId
+    ? maintenanceSchedules.filter((s) => s.elevatorId === filters.elevatorId)
+    : maintenanceSchedules;
+
+  return scoped
+    .map((schedule) => {
+      const unit = elevators.find((e) => e.id === schedule.elevatorId);
+      const building = unit ? buildingById(unit.buildingId) : null;
+
+      // Même règle que la route : un bon est « en cours » s'il appartient à
+      // `OPEN_WORK_ORDER_STATUSES`, c'est-à-dire s'il reste du travail. Un bon
+      // en attente de validation n'en fait pas partie — la visite est faite.
+      const open = workOrders.find(
+        (w) =>
+          w.scheduleId === schedule.id &&
+          ["OPEN", "ASSIGNED", "IN_PROGRESS", "ON_HOLD"].includes(w.status)
+      );
+      const assignee = open?.assignedToId
+        ? users.find((u) => u.id === open.assignedToId)
+        : null;
+
+      return {
+        id: schedule.id,
+        title: schedule.title,
+        description: schedule.description,
+        frequency: schedule.frequency,
+        cycleThreshold: schedule.cycleThreshold,
+        checklist: schedule.checklistItems,
+        nextDueDate: schedule.nextDueDate,
+        lastCompleted: schedule.lastCompleted,
+        isActive: schedule.isActive,
+        elevator: {
+          id: unit?.id ?? "—",
+          elevatorCode: unit?.elevatorCode ?? "—",
+          building: {
+            id: building?.id ?? "—",
+            name: building?.name ?? "—",
+            address: building?.address ?? "—",
+            city: building?.city ?? "—",
+          },
+        },
+        activeWorkOrder: open
+          ? {
+              id: open.id,
+              orderNumber: open.orderNumber,
+              status: open.status,
+              scheduledDate: open.scheduledDate,
+              assignedTo: assignee
+                ? { id: assignee.id, name: assignee.name }
+                : null,
+            }
+          : null,
+      };
+    })
+    .sort((a, b) => a.nextDueDate.getTime() - b.nextDueDate.getTime());
 }
 
 // ─── GET /api/predictive ────────────────────────────────────

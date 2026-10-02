@@ -29,6 +29,7 @@ import {
 } from "@/lib/api/guard";
 import { createWorkOrderWithUniqueNumber } from "@/lib/work-orders/service";
 import { statusesLeadingTo } from "@/lib/incidents/progress";
+import { nextDueDateAfter } from "@/lib/maintenance/schedule";
 import { WORK_ORDER_INCLUDE } from "@/lib/work-orders/includes";
 import {
   decimalToText,
@@ -582,6 +583,49 @@ export async function PATCH(request: NextRequest) {
           where: { workOrderId: updated.id, status: "IN_PROGRESS" },
           data: { status: "TECHNICIAN_ASSIGNED" },
         });
+      }
+
+      /**
+       * La visite faite fait avancer le programme d'entretien.
+       *
+       * C'est la seconde moitié de `WorkOrder.scheduleId`, qui n'avait jamais
+       * été écrite : une visite planifiée sait quelle obligation contractuelle
+       * elle acquitte, et le programme qu'elle acquitte doit l'apprendre. Sans
+       * cette ligne, `nextDueDate` restait figée à la date écrite par le seed —
+       * le programme aurait annoncé la même échéance pour toujours, et un
+       * écran de planning qui n'avance jamais est un écran qui apprend à être
+       * ignoré.
+       *
+       * Dans la transaction, pour la même raison que la clôture du ticket
+       * ci-dessus : les deux lignes racontent le *même* fait — cette visite a
+       * eu lieu. Un bon terminé et un programme qui l'ignorent encore sont
+       * exactement la contradiction que ce module existe pour supprimer.
+       *
+       * Rien n'est fait sur un bon ANNULÉ : une visite qui n'a pas eu lieu
+       * n'est pas une visite, et l'échéance reste où elle était — donc en
+       * retard si elle l'était, ce qui est précisément ce qu'il faut lire.
+       * Une périodicité comptée à l'usage ne produit aucune date
+       * (`nextDueDateAfter` renvoie null) : seule `lastCompleted` est alors
+       * écrite, et l'échéance stockée n'est pas maquillée.
+       */
+      if (updated.status === "COMPLETED" && updated.scheduleId) {
+        const schedule = await tx.maintenanceSchedule.findUnique({
+          where: { id: updated.scheduleId },
+          select: { frequency: true },
+        });
+
+        if (schedule) {
+          const completedAt = updated.completedAt ?? new Date();
+          const next = nextDueDateAfter(completedAt, schedule.frequency);
+
+          await tx.maintenanceSchedule.update({
+            where: { id: updated.scheduleId },
+            data: {
+              lastCompleted: completedAt,
+              ...(next ? { nextDueDate: next } : {}),
+            },
+          });
+        }
       }
 
       return updated;

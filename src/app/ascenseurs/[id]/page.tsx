@@ -16,6 +16,7 @@ import {
   Wrench,
   BarChart3,
   Shield,
+  CalendarClock,
 } from "lucide-react";
 import {
   LineChart,
@@ -41,6 +42,7 @@ import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states"
 import { formatEnum } from "@/lib/utils";
 import { elevatorStatusStyle } from "@/lib/ui/status-styles";
 import { OPS_ROLES } from "@/types";
+import { SchedulePanel } from "@/components/maintenance/schedule-panel";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -215,7 +217,12 @@ export default function ElevatorDetailPage() {
   const [data, setData] = useState<ElevatorDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"telemetry" | "rul" | "components" | "history">("telemetry");
+  // The tab list is built at render time — one entry is added only for the
+  // management roles — so the union is written out rather than inferred from
+  // an array that no longer carries every key.
+  const [activeTab, setActiveTab] = useState<
+    "telemetry" | "rul" | "components" | "history" | "entretien"
+  >("telemetry");
   const [runningPrediction, setRunningPrediction] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
@@ -471,6 +478,19 @@ export default function ElevatorDetailPage() {
           },
           { key: "components", label: "Composants", icon: BarChart3 },
           { key: "history", label: "Bons de travail et alertes", icon: Clock },
+          // Le programme d'entretien ne se règle que depuis les rôles de
+          // gestion, et `/api/maintenance-schedules` le refuse aux autres :
+          // offrir l'onglet à un technicien ou à un propriétaire n'aurait
+          // produit qu'un panneau vide ou un 403.
+          ...(canRunPrediction
+            ? [
+                {
+                  key: "entretien",
+                  label: "Entretien programmé",
+                  icon: CalendarClock,
+                },
+              ]
+            : []),
         ].map((tab) => (
           <button
             key={tab.key}
@@ -914,6 +934,10 @@ export default function ElevatorDetailPage() {
             )}
           </Card>
         </div>
+      )}
+
+      {activeTab === "entretien" && canRunPrediction && (
+        <SchedulePanel elevatorId={el.id} canEdit={canRunPrediction} />
       )}
 
       {/* Specifications */}

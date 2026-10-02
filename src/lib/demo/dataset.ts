@@ -34,6 +34,7 @@ import type {
   ErrorCode,
   IncidentReport,
   MotorType,
+  MaintenanceFrequency,
   Notification,
   PredictiveScore,
   TelemetrySnapshot,
@@ -278,6 +279,29 @@ export interface DemoWorkOrderRevision {
   createdAt: Date;
 }
 
+/**
+ * Un programme d'entretien, tel que la fixture le porte.
+ *
+ * Même raison de redéclarer que ci-dessus : rien ici ne lit les contraintes du
+ * modèle `MaintenanceSchedule`, seulement sa forme. `checklistItems` est un
+ * `Json` en base et se réduit ici à ce que le seed y écrit, ce qui est
+ * exactement ce que `parseChecklistItems` doit savoir relire.
+ */
+export interface DemoMaintenanceSchedule {
+  id: string;
+  elevatorId: string;
+  title: string;
+  description: string | null;
+  frequency: MaintenanceFrequency;
+  cycleThreshold: number | null;
+  checklistItems: { name: string; required: boolean }[];
+  nextDueDate: Date;
+  lastCompleted: Date | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface DemoWorld {
   users: User[];
   buildings: Building[];
@@ -288,6 +312,7 @@ export interface DemoWorld {
   alerts: Alert[];
   workOrders: WorkOrder[];
   workOrderRevisions: DemoWorkOrderRevision[];
+  maintenanceSchedules: DemoMaintenanceSchedule[];
   scores: PredictiveScore[];
   errorCodes: ErrorCode[];
   incidents: IncidentReport[];
@@ -1170,9 +1195,158 @@ function build(): DemoWorld {
     createdAt: iso(n.minutesAgo * MINUTE),
   }));
 
+  /**
+   * Le programme d'entretien, un spécimen par état que le tableau distingue.
+   *
+   * Une fixture qui ne porterait qu'un programme à jour ne montrerait rien de
+   * ce que l'écran existe pour rendre lisible : la ligne en retard, celle dont
+   * la visite est déjà planifiée, celle dont la périodicité se compte à l'usage
+   * et qui ne doit donc être annoncée ni à l'heure ni en retard, et celle d'un
+   * programme suspendu, qui ne doit pas disparaître pour autant.
+   */
+  const DAY = 24 * 60 * MINUTE;
+
+  const scheduleSpecs: {
+    title: string;
+    description: string;
+    frequency: MaintenanceFrequency;
+    /** Négatif = échéance dépassée. */
+    dueInDays: number;
+    lastCompletedDaysAgo: number | null;
+    cycleThreshold: number | null;
+    isActive: boolean;
+    checklist: string[];
+  }[] = [
+    {
+      title: "Inspection de sécurité mensuelle",
+      description:
+        "Contrôle de la tension des câbles, essai du frein d'urgence, nivellement de la cabine et fonctionnement des portes.",
+      frequency: "MONTHLY",
+      dueInDays: -6,
+      lastCompletedDaysAgo: 36,
+      cycleThreshold: null,
+      isActive: true,
+      checklist: [
+        "Contrôle de la tension des câbles",
+        "Essai du frein d'urgence",
+        "Vérification du nivellement de la cabine",
+        "Essai du téléphone d'urgence",
+      ],
+    },
+    {
+      title: "Entretien complet trimestriel",
+      description:
+        "Diagnostic de l'armoire de commande, évaluation du remplacement des câbles et analyse spectrale des vibrations.",
+      frequency: "QUARTERLY",
+      dueInDays: 12,
+      lastCompletedDaysAgo: 80,
+      cycleThreshold: null,
+      isActive: true,
+      checklist: [
+        "Diagnostic de l'armoire de commande",
+        "Inspection des câbles et évaluation du remplacement",
+        "Analyse spectrale des vibrations du moteur",
+      ],
+    },
+    {
+      title: "Visite annuelle réglementaire",
+      description: "Vérification réglementaire complète de l'installation.",
+      frequency: "ANNUAL",
+      dueInDays: 74,
+      lastCompletedDaysAgo: 290,
+      cycleThreshold: null,
+      isActive: true,
+      checklist: ["Essai du parachute", "Inspection de la fosse"],
+    },
+    {
+      title: "Graissage selon l'usage",
+      description:
+        "Graissage des guides et contrôle de l'usure, déclenché par le nombre de cycles parcourus.",
+      frequency: "BY_USAGE_CYCLES",
+      dueInDays: 30,
+      lastCompletedDaysAgo: 45,
+      cycleThreshold: 20_000,
+      isActive: true,
+      checklist: ["Graissage des guides de la cabine", "Inspection des patins"],
+    },
+    {
+      title: "Inspection de sécurité mensuelle",
+      description: "Contrôle mensuel — visite déjà planifiée par le bureau.",
+      frequency: "MONTHLY",
+      dueInDays: -2,
+      lastCompletedDaysAgo: 32,
+      cycleThreshold: null,
+      isActive: true,
+      checklist: [
+        "Contrôle de la tension des câbles",
+        "Essai du frein d'urgence",
+        "Essai du limiteur de vitesse",
+      ],
+    },
+    {
+      title: "Entretien semestriel",
+      description: "Programme suspendu : contrat en cours de renouvellement.",
+      frequency: "SEMI_ANNUAL",
+      dueInDays: 150,
+      lastCompletedDaysAgo: 30,
+      cycleThreshold: null,
+      isActive: false,
+      checklist: ["Contrôle général", "Essai de fonctionnement"],
+    },
+  ];
+
+  const maintenanceSchedules: DemoMaintenanceSchedule[] =
+    elevators.length === 0
+      ? []
+      : scheduleSpecs.map((spec, index) => {
+          // Répartis sur le parc à tour de rôle : le tableau doit montrer
+          // plusieurs programmes par immeuble, pas six sur le même appareil.
+          const unit = elevators[index % elevators.length];
+          return {
+            id: `demo-schedule-${index + 1}`,
+            elevatorId: unit.id,
+            title: spec.title,
+            description: spec.description,
+            frequency: spec.frequency,
+            cycleThreshold: spec.cycleThreshold,
+            checklistItems: spec.checklist.map((name) => ({
+              name,
+              required: true,
+            })),
+            nextDueDate: iso(-spec.dueInDays * DAY),
+            lastCompleted:
+              spec.lastCompletedDaysAgo === null
+                ? null
+                : iso(spec.lastCompletedDaysAgo * DAY),
+            isActive: spec.isActive,
+            createdAt: iso(200 * DAY),
+            updatedAt: iso(30 * DAY),
+          };
+        });
+
+  /**
+   * Le programme « déjà planifié » doit pointer sur un bon réellement ouvert.
+   *
+   * Sans ce rattachement, la fixture afficherait un état que la vraie route ne
+   * peut pas produire : un programme marqué planifié sans qu'aucun bon ne le
+   * soit. On relie donc un bon ouvert existant, plutôt que d'en inventer un
+   * que le tableau des bons de travail ne connaîtrait pas.
+   */
+  const alreadyPlanned = maintenanceSchedules[4];
+  if (alreadyPlanned) {
+    const openOrder = workOrders.find((w) =>
+      ["OPEN", "ASSIGNED", "IN_PROGRESS", "ON_HOLD"].includes(w.status)
+    );
+    if (openOrder) {
+      openOrder.scheduleId = alreadyPlanned.id;
+      openOrder.scheduledDate = iso(-3 * DAY);
+    }
+  }
+
   return {
     users, buildings, elevators, components, telemetry, snapshots, alerts,
-    workOrders, workOrderRevisions, scores, errorCodes, incidents, notifications,
+    workOrders, workOrderRevisions, maintenanceSchedules, scores, errorCodes,
+    incidents, notifications,
   };
 }
 

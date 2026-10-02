@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { handleRouteError, notFound } from "@/lib/api/http";
 import { requireRole, OPS_ROLES } from "@/lib/api/guard";
+import { checklistNames } from "@/lib/maintenance/schedule";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoTechnician } from "@/lib/demo/responses";
 
@@ -86,6 +87,20 @@ export async function GET(request: NextRequest) {
             },
           },
           component: { select: { name: true, componentType: true } },
+          /**
+           * The maintenance programme this job discharges, when it is a planned
+           * visit rather than a fault.
+           *
+           * Carried so the portal can show the *contractual* checklist instead
+           * of the generic one: the office scheduled this visit against a list
+           * of points, and a technician ticking a different list would file a
+           * report that does not answer the obligation it was raised for. A
+           * breakdown job has no schedule and gets the standard list, which is
+           * the correct fallback rather than a degradation.
+           */
+          schedule: {
+            select: { id: true, title: true, frequency: true, checklistItems: true },
+          },
           // Lets the portal restore an in-progress checklist after a refresh
           // instead of silently resetting it to all-unchecked.
           inspectionReports: {
@@ -148,6 +163,17 @@ export async function GET(request: NextRequest) {
           title: wo.title,
           description: wo.description,
           type: wo.type,
+          /**
+           * The points this visit is meant to cover, as plain labels.
+           *
+           * Reduced to names on the way out because that is all the report
+           * stores — `InspectionCheckItem.checkName` — and the restore pass
+           * matches a filed report back to its list *by name*. An empty array
+           * means "no programme, or a programme without points", and the portal
+           * falls back to its standard checklist rather than presenting an
+           * empty form.
+           */
+          checklist: checklistNames(wo.schedule?.checklistItems),
           priority: wo.priority,
           status: wo.status,
           scheduledDate: wo.scheduledDate,
