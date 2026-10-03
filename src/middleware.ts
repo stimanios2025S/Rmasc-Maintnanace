@@ -197,6 +197,7 @@ export const config = {
     "/ascenseurs/:path*",
     "/carte/:path*",
     "/bons-de-travail/:path*",
+    "/alertes/:path*",
     "/entretien/:path*",
     "/technicien/:path*",
     "/fiches-techniques/:path*",

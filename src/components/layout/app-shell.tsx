@@ -25,6 +25,7 @@ import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
 import type { UserRole } from "@/types";
 import { NotificationBell } from "./notification-bell";
+import { onAlertsChanged } from "@/lib/ui/alert-events";
 
 /**
  * The signed-in application chrome (sidebar, top bar, alert badge).
@@ -46,6 +47,14 @@ type NavItem = {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard },
+  // La file des alertes, juste après le tableau de bord : c'est la deuxième
+  // chose qu'un opérateur regarde, et le badge de l'en-tête y mène aussi.
+  //
+  // Ouverte aux rôles techniques, pas seulement à la gestion : un technicien
+  // doit pouvoir lire qu'une machine surchauffe. Ce sont les boutons
+  // d'acquittement qui lui sont refusés — par l'écran comme par la route, qui
+  // applique la même règle.
+  { href: "/alertes", label: "Alertes", icon: Bell, roles: OPS_ROLES },
   // Les écrans d'exploitation sont réservés aux rôles techniques et de gestion.
   //
   // Ils ne l'étaient pas dans la barre latérale, alors qu'ils l'étaient déjà
@@ -206,9 +215,22 @@ export function AppShell({
 
     loadAlerts();
     const id = setInterval(loadAlerts, 60_000);
+
+    /**
+     * Et l'écoute des écritures faites depuis la page des alertes.
+     *
+     * Sans elle, acquitter une alerte laissait ce badge afficher l'ancien
+     * nombre pendant une minute — soit exactement le temps qu'il faut à
+     * l'utilisateur pour conclure que son clic n'a rien fait. Le sondage reste
+     * en place : une alerte créée par la télémétrie pendant que personne ne
+     * regarde doit finir par apparaître, et aucun événement ne l'annoncera.
+     */
+    const unsubscribe = onAlertsChanged(() => void loadAlerts());
+
     return () => {
       cancelled = true;
       clearInterval(id);
+      unsubscribe();
     };
   }, [status]);
 
@@ -350,7 +372,7 @@ export function AppShell({
             <NotificationBell enabled={status === "authenticated"} />
 
             <Link
-              href="/bons-de-travail"
+              href="/alertes"
               title={alertLabel}
               aria-label={alertLabel}
               className="relative p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
