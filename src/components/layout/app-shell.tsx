@@ -46,12 +46,24 @@ type NavItem = {
 
 const NAV_ITEMS: readonly NavItem[] = [
   { href: "/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard },
-  // Unrestricted for the same reason `/ascenseurs` is: the endpoint behind it
-  // scopes a building owner to their own portfolio, so every signed-in role
-  // has something true to see here.
-  { href: "/carte", label: "Carte du parc", icon: MapIcon },
-  { href: "/ascenseurs", label: "Ascenseurs", icon: Activity },
-  { href: "/bons-de-travail", label: "Bons de travail", icon: ClipboardList },
+  // Les écrans d'exploitation sont réservés aux rôles techniques et de gestion.
+  //
+  // Ils ne l'étaient pas dans la barre latérale, alors qu'ils l'étaient déjà
+  // côté API : chaque route applique `buildingScopeFor`, donc rien ne fuyait.
+  // Mais un client voyait « Carte du parc », « Ascenseurs » et « Bons de
+  // travail » dans son menu, et ces trois écrans sont des postes de travail —
+  // la carte plein écran se pilote, la liste du parc couvre tous les immeubles
+  // qu'on entretient, et le tableau des bons est l'outil du bureau. Ce qu'un
+  // client a besoin de savoir de ses appareils lui est montré chez lui, dans
+  // son propre tableau de bord.
+  { href: "/carte", label: "Carte du parc", icon: MapIcon, roles: OPS_ROLES },
+  { href: "/ascenseurs", label: "Ascenseurs", icon: Activity, roles: OPS_ROLES },
+  {
+    href: "/bons-de-travail",
+    label: "Bons de travail",
+    icon: ClipboardList,
+    roles: OPS_ROLES,
+  },
   // Le programme d'entretien — la moitié préventive du métier, à côté du
   // tableau des bons qui ne porte que le curatif. Filtré aux rôles de gestion
   // pour la même raison que le tableau des incidents : planifier une visite est

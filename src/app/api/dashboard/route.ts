@@ -39,8 +39,14 @@ export async function GET() {
       elevator: { building: buildingScope },
     };
 
-    const [totalBuildings, elevators, openWorkOrders, emergencyWorkOrders, recentAlerts] =
-      await Promise.all([
+    const [
+      totalBuildings,
+      elevators,
+      openWorkOrders,
+      emergencyWorkOrders,
+      recentAlerts,
+      recentWorkOrders,
+    ] = await Promise.all([
         prisma.building.count({ where: buildingScope }),
         prisma.elevator.findMany({
           where: elevatorScope,
@@ -64,6 +70,36 @@ export async function GET() {
           orderBy: { createdAt: "desc" },
           take: 8,
           include: { elevator: { select: { elevatorCode: true } } },
+        }),
+        /**
+         * Les dernières interventions, pour la vue client.
+         *
+         * Le client n'a pas accès au tableau des bons de travail — c'est
+         * précisément ce que le nettoyage de navigation lui retire — donc la
+         * seule façon pour lui de voir ce qui a été fait chez lui est de le lui
+         * montrer ici. C'est la même portée de requête que les compteurs
+         * ci-dessus : un propriétaire ne voit que ses immeubles.
+         *
+         * Trié sur `createdAt` et non sur `completedAt` : une intervention
+         * ouverte il y a deux jours et une visite terminée ce matin sont deux
+         * nouvelles, et trier sur la date d'achèvement ferait disparaître la
+         * première de la liste avant qu'elle ne soit close.
+         */
+        prisma.workOrder.findMany({
+          where: workOrderScope,
+          orderBy: { createdAt: "desc" },
+          take: 6,
+          select: {
+            id: true,
+            orderNumber: true,
+            title: true,
+            type: true,
+            status: true,
+            createdAt: true,
+            scheduledDate: true,
+            completedAt: true,
+            elevator: { select: { elevatorCode: true } },
+          },
         }),
       ]);
 
@@ -186,6 +222,17 @@ export async function GET() {
           severity: a.severity,
           createdAt: a.createdAt,
           acknowledged: a.isAcknowledged,
+        })),
+        recentWorkOrders: recentWorkOrders.map((w) => ({
+          id: w.id,
+          orderNumber: w.orderNumber,
+          title: w.title,
+          type: w.type,
+          status: w.status,
+          elevator: w.elevator.elevatorCode,
+          createdAt: w.createdAt,
+          scheduledDate: w.scheduledDate,
+          completedAt: w.completedAt,
         })),
       },
     });

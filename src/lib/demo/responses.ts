@@ -178,6 +178,29 @@ export function demoDashboard() {
       acknowledged: a.isAcknowledged,
     }));
 
+  /**
+   * Les six dernières interventions, les plus récentes d'abord — la même
+   * sélection, le même ordre et les mêmes champs que la route vivante.
+   *
+   * Trié sur `createdAt` et non sur `completedAt`, exactement comme là-bas :
+   * une intervention ouverte avant-hier et une visite terminée ce matin sont
+   * deux nouvelles, et l'ordre d'achèvement ferait disparaître la première.
+   */
+  const recentWorkOrders = [...workOrders]
+    .sort(byDesc<WorkOrder>((w) => w.createdAt.getTime()))
+    .slice(0, 6)
+    .map((w) => ({
+      id: w.id,
+      orderNumber: w.orderNumber,
+      title: w.title,
+      type: w.type,
+      status: w.status,
+      elevator: elevators.find((e) => e.id === w.elevatorId)?.elevatorCode ?? "—",
+      createdAt: w.createdAt,
+      scheduledDate: w.scheduledDate,
+      completedAt: w.completedAt,
+    }));
+
   return {
     telemetryFeed,
     stats: {
@@ -203,6 +226,7 @@ export function demoDashboard() {
     ],
     buildingHealth,
     recentAlerts,
+    recentWorkOrders,
   };
 }
 

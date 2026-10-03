@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import {
   Activity,
   AlertTriangle,
@@ -30,6 +31,7 @@ import { fr } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { FleetMapCard } from "@/components/map/fleet-map-card";
+import { ClientOverview } from "@/components/dashboard/client-overview";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -118,7 +120,43 @@ const SEVERITY_LABELS: Record<string, string> = {
 
 // ─── Dashboard Page ─────────────────────────────────────────
 
+/**
+ * Le tableau de bord, en deux rendus selon le rôle.
+ *
+ * UNE SEULE ADRESSE, DEUX VUES
+ * Le client garde `/tableau-de-bord` : c'est l'adresse que tout le monde
+ * connaît, et un lien reçu d'un collègue de l'entreprise mène le client à sa
+ * propre vue plutôt qu'à un écran vide ou à un refus. Les deux rendus sont des
+ * composants distincts, et non une page commune parsemée de conditions — le
+ * tableau de bord interne est un poste de pilotage écrit pour un dispatcheur,
+ * et y laisser un compteur derrière un `if` mal placé est la façon la plus sûre
+ * d'en faire fuiter un jour le contenu vers un client.
+ *
+ * LE RÔLE N'EST PAS CONNU AU PREMIER RENDU
+ * La session se résout côté navigateur, donc il existe une première frame sans
+ * rôle. Afficher la vue du personnel pendant celle-ci montrerait à un client
+ * les compteurs de l'entreprise, et l'inverse montrerait au bureau la vue d'un
+ * client. Cette frame ne dit donc rien plutôt que de dire le contraire.
+ */
 export default function DashboardPage() {
+  const { data: session, status } = useSession();
+
+  if (status === "loading") {
+    return (
+      <div className="space-y-6">
+        <LoadingSkeleton rows={4} />
+      </div>
+    );
+  }
+
+  return session?.user?.role === "BUILDING_OWNER" ? (
+    <ClientOverview />
+  ) : (
+    <StaffDashboard />
+  );
+}
+
+function StaffDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [statusBreakdown, setStatusBreakdown] = useState<StatusSlice[]>([]);
   const [buildingHealth, setBuildingHealth] = useState<BuildingHealth[]>([]);

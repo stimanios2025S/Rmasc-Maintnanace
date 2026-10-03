@@ -1,6 +1,7 @@
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 import { isOpenAccessEnabled } from "@/lib/auth/open-access";
+import { isClientAllowedPath } from "@/lib/auth/client-routes";
 import { MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
 
 /**
@@ -52,6 +53,28 @@ export default withAuth(
 
     // Signed-in users hitting /connexion go straight to the dashboard
     if (pathname === "/connexion" && token) {
+      return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
+    }
+
+    /**
+     * Le client n'a que deux écrans : son tableau de bord et son espace client.
+     *
+     * La règle elle-même vit dans `src/lib/auth/client-routes.ts`, où elle est
+     * une fonction pure — et donc vérifiable sans fabriquer un jeton du bon
+     * rôle, ce qui est impossible sur une machine sans base de données. Ce bloc
+     * ne fait que l'appliquer.
+     *
+     * Les routes `/api/*` sont exemptées par cette fonction : les écrans
+     * autorisés ne vivent que de ces routes, et rediriger un `fetch` vers une
+     * page HTML casserait l'écran sans rien protéger. La frontière des données
+     * est dans `src/lib/api/guard.ts`, appliquée par chaque handler — les dix-
+     * neuf routes qui admettent un client le cloisonnent toutes par
+     * `buildingScopeFor` ou un filtre équivalent.
+     */
+    if (
+      token?.role === "BUILDING_OWNER" &&
+      !isClientAllowedPath(pathname)
+    ) {
       return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
     }
 
