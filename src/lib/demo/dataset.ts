@@ -377,6 +377,15 @@ function build(): DemoWorld {
        * assemblé, garde les deux visibles.
        */
       | "address"
+      /**
+       * Les compétences et le secteur, absents des fixtures.
+       *
+       * Même raison que l'adresse ci-dessus : ces deux colonnes ne veulent
+       * dire quelque chose que sur un technicien, et les écrire sept fois pour
+       * dire « rien » noierait les trois lignes où elles comptent.
+       */
+      | "specialties"
+      | "defaultZone"
     >
   > = [
     { id: "usr_admin", email: "admin@elevatorpulse.com", name: "Dana Whitfield", passwordHash: DEMO_HASH, role: "ADMIN", clientType: null, phone: "+1 415 555 0101", avatarUrl: null, isActive: true, status: "AVAILABLE" },
@@ -415,6 +424,32 @@ function build(): DemoWorld {
     },
   };
 
+  /**
+   * Les compétences et le secteur des trois techniciens.
+   *
+   * Ni l'administrateur ni le responsable n'en portent : ces colonnes disent
+   * qui sait faire quoi sur le terrain, et un compte de bureau ne répond à
+   * personne sur ce terrain-là. La fixture le montre plutôt que de remplir sept
+   * lignes de tableaux vides.
+   */
+  const TECHNICIAN_PROFILES: Record<
+    string,
+    Pick<User, "specialties" | "defaultZone">
+  > = {
+    usr_tech1: {
+      specialties: ["ELECTRONICS", "CONTROL_SYSTEMS"],
+      defaultZone: "San Francisco — centre",
+    },
+    usr_tech2: {
+      specialties: ["MECHANICS", "ROPES"],
+      defaultZone: "East Bay",
+    },
+    usr_tech3: {
+      specialties: ["HYDRAULIC", "DOORS"],
+      defaultZone: "Peninsula",
+    },
+  };
+
   const users: User[] = userSeed.map((u, i) => ({
     ...u,
     // Spread as one object rather than written as three literals: a literal
@@ -430,6 +465,7 @@ function build(): DemoWorld {
     ...(u.role === "BUILDING_OWNER"
       ? { address: CLIENT_ADDRESSES[u.id] ?? null }
       : { address: null }),
+    ...(TECHNICIAN_PROFILES[u.id] ?? { specialties: [], defaultZone: null }),
     ...technicianFixesFor[u.id],
     createdAt: iso(400 * 24 * 60 * MINUTE - i * 60 * MINUTE),
     updatedAt: iso(3 * 24 * 60 * MINUTE),

@@ -17,7 +17,7 @@ import {
   readTechnicianFix,
   technicianProximity,
 } from "@/lib/geo/technician-position";
-import { DISPATCHABLE_TECHNICIAN_STATUSES } from "@/types";
+import { DISPATCHABLE_TECHNICIAN_STATUSES, USER_ROLES } from "@/types";
 import type {
   Alert,
   Building,
@@ -1021,6 +1021,85 @@ export function demoTechnicianRoster() {
  * The same seven lines as the field portal's `DEFAULT_CHECKLIST`, in French, so
  * a fixture report and a real one are not two different documents.
  */
+// ─── GET /api/personnel ─────────────────────────────────────
+
+/**
+ * L'équipe, dans la forme exacte que rend la route.
+ *
+ * Le filtre de rôle est appliqué même sans paramètre, comme là-bas : `User`
+ * porte aussi les comptes clients, et un écran « Personnel » qui les afficherait
+ * mélangerait les deux populations que ce module existe pour distinguer.
+ *
+ * La charge de travail est comptée à la volée sur les affectations ouvertes,
+ * jamais lue d'une colonne — un compteur stocké se désynchronise à la première
+ * transition oubliée, et la fixture le reflète pour ne pas masquer ce défaut le
+ * jour où il apparaîtrait.
+ */
+export function demoPersonnel(filters: {
+  role?: string | null;
+  status?: string | null;
+  active?: boolean | null;
+  q?: string | null;
+}) {
+  const { users, workOrders, incidents } = demoWorld();
+
+  const STAFF_ROLES: readonly string[] = [
+    "ADMIN",
+    "MAINTENANCE_MANAGER",
+    "FIELD_TECHNICIAN",
+  ];
+  const OPEN_WORK_ORDERS = ["ASSIGNED", "IN_PROGRESS", "ON_HOLD"];
+  const OPEN_INCIDENTS = ["ESCALATED", "TECHNICIAN_ASSIGNED", "IN_PROGRESS"];
+
+  const needle = filters.q?.trim().toLowerCase() ?? "";
+
+  const members = users
+    .filter((u) => STAFF_ROLES.includes(u.role))
+    .filter((u) => (filters.role ? u.role === filters.role : true))
+    .filter((u) => (filters.status ? u.status === filters.status : true))
+    .filter((u) =>
+      filters.active !== null && filters.active !== undefined
+        ? u.isActive === filters.active
+        : true
+    )
+    .filter((u) =>
+      needle
+        ? u.name.toLowerCase().includes(needle) ||
+          u.email.toLowerCase().includes(needle)
+        : true
+    )
+    // Le rôle d'abord, dans l'ordre de déclaration de l'énumération — celui que
+    // Postgres applique aussi — puis le nom.
+    .sort(
+      (a, b) =>
+        USER_ROLES.indexOf(a.role) - USER_ROLES.indexOf(b.role) ||
+        a.name.localeCompare(b.name)
+    )
+    .map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      phone: u.phone,
+      role: u.role,
+      status: u.status,
+      isActive: u.isActive,
+      specialties: u.specialties,
+      defaultZone: u.defaultZone,
+      createdAt: u.createdAt,
+      lastPositionAt: u.lastPositionAt,
+      _count: {
+        assignedWorkOrders: workOrders.filter(
+          (w) => w.assignedToId === u.id && OPEN_WORK_ORDERS.includes(w.status)
+        ).length,
+        assignedIncidents: incidents.filter(
+          (i) => i.technicianId === u.id && OPEN_INCIDENTS.includes(i.status)
+        ).length,
+      },
+    }));
+
+  return { members, total: members.length };
+}
+
 const DEMO_CHECKLIST = [
   "Inspection visuelle du carter moteur",
   "Contrôle de l'étalonnage du capteur de température",

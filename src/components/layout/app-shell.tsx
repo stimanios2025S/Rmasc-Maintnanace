@@ -20,6 +20,7 @@ import {
   AlertOctagon,
   HelpCircle,
   Users,
+  UserCog,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -112,6 +113,18 @@ const NAV_ITEMS: readonly NavItem[] = [
     href: "/administration/clients",
     label: "Comptes clients",
     icon: Users,
+    roles: ADMIN_ROLES,
+  },
+  // Les comptes du personnel : embaucher, corriger une fiche, rendre un accès.
+  //
+  // Administrateur seul, pour la même raison que le module lui-même. Le point
+  // décisif n'est pas la hiérarchie, c'est que créer un compte, c'est *choisir
+  // son rôle* — un responsable qui peut créer un administrateur peut se donner
+  // les droits d'administrateur. Le middleware applique la même règle.
+  {
+    href: "/administration/personnel",
+    label: "Personnel",
+    icon: UserCog,
     roles: ADMIN_ROLES,
   },
   // The customer's own view of their equipment. Deliberately unrestricted — an

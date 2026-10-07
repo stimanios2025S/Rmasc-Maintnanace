@@ -178,6 +178,29 @@ enum TechnicianStatus {
   ON_LEAVE
 }
 
+/// Les compétences qu'un technicien de maintenance peut porter.
+///
+/// Un vocabulaire fermé plutôt que du texte libre. Le texte libre se remplit
+/// avec « hydraulique », « Hydraulique » et « hydrolique », et interdit alors
+/// toute question du genre « qui sait faire de l'hydraulique ? » — or c'est
+/// exactement la question qu'on pose en répartissant une panne. Ajouter une
+/// compétence demandera une modification de ce schéma ; c'est le prix d'un
+/// vocabulaire qui veut dire quelque chose.
+enum TechnicianSkill {
+  /// Circuits, groupes et vérins hydrauliques.
+  HYDRAULIC
+  /// Variateurs, armoires de commande, capteurs et câblage.
+  ELECTRONICS
+  /// Mécanique générale : réducteurs, freins, guidage.
+  MECHANICS
+  /// Câbles, suspendions, parachute et limiteur de vitesse.
+  ROPES
+  /// Portes palières et cabine, automatismes d'ouverture.
+  DOORS
+  /// Régulation, nivellement et logique de commande.
+  CONTROL_SYSTEMS
+}
+
 enum PredictiveRiskLevel {
   LOW
   MEDIUM
@@ -254,6 +277,24 @@ model User {
   /// column is safe to add to a populated table: existing rows become
   /// dispatchable, which is what they were before the column existed.
   status        TechnicianStatus @default(AVAILABLE)
+
+  /// Les compétences déclarées de ce technicien.
+  ///
+  /// Vide est un état normal, et non une donnée manquante : un nouvel embauché
+  /// n'a rien déclaré tant qu'on ne le lui a pas demandé, et un compte de
+  /// bureau — administrateur, responsable — n'en aura jamais. C'est pourquoi
+  /// c'est un tableau à défaut vide et non une colonne obligatoire : exiger une
+  /// compétence bloquerait la création d'un gestionnaire.
+  specialties   TechnicianSkill[] @default([]) @map("specialties")
+
+  /// Le secteur habituel de ce technicien.
+  ///
+  /// Une indication pour le bureau, pas une règle : elle ne filtre aucune
+  /// affectation et n'empêche aucun envoi ailleurs. La modéliser en relation
+  /// aurait demandé une table de secteurs, un découpage géographique du
+  /// territoire et une règle de répartition — un autre produit. Ici, c'est ce
+  /// qu'un responsable lit avant d'envoyer quelqu'un : « il connaît la ville ».
+  defaultZone   String?           @map("default_zone")
 
   /// Where this account's phone last said it was, and when it said so.
   ///

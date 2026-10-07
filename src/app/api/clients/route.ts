@@ -36,7 +36,7 @@ import {
   readJson,
 } from "@/lib/api/http";
 import { requireRole } from "@/lib/api/guard";
-import { generateClientPassword } from "@/lib/auth/passwords";
+import { generatePassword } from "@/lib/auth/passwords";
 import { CLIENT_TYPES, SLA_TIERS } from "@/types";
 
 /** Matches the cost factor the seed uses, so both produce interchangeable hashes. */
@@ -244,7 +244,7 @@ export async function POST(request: NextRequest) {
      * 12 tours prend quelques centaines de millisecondes, et les passer en
      * tenant une transaction ouverte immobilise une connexion pour rien.
      */
-    const password = generateClientPassword();
+    const password = generatePassword();
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     /**

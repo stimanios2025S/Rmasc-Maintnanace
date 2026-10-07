@@ -247,6 +247,62 @@ export const DISPATCHABLE_TECHNICIAN_STATUSES: readonly TechnicianStatus[] = [
   "ON_JOB",
 ];
 
+/**
+ * Les états qu'un administrateur peut poser à la main sur une fiche.
+ *
+ * `ON_JOB` en est absent, et ce n'est pas un oubli : il est calculé par
+ * `syncTechnicianStatus` à partir des affectations réelles du technicien. Le
+ * proposer dans un formulaire permettrait de déclarer « en intervention »
+ * quelqu'un qui est chez lui — et l'état serait de toute façon réécrit à la
+ * prochaine affectation, si bien que le formulaire mentirait dans les deux sens.
+ *
+ * Déclaré ici, avec les autres regroupements de rôles et d'états, pour que
+ * l'écran qui affiche le sélecteur et la route qui l'accepte lisent la même
+ * liste sans que le premier ait à importer le client Prisma.
+ */
+export const SETTABLE_TECHNICIAN_STATUSES = [
+  "AVAILABLE",
+  "OFF_DUTY",
+  "ON_LEAVE",
+] as const satisfies readonly TechnicianStatus[];
+
+/**
+ * Les rôles internes — tout le monde sauf le client.
+ *
+ * `BUILDING_OWNER` en est absent délibérément : un compte client s'ouvre depuis
+ * `/administration/clients`, qui crée en même temps son premier immeuble et son
+ * accès au portail. L'ouvrir depuis la gestion du personnel produirait un client
+ * sans dossier.
+ */
+export const STAFF_ROLES = [
+  "ADMIN",
+  "MAINTENANCE_MANAGER",
+  "FIELD_TECHNICIAN",
+] as const satisfies readonly UserRole[];
+export type StaffRole = (typeof STAFF_ROLES)[number];
+
+/**
+ * Les compétences qu'un technicien peut porter.
+ *
+ * Miroir de l'énumération `TechnicianSkill` du schéma. Elle vit ici pour la même
+ * raison que les listes ci-dessus : un composant client ne peut pas importer
+ * `@prisma/client` sans en tirer tout le moteur dans le bundle du navigateur.
+ *
+ * Un vocabulaire fermé plutôt que du texte libre : « hydraulique »,
+ * « Hydraulique » et « hydrolique » ne sont pas trois compétences, et un texte
+ * libre interdirait la seule question qu'on pose en répartissant une panne —
+ * « qui sait faire de l'hydraulique ? ».
+ */
+export const TECHNICIAN_SKILLS = [
+  "HYDRAULIC",
+  "ELECTRONICS",
+  "MECHANICS",
+  "ROPES",
+  "DOORS",
+  "CONTROL_SYSTEMS",
+] as const;
+export type TechnicianSkill = (typeof TECHNICIAN_SKILLS)[number];
+
 export const PREDICTIVE_RISK_LEVELS = [
   "LOW",
   "MEDIUM",

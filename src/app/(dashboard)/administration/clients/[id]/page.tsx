@@ -9,9 +9,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Building2,
-  Check,
   ChevronRight,
-  Copy,
   Gauge,
   KeyRound,
   Link2,
@@ -24,6 +22,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { CopyButton } from "@/components/admin/credentials-panel";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { parseDecimalInput } from "@/lib/ui/numbers";
 import {
@@ -642,38 +641,6 @@ export default function ClientDetailPage() {
         </div>
       </div>
     </div>
-  );
-}
-
-// ─── Copy button ────────────────────────────────────────────
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        void (async () => {
-          try {
-            await navigator.clipboard.writeText(value);
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 2500);
-          } catch {
-            // Hors contexte sécurisé (accès par IP en http), l'API n'existe pas.
-            // La valeur reste sélectionnable à la main.
-          }
-        })();
-      }}
-      aria-label="Copier le mot de passe"
-      className="rounded-lg border border-gray-300 p-2 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-    >
-      {copied ? (
-        <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-      ) : (
-        <Copy className="h-4 w-4" aria-hidden="true" />
-      )}
-    </button>
   );
 }
 

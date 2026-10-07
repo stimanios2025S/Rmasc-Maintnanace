@@ -73,6 +73,17 @@ export const ENUM_LABELS: Record<string, string> = {
   OFF_DUTY: "Hors service",
   ON_LEAVE: "En congé",
 
+  // ─── Compétences des techniciens ──────────────────────────
+  // `HYDRAULIC` n'est pas repris ici : la clé est déjà définie plus bas pour le
+  // type de moteur. La redéclarer serait une erreur de compilation, et la
+  // partager est correct — « hydraulique » désigne la même chose qu'on parle
+  // d'un moteur ou de la compétence de quelqu'un qui le répare.
+  ELECTRONICS: "Électronique",
+  MECHANICS: "Mécanique",
+  ROPES: "Câbles et suspension",
+  DOORS: "Portes et automatismes",
+  CONTROL_SYSTEMS: "Régulation et commande",
+
   // ─── User roles ───────────────────────────────────────────
   ADMIN: "Administrateur",
   MAINTENANCE_MANAGER: "Responsable maintenance",

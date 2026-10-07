@@ -1,5 +1,10 @@
 /**
- * Génération du mot de passe d'accès d'un compte client.
+ * Génération des mots de passe d'accès.
+ *
+ * Le même générateur sert aux comptes clients et aux comptes du personnel. Il
+ * n'y a aucune raison d'en avoir deux : la propriété qui compte — un secret
+ * long, tiré au hasard, jamais utilisé ailleurs et jamais stocké en clair — ne
+ * dépend pas de qui se connecte avec.
  *
  * POURQUOI LE SYSTÈME LE TIRE ET PAS LE BUREAU
  * Un mot de passe qu'un employé invente est un mot de passe qu'un employé
@@ -38,7 +43,7 @@ const ALPHABET =
 /** 14 caractères sur 56 ≈ 81 bits d'entropie. Hors de portée d'une attaque. */
 const DEFAULT_LENGTH = 14;
 
-export function generateClientPassword(length: number = DEFAULT_LENGTH): string {
+export function generatePassword(length: number = DEFAULT_LENGTH): string {
   let password = "";
   for (let i = 0; i < length; i++) {
     password += ALPHABET[randomInt(ALPHABET.length)];

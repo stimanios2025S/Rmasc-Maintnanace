@@ -29,7 +29,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db/prisma";
 import { handleRouteError, jsonOk, notFound } from "@/lib/api/http";
 import { requireRole } from "@/lib/api/guard";
-import { generateClientPassword } from "@/lib/auth/passwords";
+import { generatePassword } from "@/lib/auth/passwords";
 
 /** Le même coût que la création et que le seed — voir `POST /api/clients`. */
 const BCRYPT_ROUNDS = 12;
@@ -46,7 +46,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
     });
     if (!client) throw notFound(`Compte client introuvable : ${params.id}`);
 
-    const password = generateClientPassword();
+    const password = generatePassword();
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     await prisma.$transaction([

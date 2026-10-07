@@ -7,9 +7,7 @@ import { fr } from "date-fns/locale";
 import {
   AlertTriangle,
   Building2,
-  Check,
   ChevronRight,
-  Copy,
   KeyRound,
   Loader2,
   Plus,
@@ -18,6 +16,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { CredentialsPanel } from "@/components/admin/credentials-panel";
 import { parseDecimalInput } from "@/lib/ui/numbers";
 import { CLIENT_TYPE_LABELS } from "@/types";
 import type { ClientType } from "@/types";
@@ -365,96 +364,6 @@ function ClientCard({
         Gérer le parc et l&apos;accès
         <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
       </Link>
-    </Card>
-  );
-}
-
-// ─── Access panel ───────────────────────────────────────────
-
-/**
- * L'accès qui vient d'être engendré, montré une fois.
- *
- * Il est mis en avant plutôt que glissé dans un message de confirmation : c'est
- * la seule fois où ce mot de passe sera lisible par qui que ce soit, et un texte
- * qu'on ne remarque pas est un texte qu'on ne transmet pas. La disparition est
- * annoncée explicitement, sans quoi l'administrateur compte sur l'écran pour le
- * retrouver plus tard.
- */
-function CredentialsPanel({
-  email,
-  password,
-  onDismiss,
-}: {
-  email: string;
-  password: string;
-  onDismiss: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(password);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2500);
-    } catch {
-      // `navigator.clipboard` n'existe pas hors contexte sécurisé — un accès par
-      // IP sur http, par exemple. Le mot de passe reste à l'écran, sélectionnable
-      // à la main ; inutile d'alerter pour une commodité qui n'a pas marché.
-    }
-  };
-
-  return (
-    <Card className="border-emerald-300 p-5 dark:border-emerald-800">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <KeyRound
-            className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400"
-            aria-hidden="true"
-          />
-          <div>
-            <h2 className="text-base font-semibold text-gray-900 dark:text-white">
-              Accès créé
-            </h2>
-            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-              Compte <strong className="text-gray-900 dark:text-white">{email}</strong>
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="Masquer l'accès"
-          className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
-        >
-          <X className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <code className="flex-1 select-all rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 font-mono text-base tracking-wide text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white">
-          {password}
-        </code>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-        >
-          {copied ? (
-            <Check className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-          ) : (
-            <Copy className="h-4 w-4" aria-hidden="true" />
-          )}
-          {copied ? "Copié" : "Copier"}
-        </button>
-      </div>
-
-      <p className="mt-3 flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
-        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        Ce mot de passe ne sera plus jamais affiché — il n&apos;est conservé nulle
-        part en clair. Notez-le maintenant, et transmettez-le au client par un
-        autre canal que cette application. S&apos;il est perdu, un nouveau pourra
-        être engendré depuis la fiche du client.
-      </p>
     </Card>
   );
 }

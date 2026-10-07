@@ -115,14 +115,24 @@ export default withAuth(
       }
     }
 
-    // Account administration. Narrower than the management gate that covers
-    // the rest of `/administration`: opening a customer account and deciding
-    // whether it holds a maintenance contract is the administrator's job
-    // specifically, and `/api/clients` enforces the same rule. Checked before
-    // the broader block so the intent reads in order.
+    // Les deux écrans d'administration réservés à l'administrateur, plus
+    // étroits que la porte de gestion qui couvre le reste de
+    // `/administration`. Chacun a sa raison, et c'est la même dans les deux
+    // cas : ce qui s'y décide ne peut pas être laissé à un autre rôle.
+    //
+    //  - `/administration/clients` ouvre un compte client et fixe son
+    //    rattachement contractuel. `/api/clients` applique la même règle.
+    //  - `/administration/personnel` ouvre des comptes de salariés, donc
+    //    *choisit des rôles* — et un responsable qui peut créer un compte
+    //    administrateur peut se donner les droits d'administrateur.
+    //
+    // Vérifié avant le bloc plus large ci-dessous, pour que l'intention se
+    // lise dans l'ordre.
     if (
       pathname === "/administration/clients" ||
-      pathname.startsWith("/administration/clients/")
+      pathname.startsWith("/administration/clients/") ||
+      pathname === "/administration/personnel" ||
+      pathname.startsWith("/administration/personnel/")
     ) {
       if (token?.role !== "ADMIN") {
         return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
