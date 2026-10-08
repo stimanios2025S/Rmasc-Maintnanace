@@ -21,6 +21,7 @@ import {
   HelpCircle,
   Users,
   UserCog,
+  Gauge,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -56,6 +57,14 @@ const NAV_ITEMS: readonly NavItem[] = [
   // d'acquittement qui lui sont refusés — par l'écran comme par la route, qui
   // applique la même règle.
   { href: "/alertes", label: "Alertes", icon: Bell, roles: OPS_ROLES },
+  // Les seuils qui décident du déclenchement des alertes, juste après elles.
+  //
+  // Ouvert aux rôles techniques en lecture : un technicien qui reçoit une
+  // alerte de vibration doit pouvoir lire à partir de quoi elle s'est
+  // déclenchée. Ce sont les modifications qui sont réservées — l'écran et la
+  // route appliquent la même règle. La page vit hors de `/administration`
+  // précisément pour rester atteignable par eux.
+  { href: "/seuils", label: "Seuils d'alerte", icon: Gauge, roles: OPS_ROLES },
   // Les écrans d'exploitation sont réservés aux rôles techniques et de gestion.
   //
   // Ils ne l'étaient pas dans la barre latérale, alors qu'ils l'étaient déjà

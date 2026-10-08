@@ -18,6 +18,10 @@ import {
   technicianProximity,
 } from "@/lib/geo/technician-position";
 import { DISPATCHABLE_TECHNICIAN_STATUSES, USER_ROLES } from "@/types";
+import {
+  DERIVED_METRIC,
+  TELEMETRY_METRICS,
+} from "@/lib/iot/metric-catalogue";
 import type {
   Alert,
   Building,
@@ -1021,6 +1025,58 @@ export function demoTechnicianRoster() {
  * The same seven lines as the field portal's `DEFAULT_CHECKLIST`, in French, so
  * a fixture report and a real one are not two different documents.
  */
+// ─── GET /api/thresholds ────────────────────────────────────
+
+/**
+ * Les seuils d'alerte, dans la forme exacte que rend la route.
+ *
+ * Une grandeur est montrée personnalisée — la vibration — pour que l'écran
+ * affiche les deux états à la fois : une règle réglée par l'exploitant et cinq
+ * qui tiennent leurs valeurs d'origine. Une fixture où tout serait par défaut
+ * ne montrerait pas ce que l'écran existe pour distinguer.
+ *
+ * Les charges du parc sont lues dans le monde de démonstration plutôt
+ * qu'inventées : les bornes de surcharge se recalculent par machine, et une
+ * valeur fixe ici laisserait croire à un réglage global qui n'existe pas.
+ */
+export function demoThresholds() {
+  const { elevators } = demoWorld();
+
+  const capacities = [
+    ...new Set(
+      elevators.filter((e) => e.isActive).map((e) => e.maxPayloadKg)
+    ),
+  ].sort((a, b) => a - b);
+
+  const CUSTOMISED: Record<string, (typeof TELEMETRY_METRICS)[number]["defaults"]> =
+    {
+      motor_vibration_mm_s: {
+        warningMin: null,
+        warningMax: 3.5,
+        criticalMin: null,
+        criticalMax: 6.5,
+      },
+    };
+
+  return {
+    metrics: TELEMETRY_METRICS.map((metric) => {
+      const custom = CUSTOMISED[metric.metricName] ?? null;
+      return {
+        metricName: metric.metricName,
+        title: metric.title,
+        unit: metric.unit,
+        description: metric.description,
+        defaults: metric.defaults,
+        custom,
+        effective: custom ?? metric.defaults,
+        isCustom: custom !== null,
+      };
+    }),
+    derived: DERIVED_METRIC,
+    payloadCapacitiesKg: capacities,
+  };
+}
+
 // ─── GET /api/personnel ─────────────────────────────────────
 
 /**

@@ -22,6 +22,10 @@
 
 import { prisma } from "@/lib/db/prisma";
 import type { AlertSeverity } from "@/types";
+import {
+  OVERLOAD_POLICY,
+  TELEMETRY_METRICS,
+} from "./metric-catalogue";
 
 export interface ThresholdDefinition {
   /** `ThresholdRule.id`, or null for a built-in fallback rule. */
@@ -40,19 +44,26 @@ export interface ThresholdDefinition {
  * Baseline rules, used when the table is empty or unreachable so ingestion
  * keeps working rather than failing closed.
  *
+ * The values come from `./metric-catalogue`, which carries the same figures the
+ * screen displays as "valeur par défaut". Two literals here and one screen
+ * elsewhere is how a fallback ends up disagreeing with what the interface
+ * promises — the operator would tune a threshold, see it applied, and never
+ * learn that an unreachable database silently substitutes something else.
+ *
  * `cabin_load_kg` is deliberately absent: cabin overload is relative to each
  * unit's rated capacity, so it is derived per reading by `payloadThresholds`
  * rather than read from here. An absolute entry would be unreachable dead
  * data at best — see the note on `payloadThresholds`.
  */
-export const DEFAULT_THRESHOLDS: readonly ThresholdDefinition[] = [
-  { id: null, metricName: "motor_vibration_mm_s", title: "Vibration élevée", unit: "mm/s", description: "Niveau de vibration du moteur", warningMin: null, warningMax: 4.0, criticalMin: null, criticalMax: 7.0 },
-  { id: null, metricName: "motor_temperature_c", title: "Température moteur", unit: "°C", description: "Température des enroulements du moteur", warningMin: null, warningMax: 85, criticalMin: null, criticalMax: 105 },
-  { id: null, metricName: "door_speed_ms", title: "Vitesse de porte", unit: "m/s", description: "Vitesse d'ouverture et de fermeture des portes", warningMin: 0.3, warningMax: 1.5, criticalMin: 0.1, criticalMax: 2.0 },
-  { id: null, metricName: "leveling_offset_mm", title: "Écart de nivellement", unit: "mm", description: "Écart de nivellement à l'étage", warningMin: -8, warningMax: 8, criticalMin: -15, criticalMax: 15 },
-  { id: null, metricName: "supply_voltage_v", title: "Tension d'alimentation", unit: "V", description: "Tension d'alimentation", warningMin: 360, warningMax: 440, criticalMin: 340, criticalMax: 460 },
-  { id: null, metricName: "current_draw_a", title: "Courant moteur", unit: "A", description: "Courant absorbé par le moteur", warningMin: null, warningMax: 60, criticalMin: null, criticalMax: 80 },
-];
+export const DEFAULT_THRESHOLDS: readonly ThresholdDefinition[] =
+  TELEMETRY_METRICS.map((metric) => ({
+    id: null,
+    metricName: metric.metricName,
+    title: metric.title,
+    unit: metric.unit,
+    description: metric.description,
+    ...metric.defaults,
+  }));
 
 const CACHE_TTL_MS = 30_000;
 
@@ -60,7 +71,8 @@ let cached: { rules: Map<string, ThresholdDefinition>; expiresAt: number } | nul
   null;
 let inFlight: Promise<Map<string, ThresholdDefinition>> | null = null;
 
-function toDefinition(row: {
+/** Les colonnes d'une `ThresholdRule` que ce module lit réellement. */
+interface ThresholdRuleRow {
   id: string;
   metricName: string;
   warningMin: number | null;
@@ -68,7 +80,9 @@ function toDefinition(row: {
   criticalMin: number | null;
   criticalMax: number | null;
   description: string | null;
-}): ThresholdDefinition {
+}
+
+function toDefinition(row: ThresholdRuleRow): ThresholdDefinition {
   const fallback = DEFAULT_THRESHOLDS.find(
     (d) => d.metricName === row.metricName
   );
@@ -86,6 +100,41 @@ function toDefinition(row: {
 }
 
 /**
+ * The union of the built-in defaults and whatever the table overrides.
+ *
+ * THE DEFAULTS ARE A FLOOR PER METRIC, NOT A FALLBACK FOR THE WHOLE TABLE
+ * This used to read `rows.length > 0 ? rows : defaults`, and that single
+ * ternary was a silent outage waiting for its first configuration. The moment
+ * *one* rule was written — an operator tuning the vibration threshold, via
+ * Prisma Studio or an API call — the map stopped carrying the other five
+ * metrics, the ingestion loop hit `if (!definition) continue`, and temperature,
+ * door speed, levelling, voltage and current simply stopped raising alerts.
+ * Nothing failed, nothing logged: five monitored quantities went quiet because
+ * a sixth had been configured.
+ *
+ * Merging makes the ordinary reading true — a metric without a row uses its
+ * default — and it gives "restore the default" a meaning that cannot be
+ * mistaken for "stop monitoring this": deleting a row puts the metric back on
+ * the built-in values instead of removing its coverage.
+ *
+ * `isActive: false` therefore means the same thing as deleting: the override
+ * steps aside and the default applies. There is deliberately no way to silence
+ * a metric from here; that would need bounds that never fire, and a mechanism
+ * whose purpose is to make alerting stop deserves to be built on purpose.
+ */
+function mergeWithDefaults(
+  rows: readonly ThresholdRuleRow[]
+): Map<string, ThresholdDefinition> {
+  const merged = new Map<string, ThresholdDefinition>(
+    DEFAULT_THRESHOLDS.map((definition) => [definition.metricName, definition])
+  );
+  for (const row of rows) {
+    merged.set(row.metricName, toDefinition(row));
+  }
+  return merged;
+}
+
+/**
  * Returns the active threshold map, refreshing at most once per TTL.
  * Concurrent callers share a single in-flight query.
  */
@@ -100,15 +149,11 @@ export async function loadThresholds(): Promise<Map<string, ThresholdDefinition>
       const rows = await prisma.thresholdRule.findMany({
         where: { isActive: true },
       });
-      rules = new Map(
-        rows.length > 0
-          ? rows.map((r) => [r.metricName, toDefinition(r)])
-          : DEFAULT_THRESHOLDS.map((d) => [d.metricName, d])
-      );
+      rules = mergeWithDefaults(rows);
     } catch (error) {
       // Never let a threshold lookup failure drop a telemetry reading.
       console.error("[thresholds] falling back to defaults:", error);
-      rules = new Map(DEFAULT_THRESHOLDS.map((d) => [d.metricName, d]));
+      rules = mergeWithDefaults([]);
     }
     cached = { rules, expiresAt: Date.now() + CACHE_TTL_MS };
     return rules;
@@ -208,8 +253,8 @@ export function payloadThresholds(maxPayloadKg: number): ThresholdDefinition {
     unit: "kg",
     description: `Charge de la cabine par rapport à la capacité nominale de ${maxPayloadKg} kg`,
     warningMin: null,
-    warningMax: round(maxPayloadKg),
+    warningMax: round(maxPayloadKg * OVERLOAD_POLICY.warningRatio),
     criticalMin: null,
-    criticalMax: round(maxPayloadKg * 1.1),
+    criticalMax: round(maxPayloadKg * OVERLOAD_POLICY.criticalRatio),
   };
 }
