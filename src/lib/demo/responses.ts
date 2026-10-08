@@ -1272,6 +1272,10 @@ function buildInspectionReports() {
         brand: unit?.brand ?? "—",
         model: unit?.model ?? "—",
         building: {
+          // L'identifiant est porté depuis que le registre filtre par immeuble :
+          // une liste d'immeubles sans identifiant ne peut pas alimenter un
+          // sélecteur, et la fixture se distinguerait de la route sur ce point.
+          id: building?.id ?? "—",
           name: building?.name ?? "—",
           address: building?.address ?? "—",
           city: building?.city ?? "—",
@@ -1337,19 +1341,108 @@ export function demoInspectionReportForWorkOrder(workOrderId: string) {
 }
 
 /** `GET /api/inspection-reports` — the paginated list. */
-export function demoInspectionReports(filters: { limit: number; skip: number }) {
+export function demoInspectionReports(filters: {
+  limit: number;
+  skip: number;
+  /** Les mêmes filtres que la route, pour que le mode démo se comporte pareil. */
+  result?: string;
+  technicianId?: string;
+  buildingId?: string;
+  from?: Date;
+  toExclusive?: Date;
+}) {
   const all = buildInspectionReports();
   const limit = Math.max(1, filters.limit);
+
+  /**
+   * Les filtres sont appliqués ici, et pas seulement acceptés.
+   *
+   * Un jeu de démonstration qui ignorerait `?result=FAIL` afficherait le
+   * registre entier sous un filtre qui annonce le contraire — et c'est
+   * précisément le genre d'écart qu'on ne remarque pas en écrivant l'écran,
+   * puisqu'aucune base n'est là pour montrer la différence.
+   */
+  const matching = all.filter((report) => {
+    if (filters.result && report.base.overallResult !== filters.result) {
+      return false;
+    }
+    if (
+      filters.technicianId &&
+      report.base.technician.id !== filters.technicianId
+    ) {
+      return false;
+    }
+    if (
+      filters.buildingId &&
+      report.elevator.building.id !== filters.buildingId
+    ) {
+      return false;
+    }
+    const at = report.base.submittedAt.getTime();
+    if (filters.from && at < filters.from.getTime()) return false;
+    if (filters.toExclusive && at >= filters.toExclusive.getTime()) return false;
+    return true;
+  });
 
   return {
     // The list endpoint drops `checkItems` from its select — a row is
     // summarised, not rendered — so the fixture drops them too.
-    data: all
+    data: matching
       .slice(filters.skip, filters.skip + limit)
-      .map((report) => ({ ...report.base, checkItems: [] })),
-    total: all.length,
+      .map((report) => ({
+        ...report.base,
+        checkItems: [],
+        /**
+         * L'immeuble et le bon, aplatis comme la route les rend.
+         *
+         * Le registre lit `elevator.building.name` et `workOrder.orderNumber`
+         * sur chaque ligne : sans ces deux blocs, la fixture afficherait des
+         * tirets là où une base affiche un site, et le mode démonstration ne
+         * montrerait pas l'écran qu'il est censé montrer.
+         */
+        elevator: {
+          id: report.elevator.id,
+          elevatorCode: report.elevator.elevatorCode,
+          building: {
+            id: report.elevator.building.id,
+            name: report.elevator.building.name,
+            city: report.elevator.building.city,
+          },
+        },
+        workOrder: {
+          id: report.workOrder.id,
+          orderNumber: report.workOrder.orderNumber,
+        },
+      })),
+    total: matching.length,
     page: Math.floor(filters.skip / limit) + 1,
     limit,
+    /**
+     * La répartition par verdict, sur les lignes filtrées — comme la route la
+     * calcule sur `where`. Le registre en fait son chiffre de tête.
+     */
+    counts: matching.reduce<Record<string, number>>((acc, report) => {
+      const key = report.base.overallResult;
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {}),
+    /**
+     * Les auteurs, calculés sur l'ensemble et non sur la sélection.
+     *
+     * Même règle que la route : construite sur les lignes filtrées, cette liste
+     * se réduirait au technicien choisi et le sélecteur ne permettrait plus d'en
+     * changer.
+     */
+    technicians: [
+      ...new Map(
+        all
+          .filter((report) => report.base.technician.id !== "—")
+          .map((report) => [
+            report.base.technician.id,
+            report.base.technician,
+          ])
+      ).values(),
+    ].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")),
   };
 }
 

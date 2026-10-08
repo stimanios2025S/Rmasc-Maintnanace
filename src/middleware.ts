@@ -153,6 +153,35 @@ export default withAuth(
       }
     }
 
+    // Les deux registres, et leurs deux portes différentes.
+    //
+    // Les rapports d'inspection sont ouverts aux rôles techniques, comme la
+    // route qui les sert : `GET /api/inspection-reports` est en lecture seule et
+    // un technicien n'y voit que ses propres rapports. Ce qu'il ne peut pas
+    // faire, c'est signer celui d'un autre — et c'est la route qui le tient.
+    //
+    // Les factures sont plus étroites, et pour la raison que porte déjà
+    // `GET /api/invoices` : c'est un relevé de toute la facturation de
+    // l'entreprise, avec le nom de chaque client et le montant de ce qu'il doit.
+    // Un compte de terrain n'a rien à y faire. Les deux listes viennent de
+    // `@/types`, exactement comme les routes les lisent.
+    if (
+      pathname === "/rapports-inspection" ||
+      pathname.startsWith("/rapports-inspection/")
+    ) {
+      const role = token?.role;
+      if (!role || !OPS_ROLES.includes(role)) {
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
+      }
+    }
+
+    if (pathname === "/factures" || pathname.startsWith("/factures/")) {
+      const role = token?.role;
+      if (!role || !MANAGEMENT_ROLES.includes(role)) {
+        return NextResponse.redirect(new URL("/tableau-de-bord", req.url));
+      }
+    }
+
     // `/client` is deliberately *not* role-gated: a building owner is its
     // intended user, but an administrator has to be able to open it to see
     // what a customer sees. The incident API scopes every read to the caller,
@@ -215,6 +244,12 @@ export const config = {
     "/client/:path*",
     "/administration/:path*",
     "/rapports-inspection/:path*",
+    // Sans cette ligne, `/factures` n'échapperait pas seulement au filtre des
+    // rôles ci-dessus : il échapperait à **toute** la garde d'authentification,
+    // le middleware ne s'exécutant que sur les chemins de son matcher. C'est le
+    // piège que `/alertes` a déjà rencontré, et il se représente à chaque écran
+    // ajouté hors de `/administration`.
+    "/factures/:path*",
     "/connexion",
     "/api/:path*",
   ],

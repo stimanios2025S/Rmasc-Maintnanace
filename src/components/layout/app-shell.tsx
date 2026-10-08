@@ -22,6 +22,8 @@ import {
   Users,
   UserCog,
   Gauge,
+  FileCheck,
+  Receipt,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -82,6 +84,27 @@ const NAV_ITEMS: readonly NavItem[] = [
     label: "Bons de travail",
     icon: ClipboardList,
     roles: OPS_ROLES,
+  },
+  // Les deux registres, après le travail qu'ils archivent : le tableau des bons
+  // est ce qu'on a à faire, ces deux-là sont ce qui a été fait. Un onglet
+  // « Archives » à côté d'un onglet « À faire » se comprend sans qu'on l'explique.
+  //
+  // Les rapports d'inspection sont ouverts aux rôles techniques, comme la route
+  // qui les sert — un technicien n'y voit que ses propres rapports. Les factures
+  // sont plus étroites : c'est un relevé de toute la facturation de
+  // l'entreprise, et un compte de terrain n'a rien à y faire. Ces deux listes
+  // sont exactement celles du middleware, qui les tient aussi.
+  {
+    href: "/rapports-inspection",
+    label: "Rapports d'inspection",
+    icon: FileCheck,
+    roles: OPS_ROLES,
+  },
+  {
+    href: "/factures",
+    label: "Factures",
+    icon: Receipt,
+    roles: MANAGEMENT_ROLES,
   },
   // Le programme d'entretien — la moitié préventive du métier, à côté du
   // tableau des bons qui ne porte que le curatif. Filtré aux rôles de gestion

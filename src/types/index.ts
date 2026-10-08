@@ -189,6 +189,21 @@ export const WORK_ORDER_TYPES = [
 ] as const;
 export type WorkOrderType = (typeof WORK_ORDER_TYPES)[number];
 
+/**
+ * L'état d'une facture dans le registre.
+ *
+ * Déclaré ici avec les autres vocabulaires, et non importé de
+ * `@prisma/client`, pour la raison habituelle : le registre des factures est un
+ * composant client, et l'importer depuis Prisma tirerait le moteur de base de
+ * données dans le bundle du navigateur.
+ *
+ * Il n'y a pas de « partiellement payée » — voir le commentaire de l'enum dans
+ * le schéma. Trois états suffisent à la question qu'un registre pose :
+ * « celle-ci est-elle encore due ? ».
+ */
+export const INVOICE_STATUSES = ["ISSUED", "PAID", "CANCELLED"] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
 export const ALERT_SEVERITIES = [
   "INFO",
   "WARNING",

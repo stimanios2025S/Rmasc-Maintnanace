@@ -23,6 +23,7 @@ import {
   handleRouteError,
   jsonOk,
   notFound,
+  parseEnumParam,
   parsePagination,
   readJson,
 } from "@/lib/api/http";
@@ -33,6 +34,14 @@ import {
 } from "@/lib/api/guard";
 import { generateReportNumber } from "@/lib/ids";
 import { notify, notifyMany, notifyRoles } from "@/lib/notifications/service";
+import {
+  MAX_EXPORT_ROWS,
+  csvDateTime,
+  csvFileName,
+  csvResponse,
+  toCsv,
+} from "@/lib/export/csv";
+import { dateRangeFilter, parsePeriod } from "@/lib/registers/filters";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import {
   demoInspectionReportById,
@@ -40,6 +49,12 @@ import {
   demoInspectionReports,
 } from "@/lib/demo/responses";
 import { INSPECTION_CHECK_RESULTS, MANAGEMENT_ROLES } from "@/types";
+import { enumLabel } from "@/lib/ui/enum-labels";
+import type {
+  AssertNever,
+  InspectionReportRegisterRow,
+} from "@/lib/registers/shapes";
+import type { CsvColumn } from "@/lib/export/csv";
 import type { Prisma } from "@prisma/client";
 
 const CheckItemSchema = z.object({
@@ -108,6 +123,105 @@ function overallResult(
   if (items.every((i) => i.result === "NOT_APPLICABLE")) return "NOT_APPLICABLE";
   return "PASS";
 }
+
+/**
+ * Ce qu'une ligne du **registre** affiche.
+ *
+ * Distinct du `select` de la fiche, et c'est nécessaire : le registre montre
+ * l'immeuble et le numéro du bon — sans quoi une ligne « Rapport du 3 mars » ne
+ * dit pas de quelle machine elle parle — et il ne charge aucun point de
+ * contrôle, qui est le contenu de la fiche et non de la liste.
+ */
+const LIST_SELECT = {
+  id: true,
+  reportNumber: true,
+  title: true,
+  overallResult: true,
+  submittedAt: true,
+  workOrderId: true,
+  technician: { select: { id: true, name: true } },
+  workOrder: { select: { id: true, orderNumber: true } },
+  elevator: {
+    select: {
+      id: true,
+      elevatorCode: true,
+      building: { select: { id: true, name: true, city: true } },
+    },
+  },
+} satisfies Prisma.InspectionReportSelect;
+
+/**
+ * Garde de compilation : la projection rend-elle tout ce que l'écran lit ?
+ *
+ * Voir le commentaire jumeau dans `api/invoices/route.ts`. L'écran et la route
+ * sont séparés par une frontière HTTP : un champ absent de `LIST_SELECT` ne
+ * casse rien, il affiche un tiret. Ce type échoue à la compilation dans ce cas
+ * précis.
+ */
+type ReportRegisterGap = Exclude<
+  keyof InspectionReportRegisterRow,
+  keyof Prisma.InspectionReportGetPayload<{ select: typeof LIST_SELECT }>
+>;
+type _ReportRegisterIsCovered = AssertNever<ReportRegisterGap>;
+
+/** Les colonnes de l'export. Plus larges que la liste : une ligne, un dossier. */
+const EXPORT_SELECT = {
+  reportNumber: true,
+  submittedAt: true,
+  overallResult: true,
+  title: true,
+  technician: { select: { name: true } },
+  workOrder: { select: { orderNumber: true } },
+  elevator: {
+    select: {
+      elevatorCode: true,
+      building: { select: { name: true, city: true } },
+    },
+  },
+} as const;
+
+/**
+ * Ce qu'une ligne d'export doit porter — décrit par ses champs, pas par Prisma.
+ *
+ * La forme est écrite à la main plutôt qu'extraite du client Prisma pour une
+ * raison précise : le jeu de démonstration produit les mêmes lignes sans passer
+ * par la base, et il doit pouvoir emprunter exactement le même chemin d'export.
+ * Un type qui ne décrirait que la sortie de Prisma obligerait à écrire un second
+ * export pour le mode démonstration, c'est-à-dire deux fichiers que personne ne
+ * comparerait jamais.
+ */
+interface ReportExportRow {
+  reportNumber: string;
+  submittedAt: Date;
+  overallResult: string;
+  title: string;
+  technician: { name: string | null };
+  workOrder: { orderNumber: string };
+  elevator: { elevatorCode: string; building: { name: string; city: string } };
+}
+
+/**
+ * L'ordre des colonnes du fichier, et il est choisi pour être lu.
+ *
+ * Ce qui identifie d'abord — le numéro, la date —, puis de quoi on parle, puis
+ * qui, puis le verdict. Le titre du rapport est en fin de ligne parce qu'il est
+ * long et libre : au milieu, il repousse le résultat hors de l'écran.
+ *
+ * La conformité est écrite en français, par `enumLabel`, et non en `FAIL`. Un
+ * registre s'ouvre pour être lu par un bureau, pas pour être reparsé : la valeur
+ * stockée est un contrat avec la base, pas un mot pour un lecteur.
+ */
+const EXPORT_COLUMNS: readonly CsvColumn<ReportExportRow>[] = [
+  { header: "Numéro", value: (row) => row.reportNumber },
+  { header: "Transmis le", value: (row) => csvDateTime(row.submittedAt) },
+  { header: "Immeuble", value: (row) => row.elevator.building.name },
+  { header: "Ville", value: (row) => row.elevator.building.city },
+  { header: "Appareil", value: (row) => row.elevator.elevatorCode },
+  { header: "Technicien", value: (row) => row.technician.name },
+  { header: "Bon de travail", value: (row) => row.workOrder.orderNumber },
+  { header: "Titre", value: (row) => row.title },
+  { header: "Conformité", value: (row) => enumLabel(row.overallResult) },
+];
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -222,25 +336,135 @@ export async function GET(request: NextRequest) {
     }
 
     const { page, limit, skip } = parsePagination(request.nextUrl.searchParams);
-    const where: Prisma.InspectionReportWhereInput =
+
+    /**
+     * Le périmètre du demandeur, et il est posé EN DERNIER dans `where`.
+     *
+     * C'est le point qui décide de tout : un filtre venu de l'adresse — même
+     * `?technicianId=<un collègue>` — est écrasé par cette clause, parce qu'un
+     * filtre de confort ne peut pas élargir un droit. Les deux lignes ci-dessous
+     * n'expriment qu'une chose : ce que le demandeur a le droit de lire.
+     */
+    const scope: Prisma.InspectionReportWhereInput =
       session.user.role === "FIELD_TECHNICIAN"
         ? { technicianId: session.user.id }
         : ownerScope;
 
-    const [total, reports] = await Promise.all([
+    /**
+     * LES FILTRES DU REGISTRE
+     *
+     * Une recherche sur quatre critères — période, technicien, immeuble,
+     * conformité —, chacun absent par défaut. Aucun n'est requis : un registre
+     * s'ouvre sur l'historique entier, et se resserre ensuite.
+     *
+     * `parseEnumParam` refuse une conformité inconnue au lieu de l'ignorer.
+     * `?result=NIMPORTEQUOI` qui rendrait le registre complet donnerait un
+     * export qui a l'air filtré et ne l'est pas.
+     */
+    const result = parseEnumParam(
+      searchParams,
+      "result",
+      INSPECTION_CHECK_RESULTS
+    );
+    const technicianId = searchParams.get("technicianId") || undefined;
+    const buildingId = searchParams.get("buildingId") || undefined;
+    const submittedAt = dateRangeFilter(parsePeriod(searchParams));
+
+    const where: Prisma.InspectionReportWhereInput = {
+      ...(result ? { overallResult: result } : {}),
+      ...(technicianId ? { technicianId } : {}),
+      ...(buildingId ? { elevator: { buildingId } } : {}),
+      ...(submittedAt ? { submittedAt } : {}),
+      ...scope,
+    };
+
+    // ─── Export ───────────────────────────────────────────────
+    //
+    // Il partage `where`, et c'est tout l'intérêt : le fichier contient
+    // exactement ce que l'écran montre. Un export qui relirait ses propres
+    // paramètres finirait par diverger de la liste au premier filtre ajouté à
+    // l'un et pas à l'autre.
+    if (searchParams.get("format") === "csv") {
+      const exportable = await prisma.inspectionReport.count({ where });
+      if (exportable > MAX_EXPORT_ROWS) {
+        throw badRequest(
+          `L'export est limité à ${MAX_EXPORT_ROWS.toLocaleString("fr-FR")} ` +
+            `lignes, et ce filtre en compte ${exportable.toLocaleString("fr-FR")}. ` +
+            "Resserrez la période ou l'immeuble."
+        );
+      }
+
+      const rows = await prisma.inspectionReport.findMany({
+        where,
+        orderBy: { submittedAt: "desc" },
+        select: EXPORT_SELECT,
+      });
+
+      return csvResponse(
+        csvFileName("registre-rapports-inspection"),
+        toCsv<ReportExportRow>(EXPORT_COLUMNS, rows)
+      );
+    }
+
+    const [total, reports, technicians, byResult] = await Promise.all([
       prisma.inspectionReport.count({ where }),
       prisma.inspectionReport.findMany({
         where,
         orderBy: { submittedAt: "desc" },
         skip,
         take: limit,
-        select: { ...select, checkItems: false },
+        select: LIST_SELECT,
+      }),
+      /**
+       * Les auteurs des rapports **du périmètre**, et non ceux du filtre.
+       *
+       * La différence n'est pas cosmétique : construite sur `where`, cette liste
+       * se réduirait au technicien qu'on vient de choisir, et le sélecteur
+       * n'offrirait plus aucun moyen d'en sortir — un filtre dont on ne peut
+       * plus revenir est un piège.
+       *
+       * Lue depuis les rapports eux-mêmes plutôt que depuis `/api/technicians` :
+       * ce dernier est réservé aux rôles de gestion, et un responsable qui a
+       * signé un rapport doit y figurer comme les autres. Ici, quiconque
+       * apparaît dans une ligne apparaît dans la liste — et personne d'autre,
+       * donc aucun nom ne fuit hors du périmètre.
+       */
+      prisma.user.findMany({
+        where: { inspectionReports: { some: scope } },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      }),
+      /**
+       * La répartition par verdict, sur `where`.
+       *
+       * C'est le chiffre de tête d'un registre de conformité : « quarante
+       * rapports, dont trois non conformes » se lit, « quarante rapports » ne
+       * dit rien. Compté par la base plutôt qu'en comptant les lignes
+       * affichées — celles-ci sont paginées, et un total calculé sur une page
+       * serait faux sans que rien ne le signale.
+       */
+      prisma.inspectionReport.groupBy({
+        by: ["overallResult"],
+        where,
+        _count: { _all: true },
       }),
     ]);
 
+    const counts: Record<string, number> = {};
+    for (const row of byResult) {
+      counts[row.overallResult] = row._count._all;
+    }
+
     // `total` sits alongside `data` rather than inside it, matching
     // /api/alerts and /api/work-orders.
-    return NextResponse.json({ data: reports, total, page, limit });
+    return NextResponse.json({
+      data: reports,
+      total,
+      page,
+      limit,
+      technicians,
+      counts,
+    });
   } catch (error) {
     /**
      * Dev-only fixture fallback, engaged only when `DEMO_DATA="true"` *and* the
@@ -270,8 +494,49 @@ export async function GET(request: NextRequest) {
       }
 
       warnDemoFallbackOnce("GET /api/inspection-reports");
+      /**
+       * Les filtres sont relus ici plutôt que passés depuis le `try`.
+       *
+       * Ils ont déjà été validés — s'ils étaient illisibles, la route aurait
+       * refusé avant d'atteindre la base, et `shouldServeDemoData` ne se
+       * déclenche que sur une panne de connexion. Les relire évite de faire
+       * traverser cinq variables à travers le `catch` pour un chemin qui n'est
+       * actif qu'en développement.
+       */
+      const period = parsePeriod(searchParams);
+      const filters = {
+        result: parseEnumParam(searchParams, "result", INSPECTION_CHECK_RESULTS),
+        technicianId: searchParams.get("technicianId") || undefined,
+        buildingId: searchParams.get("buildingId") || undefined,
+        from: period.from ?? undefined,
+        toExclusive: period.toExclusive ?? undefined,
+      };
+
+      // L'export est servi depuis les mêmes lignes, pour que le bouton du
+      // registre rende un fichier de démonstration plutôt qu'un JSON renommé
+      // en `.csv` — un fichier qu'on n'ouvre qu'une fois avant de conclure que
+      // l'export est cassé.
+      //
+      // Et il n'est pas paginé : un export rend ce que le filtre décrit, pas la
+      // page affichée. Hériter de la pagination produirait un fichier de
+      // cinquante lignes qui a l'air complet.
+      if (searchParams.get("format") === "csv") {
+        const all = demoInspectionReports({
+          ...filters,
+          limit: MAX_EXPORT_ROWS,
+          skip: 0,
+        });
+        return csvResponse(
+          csvFileName("registre-rapports-inspection"),
+          toCsv<ReportExportRow>(
+            EXPORT_COLUMNS,
+            all.data as unknown as ReportExportRow[]
+          )
+        );
+      }
+
       const { limit, skip } = parsePagination(searchParams);
-      return NextResponse.json(demoInspectionReports({ limit, skip }));
+      return NextResponse.json(demoInspectionReports({ ...filters, limit, skip }));
     }
 
     return handleRouteError(error);

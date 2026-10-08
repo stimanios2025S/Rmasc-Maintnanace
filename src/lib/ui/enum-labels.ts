@@ -17,6 +17,8 @@
  * caught, harmless enough not to break a screen.
  */
 
+import type { InvoiceStatus } from "@/types";
+
 export const ENUM_LABELS: Record<string, string> = {
   // ─── Work order status ────────────────────────────────────
   OPEN: "Ouvert",
@@ -32,6 +34,16 @@ export const ENUM_LABELS: Record<string, string> = {
   PREDICTIVE: "Prédictif",
   CORRECTIVE: "Correctif",
   INSPECTION: "Inspection",
+
+  // ─── État d'une facture ───────────────────────────────────
+  //
+  // `CANCELLED` n'est PAS repris ici : la clé est déjà définie plus haut, pour
+  // l'état d'un bon de travail, où elle se lit « Annulé ». Une facture est un
+  // nom féminin et se lit « Annulée » ; une table indexée par la valeur stockée
+  // ne peut pas porter les deux. C'est `INVOICE_STATUS_LABELS`, plus bas, qui
+  // porte la forme accordée — et lui seul est importé par le registre.
+  ISSUED: "Émise",
+  PAID: "Réglée",
 
   // ─── Priority ─────────────────────────────────────────────
   LOW: "Faible",
@@ -168,4 +180,38 @@ export function enumLabel(value: string): string {
     .replace(/_/g, " ")
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * L'état d'une facture, tel que le registre et sa fiche le lisent.
+ *
+ * POURQUOI CETTE SECONDE TABLE
+ * `ENUM_LABELS` est indexée par la valeur stockée, et une valeur ne peut y
+ * porter qu'un libellé. Or `CANCELLED` s'accorde différemment selon ce qu'il
+ * qualifie : un *bon de travail* est annulé, une *facture* est annulée, et le
+ * même registre affiche les deux à quelques lignes d'écart. Écrire « Annulé »
+ * sur une facture se voit immédiatement.
+ *
+ * Les deux valeurs qui n'ont pas ce problème sont lues depuis la table
+ * commune, pour qu'il n'existe pas deux définitions de « Réglée ».
+ */
+export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
+  ISSUED: ENUM_LABELS.ISSUED,
+  PAID: ENUM_LABELS.PAID,
+  CANCELLED: "Annulée",
+};
+
+/**
+ * Le libellé d'un état de facture reçu comme une chaîne.
+ *
+ * Les routes et les exports manipulent le statut en `string` — il sort d'une
+ * colonne, d'un paramètre d'adresse ou d'une ligne de fixture —, et un
+ * `as InvoiceStatus` écrit à chaque appel site serait un endroit de plus où
+ * oublier la valeur inconnue. Le repli est `enumLabel`, qui rend une forme
+ * lisible plutôt qu'une clé.
+ */
+export function invoiceStatusLabel(status: string): string {
+  return (
+    INVOICE_STATUS_LABELS[status as InvoiceStatus] ?? enumLabel(status)
+  );
 }

@@ -28,6 +28,22 @@
  * POURQUOI LES VALEURS VIENNENT DE LA LIGNE `Invoice`
  * Voir le commentaire du modèle : une facture est un document opposable, et tout
  * ce qu'elle imprime est figé à l'émission. Ce module ne lit jamais le bon.
+ *
+ * L'ÉTAT EST LA SEULE CHOSE QUI BOUGE, ET C'EST VOULU
+ * Tout ce qui précède reste vrai du contenu : le client, le lieu, les travaux,
+ * les pièces et le montant viennent des colonnes figées le jour de l'émission.
+ * L'*état* de la pièce, lui, est relu sur la ligne à chaque rendu — et c'est
+ * nécessaire, parce qu'une facture annulée qui continuerait de s'imprimer comme
+ * une facture ordinaire réclame une somme que plus personne ne doit.
+ *
+ * Le risque que la règle d'origine écartait — deux personnes obtenant deux
+ * documents différents à partir de la même adresse — n'est pas rouvert pour
+ * autant : personne ne *choisit* cet état. Il vient de la base, il est le même
+ * pour tout le monde, et aucun paramètre d'adresse ne peut le faire varier.
+ *
+ * Une facture restée `ISSUED` s'imprime exactement comme avant que la colonne
+ * n'existe. Aucune pièce déjà envoyée à un client ne change d'aspect, donc
+ * aucune réimpression ne devient une variante du document d'origine.
  */
 
 import { existsSync } from "node:fs";
@@ -122,6 +138,49 @@ function resolveStampPath(): string | null {
     ? path.resolve(configured)
     : path.join(process.cwd(), "public", "cachet.png");
   return existsSync(candidate) ? candidate : null;
+}
+
+/**
+ * Le bandeau d'état, ou `null` pour une facture ordinaire.
+ *
+ * Il n'est rendu que sur une pièce qui n'est plus due. `ISSUED` ne produit rien
+ * du tout, et c'est la garantie qu'une facture jamais touchée s'imprime
+ * exactement comme avant l'existence de la colonne.
+ *
+ * Le texte dit ce que l'état veut dire, et pas seulement son nom : « ANNULÉE »
+ * seul laisse un lecteur devant la question de savoir s'il doit payer. Le
+ * bandeau vert, lui, sert au règlement — la facture réglée qu'un client
+ * redemande est un document qui circule, et il vaut mieux qu'il porte la réponse
+ * que de laisser quelqu'un la chercher.
+ */
+function statusBand(invoice: Invoice): {
+  label: string;
+  fill: string;
+  ink: string;
+} | null {
+  const since = invoice.statusChangedAt
+    ? ` le ${printable(frenchDate(invoice.statusChangedAt))}`
+    : "";
+
+  if (invoice.status === "PAID") {
+    return {
+      label: printable(`RÉGLÉE${since} — cette facture a été acquittée`),
+      fill: "#dcfce7",
+      ink: "#166534",
+    };
+  }
+
+  if (invoice.status === "CANCELLED") {
+    return {
+      label: printable(
+        `ANNULÉE${since} — cette facture est sans effet et n'est plus due`
+      ),
+      fill: "#fee2e2",
+      ink: "#991b1b",
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -235,6 +294,23 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
       .lineWidth(1)
       .stroke();
     y += 18;
+
+    // ─── État de la pièce ─────────────────────────────────────
+    //
+    // Placé juste sous l'en-tête, avant tout le contenu : c'est la première
+    // chose qu'un lecteur doit savoir d'une facture annulée, et la dernière
+    // qu'il lirait si le bandeau vivait en pied de page.
+    const band = statusBand(invoice);
+    if (band) {
+      const bandHeight = 24;
+      doc.rect(left, y, width, bandHeight).fill(band.fill);
+      doc
+        .fillColor(band.ink)
+        .font("Helvetica-Bold")
+        .fontSize(10)
+        .text(band.label, left + 10, y + 8, { width: width - 20 });
+      y += bandHeight + 18;
+    }
 
     // ─── Client et lieu ───────────────────────────────────────
     const columnWidth = (width - 24) / 2;

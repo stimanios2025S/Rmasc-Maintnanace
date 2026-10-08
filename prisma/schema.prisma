@@ -129,6 +129,27 @@ enum WorkOrderType {
   INSPECTION
 }
 
+/// Où en est une facture dans la vie d'une pièce comptable.
+///
+/// TROIS ÉTATS, ET LE TROISIÈME N'EST PAS DÉCORATIF
+/// `CANCELLED` existe parce que le modèle interdit deux factures vivantes pour
+/// un même bon (`Invoice.workOrderId` est unique) : refaire une facture veut
+/// donc nécessairement dire annuler la première. Sans cet état, une facture
+/// fausse resterait éternellement « émise » et réclamerait un montant que
+/// personne ne doit.
+///
+/// IL N'Y A PAS DE « PARTIELLEMENT PAYÉE », ET C'EST DÉLIBÉRÉ
+/// Le schéma ne porte ni TVA, ni taux, ni échéance, parce que le régime n'est
+/// pas tranché — le commentaire du modèle le dit. Un encaissement partiel
+/// demanderait un journal des règlements, un lettrage et un reste dû ; trois
+/// états binaires suffisent à répondre à la seule question qu'un registre pose
+/// aujourd'hui : « celle-ci est-elle encore due ? ».
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  CANCELLED
+}
+
 enum AlertSeverity {
   INFO
   WARNING
@@ -344,6 +365,11 @@ model User {
   /// Invoices this account issued, when a manager or an administrator closed the
   /// job that produced them.
   issuedInvoices       Invoice[]           @relation("IssuedInvoices")
+
+  /// Les factures dont ce compte a changé l'état — marquées réglées ou
+  /// annulées. Troisième arête entre `User` et `Invoice`, donc nommée pour la
+  /// même raison que les deux précédentes.
+  invoiceStatusChanges Invoice[]           @relation("InvoiceStatusChanges")
 
   // Two distinct roles on the same model, so both need naming: a client
   // account that *reports* a fault is a different person from the field
@@ -871,6 +897,21 @@ model Invoice {
   amount   Decimal @db.Decimal(12, 2)
   currency String  @default("DZD")
 
+  /// L'état de la pièce. Nouvelle colonne : les factures déjà émises prennent
+  /// `ISSUED`, qui est ce qu'elles étaient — aucun document existant ne change
+  /// de sens rétroactivement.
+  ///
+  /// Le document lui-même n'est pas réécrit quand l'état change : voir
+  /// `statusChangedAt`, et le commentaire de `renderInvoicePdf`.
+  status             InvoiceStatus @default(ISSUED)
+  /// Quand l'état a été posé. NULL sur une facture restée `ISSUED`, et ce n'est
+  /// pas une donnée manquante : c'est la date à laquelle on l'a marquée réglée
+  /// ou annulée, qui n'existe pas tant que personne ne l'a fait.
+  statusChangedAt    DateTime?     @map("status_changed_at")
+  /// Qui l'a posé. Nullable et `SetNull` : le départ d'un salarié ne doit pas
+  /// effacer la trace d'un encaissement, il ne doit faire perdre que le nom.
+  statusChangedById  String?       @map("status_changed_by_id")
+
   /// `Restrict`, et non `Cascade` : une facture est une pièce comptable, et
   /// supprimer le bon ne doit pas l'effacer avec lui. C'est ce qui rend
   /// impossible la suppression d'un bon déjà facturé — ce qui est le
@@ -878,10 +919,14 @@ model Invoice {
   workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
   client    User?     @relation("ClientInvoices", fields: [clientId], references: [id], onDelete: SetNull)
   issuedBy  User?     @relation("IssuedInvoices", fields: [issuedById], references: [id], onDelete: SetNull)
+  statusChangedBy User? @relation("InvoiceStatusChanges", fields: [statusChangedById], references: [id], onDelete: SetNull)
 
   /// Le portail client lit cette liste : « mes factures, les plus récentes
   /// d'abord ».
   @@index([clientId, issuedAt])
+  /// Le registre, lui, demande « les non réglées de ce trimestre ». Sans cet
+  /// index, chaque ouverture du registre trie l'historique complet.
+  @@index([status, issuedAt])
   @@index([year, sequence])
   @@map("invoices")
 }
