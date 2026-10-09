@@ -19,6 +19,7 @@ import {
 } from "@/lib/geo/technician-position";
 import { DISPATCHABLE_TECHNICIAN_STATUSES, USER_ROLES } from "@/types";
 import { ENTRETIEN_CHECK_NAMES } from "@/lib/maintenance/entretien-checklist";
+import { computeQuoteTotals } from "@/lib/quotes/totals";
 import {
   DERIVED_METRIC,
   TELEMETRY_METRICS,
@@ -1666,6 +1667,175 @@ export function demoPartRequirementById(id: string) {
     buildingAddress: building?.address ?? "—",
     buildingCity: building?.city ?? "—",
   };
+}
+
+// ─── GET /api/quotes ────────────────────────────────────────
+
+/**
+ * Les devis du jeu de démonstration, lignes comprises.
+ *
+ * POURQUOI LES FACTURES N'EN ONT PAS ET LES DEVIS OUI
+ * Une facture est un document numéroté et figé : en inventer un numéro de pièce
+ * comptable serait produire un faux. Un devis est une *offre* — elle peut être
+ * refusée, elle expire, elle n'engage rien tant que le client n'a pas signé —,
+ * et un numéro de devis inventé n'a pas la même portée.
+ *
+ * Et il y a une raison pratique qui compte autant : sans fixture, ni le registre
+ * ni le PDF ne seraient exerçables sur une machine sans base de données, c'est-
+ * à-dire précisément là où une erreur de mise en page ne se voit pas.
+ *
+ * Une seule construction, deux lectures : `demoQuotes` en retire les lignes pour
+ * le registre, `demoQuoteById` les garde pour la fiche. Deux jeux de données
+ * séparés auraient fini par ne plus raconter la même histoire.
+ */
+function buildDemoQuotes() {
+  const { buildings, elevators, users } = demoWorld();
+
+  /**
+   * Des projets réels pour un parc d'ascenseurs — une rénovation de gaine, un
+   * remplacement d'armoire, une mise en conformité. Un devis de démonstration
+   * qui demanderait « des travaux » n'apprendrait rien sur le document.
+   */
+  const PROJETS: {
+    need: string;
+    notes: string;
+    status: string;
+    lines: {
+      reference?: string;
+      designation: string;
+      quantity: number;
+      unit: string;
+      unitPrice: number;
+    }[];
+  }[] = [
+    {
+      need:
+        "Remplacement de l'armoire de commande de l'ascenseur principal : " +
+        "l'appareil s'arrête aléatoirement depuis plusieurs semaines, et la " +
+        "mise à niveau du micrologiciel n'a rien réglé.",
+      notes:
+        "Intervention sur deux jours. L'appareil reste hors service pendant le " +
+        "remplacement ; un ascenseur sur deux reste en fonctionnement dans " +
+        "l'immeuble.",
+      status: "REQUESTED",
+      lines: [],
+    },
+    {
+      need:
+        "Rénovation complète de la cabine : habillage, éclairage, miroir et " +
+        "remplacement du revêtement de sol. Demande du conseil syndical.",
+      notes: "Délai de fourniture estimé à cinq semaines.",
+      status: "SENT",
+      lines: [
+        { reference: "CAB-HAB", designation: "Habillage cabine sur mesure", quantity: 1, unit: "forfait", unitPrice: 185000 },
+        { reference: "CAB-SOL", designation: "Revêtement de sol antidérapant", quantity: 1, unit: "forfait", unitPrice: 24500 },
+        { reference: "CAB-ECL", designation: "Éclairage LED et plafonnier", quantity: 2, unit: "U", unitPrice: 12750 },
+        { designation: "Main-d'œuvre de pose", quantity: 16, unit: "h", unitPrice: 2400 },
+      ],
+    },
+    {
+      need:
+        "Mise en conformité de la gaine : éclairage réglementaire, " +
+        "signalisation des paliers et mise à jour du carnet d'entretien.",
+      notes: "Visite technique effectuée, relevé joint au dossier.",
+      status: "ACCEPTED",
+      lines: [
+        { reference: "GAI-ECL", designation: "Éclairage de gaine aux normes", quantity: 1, unit: "forfait", unitPrice: 68000 },
+        { reference: "GAI-SIG", designation: "Signalisation et étiquetage des paliers", quantity: 8, unit: "U", unitPrice: 1850 },
+        { designation: "Contrôle réglementaire et rapport", quantity: 1, unit: "forfait", unitPrice: 15000 },
+      ],
+    },
+    {
+      need:
+        "Remplacement des câbles de traction sur l'appareil de service : " +
+        "casses relevées au-delà du seuil réglementaire au dernier entretien.",
+      notes: "Appareil consigné dans l'attente.",
+      status: "REFUSED",
+      lines: [
+        { reference: "R-6x19", designation: "Jeu de câbles de traction 8 mm", quantity: 4, unit: "U", unitPrice: 42000 },
+        { designation: "Main-d'œuvre et mise en service", quantity: 24, unit: "h", unitPrice: 2400 },
+      ],
+    },
+  ];
+
+  const now = Date.now();
+  const daysAgo = (n: number) => new Date(now - n * 24 * 60 * 60 * 1000);
+
+  return PROJETS.map((projet, index) => {
+    const building = buildings[index % buildings.length];
+    const unit = elevators.find((e) => e.buildingId === building?.id) ?? null;
+    const client = users.find(
+      (u) => u.role === "BUILDING_OWNER" && u.id === building?.ownerId
+    );
+    const createdAt = daysAgo(4 + index * 9);
+
+    return {
+      id: `quote_${index + 1}`,
+      number: `DEV-${createdAt.getFullYear()}/${String(41 + index).padStart(4, "0")}`,
+      status: projet.status,
+      createdAt,
+      sentAt:
+        projet.status === "REQUESTED"
+          ? null
+          : new Date(createdAt.getTime() + 36e5 * 30),
+      decidedAt:
+        projet.status === "ACCEPTED" || projet.status === "REFUSED"
+          ? new Date(createdAt.getTime() + 36e5 * 96)
+          : null,
+      validityDays: 30,
+      need: projet.need,
+      notes: projet.notes,
+      buildingId: building?.id ?? "—",
+      elevatorId: unit?.id ?? null,
+      clientId: client?.id ?? null,
+      client: client ? { id: client.id, name: client.name } : null,
+      building: {
+        id: building?.id ?? "—",
+        name: building?.name ?? "—",
+        // L'adresse est portée depuis que le devis l'imprime : une offre sans
+        // lieu de chantier ne se lit pas, et la fixture doit pouvoir produire le
+        // même document que la base.
+        address: building?.address ?? "—",
+        city: building?.city ?? "—",
+      },
+      elevator: unit ? { id: unit.id, elevatorCode: unit.elevatorCode } : null,
+      totals: computeQuoteTotals(projet.lines),
+      lines: projet.lines.map((line, position) => ({
+        id: `qline_${index + 1}_${position + 1}`,
+        position: position + 1,
+        reference: line.reference ?? null,
+        designation: line.designation,
+        quantity: line.quantity,
+        unit: line.unit,
+        unitPrice: line.unitPrice,
+      })),
+    };
+  });
+}
+
+/** Le registre : les lignes sont retirées, il n'en garde que le nombre. */
+export function demoQuotes(filters: { status?: string } = {}) {
+  const filtered = buildDemoQuotes()
+    .filter((row) => !filters.status || row.status === filters.status)
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  return {
+    data: filtered.map(({ lines, ...row }) => ({
+      ...row,
+      lineCount: lines.length,
+    })),
+    pagination: {
+      total: filtered.length,
+      page: 1,
+      limit: filtered.length,
+      totalPages: 1,
+    },
+  };
+}
+
+/** Un devis et ses lignes — ce que lisent l'écran de chiffrage et le PDF. */
+export function demoQuoteById(id: string) {
+  return buildDemoQuotes().find((row) => row.id === id) ?? null;
 }
 
 // ─── GET /api/notifications ─────────────────────────────────

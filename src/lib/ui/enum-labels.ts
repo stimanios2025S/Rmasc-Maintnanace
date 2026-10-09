@@ -64,6 +64,17 @@ export const ENUM_LABELS: Record<string, string> = {
   REJECTED: "Refusée",
   FULFILLED: "Posée",
 
+  // ─── État d'un devis ──────────────────────────────────────
+  //
+  // Aucune de ces clés n'était prise, et `CANCELLED` — défini plus haut pour le
+  // bon de travail — convient tel quel : un devis est un nom masculin, comme un
+  // bon. C'est la facture qui avait besoin de sa forme accordée, et elle a sa
+  // propre table.
+  REQUESTED: "Demandé",
+  SENT: "Envoyé",
+  ACCEPTED: "Accepté",
+  REFUSED: "Refusé",
+
   // ─── Priority ─────────────────────────────────────────────
   LOW: "Faible",
   MEDIUM: "Moyenne",

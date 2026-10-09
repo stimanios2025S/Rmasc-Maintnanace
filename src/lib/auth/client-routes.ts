@@ -25,8 +25,18 @@
  * — cela casserait simplement l'écran.
  */
 
-/** Les deux écrans d'un compte client, et leur préfixe imbriqué. */
-export const CLIENT_ALLOWED_PATHS = ["/tableau-de-bord", "/client"] as const;
+/** Les écrans d'un compte client, et leur préfixe imbriqué. */
+export const CLIENT_ALLOWED_PATHS = [
+  "/tableau-de-bord",
+  "/client",
+  /*
+   * « /client/devis » n'est pas ajouté séparément : la règle de préfixe
+   * ci-dessous couvre déjà tout ce qui est sous « /client », et l'écrire deux
+   * fois donnerait deux endroits à tenir à jour le jour où l'adresse change.
+   * La demande de devis vit donc sous l'espace client, à côté de la fiche
+   * technique — deux formulaires que le client remplit lui-même.
+   */
+] as const;
 
 /**
  * Vrai si un compte client peut ouvrir cette adresse.

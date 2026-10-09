@@ -273,6 +273,29 @@ export type InspectionCheckResult = (typeof INSPECTION_CHECK_RESULTS)[number];
 export const REPORT_KINDS = ["INSPECTION", "ENTRETIEN"] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
 
+/**
+ * Où en est une demande de devis.
+ *
+ * La séparation entre `REQUESTED` et `SENT` porte tout le reste : la première
+ * est une demande que personne n'a chiffrée, la seconde une offre faite au
+ * client. Les confondre reviendrait à dire qu'une demande non traitée est une
+ * offre.
+ *
+ * Déclaré ici, avec les autres vocabulaires, et non importé de `@prisma/client`
+ * : l'écran de chiffrage et le portail client sont des composants clients, et
+ * l'importer depuis Prisma tirerait le moteur de base de données dans le
+ * navigateur — la règle qui a fait sortir `metric-catalogue` du module de
+ * télémétrie.
+ */
+export const QUOTE_STATUSES = [
+  "REQUESTED",
+  "SENT",
+  "ACCEPTED",
+  "REFUSED",
+  "CANCELLED",
+] as const;
+export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
+
 export const TECHNICIAN_STATUSES = [
   "AVAILABLE",
   "ON_JOB",

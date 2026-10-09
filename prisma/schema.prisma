@@ -422,6 +422,14 @@ model User {
   /// Et celles qu'il a arbitrées, quand c'est un compte de bureau.
   partRequestDecisions PartRequirement[]   @relation("PartRequestDecisions")
 
+  /// Les devis demandés *par* ce compte client, et ceux qu'il a décidés côté
+  /// entreprise. Trois arêtes nommées, comme pour les factures : un devis a un
+  /// demandeur, un destinataire et un décideur, et les confondre serait un bug
+  /// qui ne se verrait qu'en production.
+  clientQuotes    Quote[] @relation("ClientQuotes")
+  requestedQuotes Quote[] @relation("RequestedQuotes")
+  decidedQuotes   Quote[] @relation("DecidedQuotes")
+
   // Two distinct roles on the same model, so both need naming: a client
   // account that *reports* a fault is a different person from the field
   // technician who *resolves* it.
@@ -485,6 +493,10 @@ model Building {
   ownerId       String?   @map("owner_id")
   owner         User?     @relation(fields: [ownerId], references: [id], onDelete: SetNull)
 
+  /// Les devis émis pour ce site. L'immeuble est obligatoire sur un devis : une
+  /// offre sans adresse ne se visite pas.
+  quotes        Quote[]
+
   // Every BUILDING_OWNER read is filtered on `owner_id` (see
   // `buildingScopeFor` in src/lib/api/guard.ts), so this is a hot filter, not
   // an incidental relation.
@@ -525,6 +537,9 @@ model Elevator {
   predictiveScores PredictiveScore[]
   inspectionReports InspectionReport[]
   incidents        IncidentReport[]
+  /// Les devis qui visent cet appareil. Facultatif côté devis : une rénovation
+  /// de gaine concerne le site, pas une machine.
+  quotes           Quote[]
   latestTelemetry  TelemetrySnapshot? @relation("LatestTelemetry")
 
   /// The « Fiche Technique » for this unit, when one has been submitted. At
@@ -1060,6 +1075,145 @@ model Invoice {
   @@index([status, issuedAt])
   @@index([year, sequence])
   @@map("invoices")
+}
+
+/// Où en est une demande de devis.
+///
+/// CINQ ÉTATS, ET LA SEPARATION ENTRE LES DEUX PREMIERS COMPTE
+/// `REQUESTED` est une demande : le client a décrit un besoin, personne ne l'a
+/// chiffré. `SENT` est une offre : le bureau a arrêté un prix et l'a remise.
+/// Les confondre reviendrait à dire qu'une demande non chiffrée est une offre
+/// faite au client — et c'est exactement ce qu'un devis ne doit pas laisser
+/// croire.
+///
+/// `ACCEPTED` porte l'accord du client, matérialisé sur le formulaire par le
+/// « Bon pour accord et confirmation ». C'est la seule chose qui distingue un
+/// devis accepté d'un devis envoyé, et c'est celle qu'on cherche quand on se
+/// demande si les travaux peuvent commencer.
+enum QuoteStatus {
+  REQUESTED
+  SENT
+  ACCEPTED
+  REFUSED
+  CANCELLED
+}
+
+/// Un devis — For: APP/DA/04/14.
+///
+/// CE QU'IL N'EST PAS
+/// Une facture. Un devis est une *offre* : elle a une durée de validité, elle
+/// peut être refusée, et elle ne constate aucun travail fait. C'est pourquoi il
+/// ne partage pas la table des factures, dont le commentaire explique que tout
+/// ce qui s'y imprime est figé à l'émission.
+///
+/// CE QU'IL GARDE VIVANT, ET POURQUOI
+/// Contrairement à la facture, le devis ne recopie ni le nom du client ni
+/// l'adresse du site : il les tient par relation. La raison est que le devis est
+/// *travaillé* — on le chiffre, on le corrige, on le renvoie — pendant que la
+/// facture est écrite une fois. Figer huit colonnes que personne ne relirait
+/// coûterait plus cher que le risque qu'elles couvrent, et une correction de
+/// raison sociale pendant la négociation serait perdue.
+///
+/// Aucun montant n'est stocké non plus : les lignes portent une quantité et un
+/// prix unitaire, et les totaux se recalculent. Un total figé à côté de lignes
+/// modifiables finit toujours par ne plus correspondre à leur somme.
+model Quote {
+  id     String      @id @default(cuid())
+  /// Le numéro imprimé, `DEV-2026/0042`. Voir `formatQuoteNumber`.
+  number String      @unique
+  year   Int
+  sequence Int
+  status QuoteStatus @default(REQUESTED)
+
+  /// Le compte client demandeur, quand il existe. Nullable : le bureau peut
+  /// ouvrir un devis pour un occupant sans compte, et `SetNull` veut dire que
+  /// la suppression du compte n'emporte pas l'offre.
+  clientId      String? @map("client_id")
+  /// Qui a ouvert la demande. Nullable pour la même raison.
+  requestedById String? @map("requested_by_id")
+
+  /// Où. L'immeuble est obligatoire — un devis sans adresse ne se visite pas.
+  buildingId String @map("building_id")
+  /// Sur quoi, quand le besoin porte sur un appareil précis. Facultatif : une
+  /// rénovation de gaine ou un remplacement de tableau concerne le site entier.
+  elevatorId String? @map("elevator_id")
+
+  /// Le besoin tel que le client l'a décrit, à la demande.
+  ///
+  /// C'est le seul texte que le client écrit, et il n'est jamais réécrit par le
+  /// bureau : `notes` porte ce que l'entreprise ajoute à l'offre. Deux colonnes
+  /// parce que ce sont deux voix, et qu'un devis où la phrase du client a été
+  /// reformulée par le bureau ne dit plus ce qui a été demandé.
+  need   String
+  notes  String?
+  /// La durée de validité imprimée. Le formulaire porte 30 jours ; le champ
+  /// existe pour qu'une offre puisse en porter une autre sans changer le papier.
+  validityDays Int @default(30) @map("validity_days")
+
+  /// Les horodatages des trois moments qui comptent : chiffré, remis, décidé.
+  /// `sentAt` est celui dont dépend la validité — compter les trente jours
+  /// depuis la demande ferait expirer une offre avant qu'elle soit lue.
+  pricedAt  DateTime? @map("priced_at")
+  sentAt    DateTime? @map("sent_at")
+  decidedAt DateTime? @map("decided_at")
+  /// Qui a décidé, côté entreprise. `SetNull`, comme partout : le départ d'un
+  /// salarié ne doit pas effacer la trace de l'offre.
+  decidedById String? @map("decided_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  /// `Restrict` sur l'immeuble et l'appareil : supprimer un site qui porte un
+  /// devis en cours doit être empêché, pas accepté en silence.
+  building  Building  @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  elevator  Elevator? @relation(fields: [elevatorId], references: [id], onDelete: SetNull)
+  client    User?     @relation("ClientQuotes", fields: [clientId], references: [id], onDelete: SetNull)
+  requestedBy User?   @relation("RequestedQuotes", fields: [requestedById], references: [id], onDelete: SetNull)
+  decidedBy   User?   @relation("DecidedQuotes", fields: [decidedById], references: [id], onDelete: SetNull)
+  /// `Cascade` : une ligne n'existe que dans son devis.
+  lines     QuoteLine[]
+
+  /// Le registre, filtré par état et trié par date décroissante.
+  @@index([status, createdAt])
+  /// Le portail client : « mes devis ». Le même index que les factures.
+  @@index([clientId, createdAt])
+  @@index([year, sequence])
+  @@map("quotes")
+}
+
+/// Une ligne de devis — une prestation ou une fourniture.
+///
+/// LES MONTANTS NE SONT PAS STOCKÉS
+/// La ligne porte une quantité et un prix unitaire ; le montant HT se calcule.
+/// C'est le seul moyen qu'un devis ne contienne jamais un total qui n'est pas
+/// la somme de ses lignes — et un devis dont le total ne tombe pas juste est un
+/// devis qu'un client conteste ligne à ligne.
+model QuoteLine {
+  id      String @id @default(cuid())
+  quoteId String @map("quote_id")
+  /// La position à l'écran, 1 pour la première. Le formulaire en porte dix ;
+  /// le nombre n'est pas borné par le schéma.
+  position Int
+
+  /// La colonne RÉF du formulaire. Facultative : une prestation de main-d'œuvre
+  /// n'a pas toujours de référence.
+  reference   String?
+  designation String
+  /// `Decimal` et non `Int` : une quantité s'exprime aussi en heures, en mètres
+  /// ou en forfaits fractionnaires.
+  quantity    Decimal @db.Decimal(12, 2)
+  /// L'unité, telle que le bureau l'écrit : « U », « h », « m », « forfait ».
+  /// Texte libre : un vocabulaire fermé obligerait une migration pour chaque
+  /// unité qu'un métier invente.
+  unit        String?
+  unitPrice   Decimal @db.Decimal(12, 2) @map("unit_price")
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  /// Les lignes se lisent toujours ensemble, et toujours dans l'ordre.
+  @@index([quoteId, position])
+  @@map("quote_lines")
 }
 
 /// A change the office made to a report that was already waiting for approval.
