@@ -204,6 +204,32 @@ export type WorkOrderType = (typeof WORK_ORDER_TYPES)[number];
 export const INVOICE_STATUSES = ["ISSUED", "PAID", "CANCELLED"] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
+/**
+ * L'urgence d'une demande de pièce.
+ *
+ * Deux valeurs, et ce sont celles du métier : l'appareil est arrêté, ou bien la
+ * pièce peut attendre la prochaine visite. Pas de degré intermédiaire — une
+ * troisième valeur ne servirait qu'à ne pas choisir.
+ */
+export const PART_URGENCIES = ["IMMEDIATE", "PREVENTIVE"] as const;
+export type PartUrgency = (typeof PART_URGENCIES)[number];
+
+/**
+ * Où en est une demande de pièce.
+ *
+ * `FULFILLED` n'est pas « validée » : c'est la pièce posée. Les deux moments sont
+ * séparés par une commande et une livraison, souvent de plusieurs semaines, et
+ * une demande validée qu'on croit posée est une pièce que personne n'ira
+ * chercher.
+ */
+export const PART_REQUIREMENT_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "FULFILLED",
+] as const;
+export type PartRequirementStatus = (typeof PART_REQUIREMENT_STATUSES)[number];
+
 export const ALERT_SEVERITIES = [
   "INFO",
   "WARNING",

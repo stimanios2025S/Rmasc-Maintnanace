@@ -17,7 +17,7 @@
  * caught, harmless enough not to break a screen.
  */
 
-import type { InvoiceStatus } from "@/types";
+import type { InvoiceStatus, PartUrgency } from "@/types";
 
 export const ENUM_LABELS: Record<string, string> = {
   // ─── Work order status ────────────────────────────────────
@@ -44,6 +44,18 @@ export const ENUM_LABELS: Record<string, string> = {
   // porte la forme accordée — et lui seul est importé par le registre.
   ISSUED: "Émise",
   PAID: "Réglée",
+
+  // ─── Demande de pièce ─────────────────────────────────────
+  //
+  // `PREVENTIVE` n'est pas repris ici, pour la même raison que `CANCELLED`
+  // ci-dessus : la clé est déjà prise par le type d'un bon de travail, où elle
+  // se lit « Préventif ». Ici elle qualifie un remplacement, et le mot seul ne
+  // le dit pas — voir `PART_URGENCY_LABELS`.
+  IMMEDIATE: "Arrêt immédiat",
+  PENDING: "En attente",
+  APPROVED: "Validée",
+  REJECTED: "Refusée",
+  FULFILLED: "Posée",
 
   // ─── Priority ─────────────────────────────────────────────
   LOW: "Faible",
@@ -214,4 +226,24 @@ export function invoiceStatusLabel(status: string): string {
   return (
     INVOICE_STATUS_LABELS[status as InvoiceStatus] ?? enumLabel(status)
   );
+}
+
+/**
+ * L'urgence d'une demande de pièce, telle que la fiche l'imprime.
+ *
+ * POURQUOI CETTE SECONDE TABLE
+ * `PREVENTIVE` est déjà défini plus haut pour le *type* d'un bon de travail, où
+ * il se lit « Préventif ». Appliqué à un remplacement de pièce, le mot seul est
+ * ambigu — préventif par rapport à quoi ? — et la fiche doit dire ce qu'il
+ * signifie : un remplacement que l'appareil ne réclame pas encore. Même
+ * contrainte que `INVOICE_STATUS_LABELS`, même réponse.
+ */
+export const PART_URGENCY_LABELS: Record<PartUrgency, string> = {
+  IMMEDIATE: ENUM_LABELS.IMMEDIATE,
+  PREVENTIVE: "Remplacement préventif",
+};
+
+/** Le libellé d'une urgence reçue comme une chaîne. */
+export function partUrgencyLabel(urgency: string): string {
+  return PART_URGENCY_LABELS[urgency as PartUrgency] ?? enumLabel(urgency);
 }

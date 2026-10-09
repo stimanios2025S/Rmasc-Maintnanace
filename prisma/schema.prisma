@@ -265,6 +265,31 @@ enum ReportedPositionSource {
   SITE
 }
 
+/// L'urgence déclarée d'une demande de pièce.
+///
+/// Deux valeurs, et ce sont celles du métier : l'appareil est arrêté et il faut
+/// la pièce pour le remettre en service, ou bien la pièce est fatiguée et le
+/// remplacement s'inscrit dans la prochaine visite. Il n'y a pas de degré
+/// intermédiaire — une pièce est nécessaire maintenant ou elle peut attendre, et
+/// une troisième valeur ne servirait qu'à ne pas choisir.
+enum PartUrgency {
+  IMMEDIATE
+  PREVENTIVE
+}
+
+/// Où en est une demande de pièce.
+///
+/// `FULFILLED` n'est pas « validée » : c'est la pièce posée. La distinction
+/// compte, parce que les deux moments sont séparés par une commande et une
+/// livraison, souvent de plusieurs semaines — et une demande validée qu'on
+/// croit posée est une pièce que personne n'ira chercher.
+enum PartRequirementStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FULFILLED
+}
+
 // ─── USERS & AUTH ───────────────────────────────────────────
 
 model User {
@@ -370,6 +395,11 @@ model User {
   /// annulées. Troisième arête entre `User` et `Invoice`, donc nommée pour la
   /// même raison que les deux précédentes.
   invoiceStatusChanges Invoice[]           @relation("InvoiceStatusChanges")
+
+  /// Les demandes de pièce que ce compte a ouvertes depuis le terrain.
+  partRequestsRaised   PartRequirement[]   @relation("PartRequestsRaised")
+  /// Et celles qu'il a arbitrées, quand c'est un compte de bureau.
+  partRequestDecisions PartRequirement[]   @relation("PartRequestDecisions")
 
   // Two distinct roles on the same model, so both need naming: a client
   // account that *reports* a fault is a different person from the field
@@ -818,11 +848,91 @@ model WorkOrder {
   incident        IncidentReport?
   revisions       WorkOrderRevision[]
   invoice         Invoice?
+  /// Les pièces à commander que cette intervention a motivées. Voir
+  /// `PartRequirement` : une demande n'est pas un constat.
+  partRequirements PartRequirement[]
 
   @@index([elevatorId, status])
   @@index([assignedToId, status])
   @@index([status, priority])
   @@map("work_orders")
+}
+
+/// Une pièce qu'il faut commander, demandée depuis une intervention.
+///
+/// POURQUOI CE N'EST PAS `WorkOrder.partsReplaced`
+/// Les deux parlent de pièces et ne disent pas la même chose. `partsReplaced`
+/// est le *constat* : ce que le technicien a posé, écrit à la fin de
+/// l'intervention et recopié tel quel dans la facture — il est figé, et c'est ce
+/// qui rend une facture opposable.
+///
+/// Cette table est la *demande* : la pièce qu'il n'avait pas dans le véhicule et
+/// qu'il faut se procurer. Elle existe avant l'intervention qui la posera, elle
+/// porte une urgence, un demandeur, et une décision du bureau qui peut la
+/// refuser. Écrire les deux dans la même colonne obligerait à décider si une
+/// ligne « validée » est une pièce posée ou une pièce espérée, et c'est
+/// exactement la question à laquelle la facturation doit répondre sans hésiter.
+///
+/// AUCUN LIEN VERS UN CATALOGUE DE PIÈCES, ET C'EST ASSUMÉ
+/// Il n'existe ni table de pièces, ni stock, ni référence fournisseur dans ce
+/// produit. La référence et la désignation sont donc du texte libre, saisi par
+/// celui qui a la pièce sous les yeux. Créer un catalogue aurait demandé un
+/// référentiel, des fournisseurs, des prix et un inventaire — un autre produit,
+/// et un référentiel vide en attendant.
+model PartRequirement {
+  id            String  @id @default(cuid())
+  /// Le numéro imprimé, `DP-202609-7KQ4ZP`. Généré par `generatePartRequestNumber`.
+  number        String  @unique
+  workOrderId   String  @map("work_order_id")
+  /// Qui a demandé. Nullable et `SetNull` : le départ d'un salarié ne doit pas
+  /// effacer la demande, seulement son attribution.
+  requestedById String? @map("requested_by_id")
+
+  // ─── Ce qui est défectueux, et ce qu'il faut ──────────────
+  //
+  // Les deux sont enregistrés séparément parce qu'ils ne coïncident pas
+  // toujours : on remplace souvent un organe complet là où une pièce
+  // intermédiaire suffirait, et le bureau a besoin de voir la différence pour
+  // arbitrer. Le nom fautif est obligatoire — c'est le diagnostic, et une
+  // demande sans diagnostic n'est pas une demande, c'est un message.
+  faultyPartName        String  @map("faulty_part_name")
+  faultyPartReference   String? @map("faulty_part_reference")
+  replacementPartName   String  @map("replacement_part_name")
+  replacementPartReference String? @map("replacement_part_reference")
+  quantity              Int     @default(1)
+
+  urgency PartUrgency @default(PREVENTIVE)
+  /// Les observations du technicien : ce qu'il a mesuré, entendu, constaté.
+  notes   String?
+
+  // ─── La décision du bureau ────────────────────────────────
+  status           PartRequirementStatus @default(PENDING)
+  /// Quand et par qui la décision a été prise. NULL veut dire « personne n'a
+  /// encore statué », et non « décision inconnue » : c'est l'état d'une demande
+  /// qui attend.
+  statusChangedAt  DateTime? @map("status_changed_at")
+  statusChangedById String?  @map("status_changed_by_id")
+  /// Quand la pièce a été posée. Colonne distincte de `statusChangedAt` : le
+  /// passage à `FULFILLED` est la fin de l'histoire, et la date à laquelle on
+  /// l'atteint est la seule qu'on cherche six mois plus tard.
+  fulfilledAt      DateTime? @map("fulfilled_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  /// `Cascade` : une demande de pièce n'a aucun sens détachée de l'intervention
+  /// qui l'a motivée. Elle ne porte ni numéro de pièce comptable ni montant —
+  /// c'est une note interne, et l'effacer avec son bon n'efface rien d'opposable.
+  workOrder         WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  requestedBy       User?     @relation("PartRequestsRaised", fields: [requestedById], references: [id], onDelete: SetNull)
+  statusChangedBy   User?     @relation("PartRequestDecisions", fields: [statusChangedById], references: [id], onDelete: SetNull)
+
+  /// La seule requête de l'écran : « les demandes de ce bon, du plus récent ».
+  @@index([workOrderId, createdAt])
+  /// Et celle du tableau du bureau : « ce qui attend une décision ».
+  @@index([status, urgency])
+  @@map("part_requirements")
 }
 
 /// Une facture émise pour un bon de travail clos.

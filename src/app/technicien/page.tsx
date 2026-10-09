@@ -22,6 +22,7 @@ import { FleetMapCard } from "@/components/map/fleet-map-card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { SignaturePad } from "@/components/technician/signature-pad";
 import type { SignatureValue } from "@/components/technician/signature-pad";
+import { PartRequirementsPanel } from "@/components/maintenance/part-requirements-panel";
 import {
   CompletionReportForm,
   completionActionLabel,
@@ -1241,6 +1242,24 @@ export default function TechnicianPage() {
                   </div>
                 </div>
               )}
+
+              {/*
+                Les pièces à commander. Placées juste après celles qui ont été
+                posées, et pour une raison de terrain : c'est au moment où le
+                technicien écrit ce qu'il a monté qu'il sait ce qui lui manque.
+                Les deux listes côte à côte disent la même chose à deux temps
+                différents, et la seconde est celle qui déclenche une commande.
+
+                Le technicien ne décide pas — il demande. Le panneau n'affiche
+                donc jamais les boutons de validation ici, et la route les
+                refuse de toute façon : `PATCH` demande les rôles de gestion.
+              */}
+              <PartRequirementsPanel
+                workOrderId={job.id}
+                canDecide={false}
+                canRequest={job.status !== "CANCELLED"}
+                embedded
+              />
 
               {/* Notes editor */}
               {showNotes === job.id ? (

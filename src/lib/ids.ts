@@ -56,3 +56,18 @@ export function generateReportNumber(date = new Date()): string {
 export function generateIncidentNumber(date = new Date()): string {
   return `INC-${yearMonth(date)}-${randomSuffix()}`;
 }
+
+/**
+ * `DP-202609-7KQ4ZP` — une demande de pièce détachée.
+ *
+ * Même alphabet et même forme que les autres, et pour la même raison : ce numéro
+ * est lu au téléphone entre un technicien et le bureau qui commande la pièce.
+ * « DP » pour demande de pièce, en français comme le reste des adresses.
+ *
+ * Le suffixe est tiré au hasard plutôt que séquentiel, comme pour les bons et
+ * les rapports : une demande de pièce naît sur un chantier, depuis un téléphone,
+ * et une séquence demanderait une lecture préalable de la table à chaque fois.
+ */
+export function generatePartRequestNumber(date = new Date()): string {
+  return `DP-${yearMonth(date)}-${randomSuffix()}`;
+}

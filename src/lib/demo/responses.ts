@@ -1446,6 +1446,193 @@ export function demoInspectionReports(filters: {
   };
 }
 
+// ─── GET /api/parts-replacement ─────────────────────────────
+
+/**
+ * Les demandes de pièce du jeu de démonstration.
+ *
+ * POURQUOI ELLES SONT DÉRIVÉES DES BONS DE TRAVAIL
+ * Une demande est rattachée à une intervention, et la fiche d'un bon interroge
+ * la route avec son propre identifiant. Des demandes inventées avec des
+ * identifiants de bon fictifs ne s'afficheraient donc jamais : la démonstration
+ * montrerait un panneau toujours vide, ce qui ne prouve pas que le panneau
+ * fonctionne.
+ *
+ * Une intervention sur trois en reçoit une, avec les états parcourus dans
+ * l'ordre — c'est ce qui fait qu'un tableau de bureau a des lignes à montrer
+ * dans chacun de ses filtres, et qu'une fiche imprimée a quelque chose à dire.
+ *
+ * Le contenu est celui du métier : une carte de commande en fin de vie, des
+ * patins usés, un câble qui a dépassé ses cycles. Une fixture qui demanderait
+ * des pièces abstraites n'apprendrait rien sur l'écran.
+ */
+export function demoPartRequirements(filters: {
+  workOrderId?: string;
+  status?: string;
+}) {
+  const { workOrders, users } = demoWorld();
+
+  const PARTS: {
+    faulty: string;
+    faultyRef: string;
+    replacement: string;
+    replacementRef: string;
+    urgency: string;
+    notes: string;
+  }[] = [
+    {
+      faulty: "Carte de commande",
+      faultyRef: "MPB-3400",
+      replacement: "Carte de commande",
+      replacementRef: "MPB-3400-R2",
+      urgency: "IMMEDIATE",
+      notes:
+        "Mise à niveau impossible : la carte redémarre en boucle après 20 minutes de service. Appareil consigné, un seul ascenseur sur deux en service.",
+    },
+    {
+      faulty: "Patins de guidage cabine",
+      faultyRef: "GG-80",
+      replacement: "Jeu de patins de guidage",
+      replacementRef: "GG-80-KIT",
+      urgency: "PREVENTIVE",
+      notes:
+        "Usure visible en pied de gaine, jeu latéral au-delà du toléré. Pas de gêne pour l'exploitation, à remplacer à la prochaine visite semestrielle.",
+    },
+    {
+      faulty: "Verrou de porte palière",
+      faultyRef: "DV-12",
+      replacement: "Verrou de porte palière",
+      replacementRef: "DV-12-R",
+      urgency: "IMMEDIATE",
+      notes:
+        "Contact de verrouillage intermittent : défaut de porte signalé deux fois cette semaine, appareil en sécurité.",
+    },
+    {
+      faulty: "Câbles de traction",
+      faultyRef: "R-6x19",
+      replacement: "Jeu de câbles de traction",
+      replacementRef: "R-6x19-8MM",
+      urgency: "PREVENTIVE",
+      notes:
+        "Casses relevées au-delà du seuil réglementaire. Commande groupée avec le passage de câbles prévu ce trimestre.",
+    },
+    {
+      faulty: "Garnitures de frein",
+      faultyRef: "BR-G",
+      replacement: "Jeu de garnitures",
+      replacementRef: "BR-G-SET",
+      urgency: "PREVENTIVE",
+      notes: "Épaisseur mesurée sous le minimum constructeur. Frein encore efficace.",
+    },
+  ];
+
+  const STATUSES = ["PENDING", "PENDING", "APPROVED", "REJECTED", "FULFILLED"];
+
+  const now = Date.now();
+  const daysAgo = (n: number) => new Date(now - n * 24 * 60 * 60 * 1000);
+
+  const all = workOrders
+    .map((order, orderIndex) => ({ order, orderIndex }))
+    // Une intervention sur trois, et toujours la même : une fixture doit être
+    // stable d'un appel à l'autre, sinon un écran qui se rafraîchit montre une
+    // histoire différente à chaque fois.
+    .filter(({ orderIndex }) => orderIndex % 3 === 1)
+    .map(({ order, orderIndex }) => {
+      const part = PARTS[orderIndex % PARTS.length];
+      const status = STATUSES[orderIndex % STATUSES.length];
+      const requestedAt = daysAgo(2 + (orderIndex % 21));
+      const decidedAt =
+        status === "PENDING" ? null : new Date(requestedAt.getTime() + 36e5 * 8);
+
+      const requester = order.assignedToId
+        ? users.find((u) => u.id === order.assignedToId)
+        : undefined;
+      const decider = users.find((u) => u.role === "MAINTENANCE_MANAGER");
+
+      return {
+        id: `part_${order.id}`,
+        number: `DP-${requestedAt.getUTCFullYear()}${String(
+          requestedAt.getUTCMonth() + 1
+        ).padStart(2, "0")}-${String(1000 + orderIndex).slice(-6)}`,
+        status,
+        urgency: part.urgency,
+        quantity: 1,
+        faultyPartName: part.faulty,
+        faultyPartReference: part.faultyRef,
+        replacementPartName: part.replacement,
+        replacementPartReference: part.replacementRef,
+        notes: part.notes,
+        createdAt: requestedAt,
+        statusChangedAt: decidedAt,
+        fulfilledAt:
+          status === "FULFILLED" && decidedAt
+            ? new Date(decidedAt.getTime() + 36e5 * 72)
+            : null,
+        workOrderId: order.id,
+        requestedBy: requester
+          ? { id: requester.id, name: requester.name }
+          : null,
+        statusChangedBy:
+          status === "PENDING" || !decider
+            ? null
+            : { id: decider.id, name: decider.name },
+      };
+    })
+    .filter((row) => !filters.workOrderId || row.workOrderId === filters.workOrderId)
+    .filter((row) => !filters.status || row.status === filters.status)
+    /**
+     * Le même ordre que la route : l'urgence d'abord, puis la plus ancienne.
+     * `IMMEDIATE` avant `PREVENTIVE` parce que c'est l'ordre de déclaration de
+     * l'énumération, et que le tri de PostgreSQL le suit.
+     */
+    .sort(
+      (a, b) =>
+        a.urgency.localeCompare(b.urgency) ||
+        a.createdAt.getTime() - b.createdAt.getTime()
+    );
+
+  return { data: all, total: all.length };
+}
+
+/**
+ * Une demande de pièce, telle que la fiche imprimée la lit — jointures comprises.
+ *
+ * POURQUOI CETTE SECONDE FONCTION
+ * Le PDF d'une fiche de pièce n'a pas de repli de démonstration côté route, et
+ * il ne peut pas en avoir un utile s'il ne trouve que des identifiants : une
+ * fiche imprimée nomme l'immeuble, l'appareil et le bon, et une fixture réduite
+ * à une ligne de liste produirait un document plein de tirets.
+ *
+ * C'est la même séparation que pour les rapports d'inspection —
+ * `demoInspectionReports` pour la liste, `demoInspectionReportById` pour la
+ * fiche —, et pour la même raison : les deux rendus ne lisent pas la même chose.
+ *
+ * Sans elle, le générateur PDF ne serait exerçable nulle part sur une machine
+ * sans base de données — c'est-à-dire précisément là où une erreur de mise en
+ * page ne se voit pas.
+ */
+export function demoPartRequirementById(id: string) {
+  const found = demoPartRequirements({}).data.find((row) => row.id === id);
+  if (!found) return null;
+
+  const { workOrders, elevators } = demoWorld();
+  const order = workOrders.find((w) => w.id === found.workOrderId);
+  const unit = order ? elevators.find((e) => e.id === order.elevatorId) : null;
+  const building = unit ? buildingById(unit.buildingId) : null;
+
+  return {
+    ...found,
+    orderNumber: order?.orderNumber ?? "—",
+    orderTitle: order?.title ?? "—",
+    elevatorCode: unit?.elevatorCode ?? "—",
+    elevatorBrand: unit?.brand ?? null,
+    elevatorModel: unit?.model ?? null,
+    buildingName: building?.name ?? "—",
+    buildingAddress: building?.address ?? "—",
+    buildingCity: building?.city ?? "—",
+  };
+}
+
 // ─── GET /api/notifications ─────────────────────────────────
 
 export function demoNotifications() {

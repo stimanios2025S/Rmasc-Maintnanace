@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { PartRequirementsPanel } from "@/components/maintenance/part-requirements-panel";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { formatDzd, parseDzdInput } from "@/lib/ui/money";
 import { MANAGEMENT_ROLES } from "@/types";
@@ -887,6 +888,22 @@ export default function WorkOrderDetailPage() {
               </ul>
             )}
           </Card>
+
+          {/* ── Pièces à commander ─────────────────────────────── */}
+          {/*
+            Placé après les corrections du bureau, et dans la colonne
+            principale : une demande de pièce est une pièce du dossier, pas une
+            décision. « Demander » n'engage rien, et le technicien affecté au bon
+            doit pouvoir le faire depuis son portail comme depuis ici.
+
+            Le bouton de demande disparaît sur un bon annulé — personne ne
+            viendra poser la pièce — et la route refuse la même chose, au cas où.
+          */}
+          <PartRequirementsPanel
+            workOrderId={data.id}
+            canDecide={canDecide}
+            canRequest={data.status !== "CANCELLED"}
+          />
         </div>
 
         {/* ── Décision ────────────────────────────────────────── */}
