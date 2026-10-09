@@ -180,6 +180,27 @@ enum InspectionCheckResult {
   NOT_APPLICABLE
 }
 
+/// Quelle feuille le rapport reproduit.
+///
+/// POURQUOI UN TYPE, ET NON UN MODÈLE DE PLUS
+/// Une inspection et un entretien mensuel sont le même objet : une liste de
+/// points de contrôle, un verdict par point, une signature, une date. Seule
+/// change la *feuille* — le document que l'entreprise imprime et classe, avec
+/// son code de formulaire, ses regroupements et ses cadres de signature.
+///
+/// Un second modèle aurait dupliqué le dépôt de rapport, l'écran de saisie, le
+/// registre et le rendu, pour deux colonnes de différence. C'est le défaut que
+/// ce dépôt corrige à chaque fois qu'il le rencontre.
+///
+/// `INSPECTION` est la valeur par défaut, et c'est ce que les rapports déjà
+/// enregistrés étaient : aucune ligne existante ne change de sens.
+enum ReportKind {
+  /// Le rapport d'inspection technique — la feuille générique du produit.
+  INSPECTION
+  /// La fiche d'entretien mensuel, For: APP/DA/04/13, sur sa grille officielle.
+  ENTRETIEN
+}
+
 /// Whether a field technician can be sent to a job.
 ///
 /// Carried by `User.status`. Only meaningful for `FIELD_TECHNICIAN` rows —
@@ -1108,6 +1129,9 @@ model InspectionReport {
   technicianId  String   @map("technician_id")
   elevatorId    String   @map("elevator_id")
   reportNumber  String   @unique @map("report_number")
+  /// La feuille que ce rapport reproduit. Voir `ReportKind` : l'objet est le
+  /// même, le document ne l'est pas.
+  kind          ReportKind @default(INSPECTION)
   title         String
   summary       String?
   overallResult InspectionCheckResult @map("overall_result")

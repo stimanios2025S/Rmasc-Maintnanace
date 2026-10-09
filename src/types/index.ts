@@ -263,6 +263,16 @@ export const INSPECTION_CHECK_RESULTS = [
 ] as const;
 export type InspectionCheckResult = (typeof INSPECTION_CHECK_RESULTS)[number];
 
+/**
+ * Quelle feuille un rapport reproduit.
+ *
+ * Une inspection et un entretien mensuel sont le même objet — des points de
+ * contrôle, un verdict, une signature — et seule change la feuille imprimée.
+ * Voir le commentaire de l'énumération dans le schéma.
+ */
+export const REPORT_KINDS = ["INSPECTION", "ENTRETIEN"] as const;
+export type ReportKind = (typeof REPORT_KINDS)[number];
+
 export const TECHNICIAN_STATUSES = [
   "AVAILABLE",
   "ON_JOB",

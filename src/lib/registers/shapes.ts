@@ -24,7 +24,7 @@
  * la règle qui a fait sortir `metric-catalogue` du module de télémétrie.
  */
 
-import type { InvoiceStatus, InspectionCheckResult } from "@/types";
+import type { InvoiceStatus, InspectionCheckResult, ReportKind } from "@/types";
 
 /**
  * Échoue à la compilation si `T` n'est pas `never`.
@@ -80,6 +80,8 @@ export interface InvoiceRegisterRow {
 export interface InspectionReportRegisterRow {
   id: string;
   reportNumber: string;
+  /** La feuille reproduite : une inspection, ou une fiche d'entretien mensuel. */
+  kind: ReportKind;
   title: string;
   overallResult: InspectionCheckResult;
   submittedAt: string;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Printer } from "lucide-react";
 import { ErrorState } from "@/components/ui/states";
+import { EntretienSheet } from "@/components/maintenance/entretien-sheet";
 
 /**
  * A finished inspection report, as a document.
@@ -40,6 +41,15 @@ interface Signature {
 interface Report {
   id: string;
   reportNumber: string;
+  /**
+   * Quelle feuille ce rapport reproduit.
+   *
+   * Facultatif dans le type, et c'est un choix : la route ne le renvoie que
+   * depuis peu, et un rapport lu dans un jeu de démonstration plus ancien n'a
+   * pas le champ. `undefined` vaut `INSPECTION`, ce qui est la feuille
+   * générique — le cas par défaut est aussi le cas sûr.
+   */
+  kind?: "INSPECTION" | "ENTRETIEN";
   title: string;
   summary: string | null;
   overallResult: string;
@@ -192,6 +202,15 @@ export default function InspectionReportPage() {
         </div>
       </div>
 
+      {/*
+        Deux feuilles, un seul écran. L'en-tête de navigation et le bouton
+        d'impression sont communs ; ce qui change est le document — une fiche
+        d'entretien mensuel n'a ni la même grille, ni les mêmes cadres de
+        signature, ni le même code de formulaire qu'un rapport d'inspection.
+      */}
+      {report.kind === "ENTRETIEN" ? (
+        <EntretienSheet report={report} />
+      ) : (
       <article className="mx-auto my-6 max-w-3xl bg-white p-8 shadow-sm print:my-0 print:max-w-none print:p-0 print:shadow-none">
         <header className="border-b border-gray-300 pb-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-500">
@@ -383,6 +402,7 @@ export default function InspectionReportPage() {
           de son aptitude à l&apos;usage au-delà des points listés ci-dessus.
         </footer>
       </article>
+      )}
     </div>
   );
 }

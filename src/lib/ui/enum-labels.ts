@@ -35,6 +35,13 @@ export const ENUM_LABELS: Record<string, string> = {
   CORRECTIVE: "Correctif",
   INSPECTION: "Inspection",
 
+  // ─── Type de feuille d'un rapport ─────────────────────────
+  //
+  // `INSPECTION` est déjà défini juste au-dessus et n'est pas repris : un
+  // rapport d'inspection et un bon de travail d'inspection portent le même mot,
+  // et c'est le même mot. Seul `ENTRETIEN` manquait.
+  ENTRETIEN: "Entretien",
+
   // ─── État d'une facture ───────────────────────────────────
   //
   // `CANCELLED` n'est PAS repris ici : la clé est déjà définie plus haut, pour

@@ -14,7 +14,7 @@ import {
   PeriodFilter,
   ResetFiltersButton,
 } from "@/components/registers/controls";
-import { INSPECTION_CHECK_RESULTS } from "@/types";
+import { INSPECTION_CHECK_RESULTS, REPORT_KINDS } from "@/types";
 import type { InspectionCheckResult } from "@/types";
 import type { InspectionReportRegisterRow } from "@/lib/registers/shapes";
 import { enumLabel } from "@/lib/ui/enum-labels";
@@ -65,9 +65,22 @@ const RESULT_OPTIONS = INSPECTION_CHECK_RESULTS.map((result) => ({
   label: enumLabel(result),
 }));
 
+/**
+ * Les deux feuilles, nommées comme le bureau les nomme.
+ *
+ * « Entretien mensuel » et non « Entretien » : c'est le nom du formulaire
+ * For: APP/DA/04/13, et le mot seul se confond avec l'entretien en général —
+ * celui qu'on fait tous les jours sur un appareil.
+ */
+const KIND_OPTIONS = REPORT_KINDS.map((kind) => ({
+  value: kind,
+  label: kind === "ENTRETIEN" ? "Entretien mensuel" : "Inspection",
+}));
+
 const PAGE_SIZE = 100;
 
 export default function RapportsInspectionPage() {
+  const [kind, setKind] = useState("");
   const [result, setResult] = useState("");
   const [technicianId, setTechnicianId] = useState("");
   const [buildingId, setBuildingId] = useState("");
@@ -125,13 +138,14 @@ export default function RapportsInspectionPage() {
 
   const params = useMemo(() => {
     const search = new URLSearchParams();
+    if (kind) search.set("kind", kind);
     if (result) search.set("result", result);
     if (technicianId) search.set("technicianId", technicianId);
     if (buildingId) search.set("buildingId", buildingId);
     if (from) search.set("from", from);
     if (to) search.set("to", to);
     return search;
-  }, [result, technicianId, buildingId, from, to]);
+  }, [kind, result, technicianId, buildingId, from, to]);
 
   const hasFilters = [...params.keys()].length > 0;
 
@@ -181,6 +195,7 @@ export default function RapportsInspectionPage() {
   }, [load]);
 
   function resetFilters() {
+    setKind("");
     setResult("");
     setTechnicianId("");
     setBuildingId("");
@@ -249,6 +264,16 @@ export default function RapportsInspectionPage() {
               onChange={setResult}
               allLabel="Tous les verdicts"
               options={RESULT_OPTIONS}
+            />
+          </FilterRow>
+
+          <FilterRow label="Feuille">
+            <FilterSelect
+              id="filtre-feuille"
+              value={kind}
+              onChange={setKind}
+              allLabel="Les deux feuilles"
+              options={KIND_OPTIONS}
             />
           </FilterRow>
         </div>
@@ -323,6 +348,16 @@ export default function RapportsInspectionPage() {
 
                   <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
                     {row.reportNumber}
+                  </span>
+
+                  {/*
+                    La feuille, sur chaque ligne. Sans elle, un registre qui
+                    contient les deux séries ne dit pas laquelle on lit, et
+                    « Entretien – Remplacement du contacteur » ressemble à une
+                    inspection comme une autre.
+                  */}
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                    {row.kind === "ENTRETIEN" ? "Entretien mensuel" : "Inspection"}
                   </span>
 
                   <span className="text-sm text-gray-500 dark:text-gray-400">

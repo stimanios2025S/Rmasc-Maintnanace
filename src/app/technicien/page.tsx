@@ -23,6 +23,8 @@ import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states"
 import { SignaturePad } from "@/components/technician/signature-pad";
 import type { SignatureValue } from "@/components/technician/signature-pad";
 import { PartRequirementsPanel } from "@/components/maintenance/part-requirements-panel";
+import { ENTRETIEN_CHECK_NAMES } from "@/lib/maintenance/entretien-checklist";
+import type { ReportKind } from "@/types";
 import {
   CompletionReportForm,
   completionActionLabel,
@@ -206,7 +208,33 @@ const DEFAULT_CHECKLIST = [
  * validation qui refuse tout.
  */
 function checklistFor(job: ActiveJob): string[] {
-  return job.checklist.length > 0 ? job.checklist : DEFAULT_CHECKLIST;
+  if (job.checklist.length > 0) return job.checklist;
+  /**
+   * OÙ PASSE LA FICHE D'ENTRETIEN MENSUEL
+   * Une visite préventive sans programme — ou dont le programme n'a pas de
+   * points — reçoit la grille officielle For: APP/DA/04/13 plutôt que la liste
+   * générique. Un contrat qui déclare ses propres points les garde : c'est ce
+   * que le client a signé, et le remplacer par la grille standard ferait
+   * contrôler autre chose que ce qui a été vendu.
+   */
+  return kindFor(job) === "ENTRETIEN"
+    ? [...ENTRETIEN_CHECK_NAMES]
+    : DEFAULT_CHECKLIST;
+}
+
+/**
+ * Quelle feuille ce bon produit.
+ *
+ * Dérivée du type du bon, et dérivée seulement : offrir le choix au technicien
+ * l'obligerait à savoir laquelle des deux feuilles l'entreprise attend, et il
+ * répondrait au hasard une fois sur deux. Une visite préventive est un entretien
+ * contractuel ; tout le reste est une intervention, donc une inspection.
+ *
+ * La même dérivation est faite côté schéma, où `INSPECTION` est la valeur par
+ * défaut : un appelant qui n'envoie rien obtient la feuille générique.
+ */
+function kindFor(job: ActiveJob): ReportKind {
+  return job.type === "PREVENTIVE" ? "ENTRETIEN" : "INSPECTION";
 }
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -626,6 +654,7 @@ export default function TechnicianPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             workOrderId: job.id,
+            kind: kindFor(job),
             summary: report.description,
             items: checklistFor(job).map((checkName, index) => ({
               checkName,

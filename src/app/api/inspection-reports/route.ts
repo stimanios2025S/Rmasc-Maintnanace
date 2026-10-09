@@ -48,7 +48,7 @@ import {
   demoInspectionReportForWorkOrder,
   demoInspectionReports,
 } from "@/lib/demo/responses";
-import { INSPECTION_CHECK_RESULTS, MANAGEMENT_ROLES } from "@/types";
+import { INSPECTION_CHECK_RESULTS, MANAGEMENT_ROLES, REPORT_KINDS } from "@/types";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import type {
   AssertNever,
@@ -103,6 +103,15 @@ const SignatureSchema = z
 const CreateReportSchema = z
   .object({
     workOrderId: z.string().min(1),
+    /**
+     * Quelle feuille ce rapport reproduit.
+     *
+     * Facultatif, et `INSPECTION` par défaut : le portail technicien l'envoie
+     * désormais selon le type du bon, mais un appelant plus ancien — un script,
+     * une intégration — continue de fonctionner et obtient la feuille
+     * générique.
+     */
+    kind: z.enum(REPORT_KINDS).default("INSPECTION"),
     title: z.string().trim().min(3).max(200).optional(),
     summary: z.string().trim().max(5000).optional(),
     items: z.array(CheckItemSchema).min(1).max(100),
@@ -135,6 +144,7 @@ function overallResult(
 const LIST_SELECT = {
   id: true,
   reportNumber: true,
+  kind: true,
   title: true,
   overallResult: true,
   submittedAt: true,
@@ -240,6 +250,7 @@ export async function GET(request: NextRequest) {
     const select = {
       id: true,
       reportNumber: true,
+      kind: true,
       title: true,
       summary: true,
       overallResult: true,
@@ -366,11 +377,21 @@ export async function GET(request: NextRequest) {
       "result",
       INSPECTION_CHECK_RESULTS
     );
+    /**
+     * Le type de feuille, et il n'a pas de défaut.
+     *
+     * Un registre s'ouvre sur les deux : les inspections et les entretiens
+     * mensuels se classent ensemble, et c'est la même obligation pour
+     * l'entreprise. Le filtre sert à les séparer quand on ne veut que l'une des
+     * deux séries — le contrôle annuel des entretiens, par exemple.
+     */
+    const kind = parseEnumParam(searchParams, "kind", REPORT_KINDS);
     const technicianId = searchParams.get("technicianId") || undefined;
     const buildingId = searchParams.get("buildingId") || undefined;
     const submittedAt = dateRangeFilter(parsePeriod(searchParams));
 
     const where: Prisma.InspectionReportWhereInput = {
+      ...(kind ? { kind } : {}),
       ...(result ? { overallResult: result } : {}),
       ...(technicianId ? { technicianId } : {}),
       ...(buildingId ? { elevator: { buildingId } } : {}),
@@ -505,6 +526,7 @@ export async function GET(request: NextRequest) {
        */
       const period = parsePeriod(searchParams);
       const filters = {
+        kind: parseEnumParam(searchParams, "kind", REPORT_KINDS),
         result: parseEnumParam(searchParams, "result", INSPECTION_CHECK_RESULTS),
         technicianId: searchParams.get("technicianId") || undefined,
         buildingId: searchParams.get("buildingId") || undefined,
@@ -610,7 +632,18 @@ export async function POST(request: NextRequest) {
         technicianId: session.user.id,
         elevatorId: workOrder.elevatorId,
         reportNumber: generateReportNumber(),
-        title: body.title ?? `Inspection – ${workOrder.title}`,
+        kind: body.kind,
+        /**
+         * Le titre porte le nom de la feuille, et non celui du produit.
+         *
+         * « Inspection – Remplacement du contacteur » sur un entretien mensuel
+         * ferait dire au registre autre chose que ce que le papier dit. Les deux
+         * mots ne sont pas interchangeables : l'inspection est un contrôle
+         * réglementaire, l'entretien est la visite contractuelle.
+         */
+        title:
+          body.title ??
+          `${body.kind === "ENTRETIEN" ? "Entretien" : "Inspection"} – ${workOrder.title}`,
         summary: body.summary,
         overallResult: overallResult(body.items),
         signatures: signatures.length > 0 ? signatures : undefined,
@@ -645,10 +678,13 @@ export async function POST(request: NextRequest) {
      * put a customer's maintenance record in a stranger's inbox.
      */
     const owner = workOrder.elevator.building.ownerId;
+    const sheetWord = body.kind === "ENTRETIEN" ? "Entretien" : "Inspection";
     if (owner && owner !== session.user.id) {
       await notify({
         userId: owner,
-        title: `Inspection terminée – ${workOrder.elevator.elevatorCode}`,
+        title: `${sheetWord} ${
+          body.kind === "ENTRETIEN" ? "réalisé" : "terminée"
+        } – ${workOrder.elevator.elevatorCode}`,
         message:
           `Le rapport ${report.reportNumber} pour ${workOrder.elevator.elevatorCode} ` +
           `(${workOrder.elevator.building.name}) est disponible. ` +

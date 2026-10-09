@@ -18,6 +18,7 @@ import {
   technicianProximity,
 } from "@/lib/geo/technician-position";
 import { DISPATCHABLE_TECHNICIAN_STATUSES, USER_ROLES } from "@/types";
+import { ENTRETIEN_CHECK_NAMES } from "@/lib/maintenance/entretien-checklist";
 import {
   DERIVED_METRIC,
   TELEMETRY_METRICS,
@@ -1219,7 +1220,18 @@ function buildInspectionReports() {
     const finding: DemoCheckResult =
       index % 3 === 1 ? "NEEDS_ATTENTION" : index % 5 === 3 ? "FAIL" : "PASS";
 
-    const checkItems = DEMO_CHECKLIST.map((checkName, i) => {
+    /**
+     * La grille suit la feuille, comme dans le produit.
+     *
+     * Une visite préventive est cochée sur les quatorze points du formulaire
+     * For: APP/DA/04/13 — c'est la grille que la feuille imprimée reproduit, et
+     * une fixture qui n'en porterait que sept montrerait un document que le
+     * produit ne produit pas.
+     */
+    const checklist =
+      order.type === "PREVENTIVE" ? ENTRETIEN_CHECK_NAMES : DEMO_CHECKLIST;
+
+    const checkItems = checklist.map((checkName, i) => {
       const isFindingLine = i === 4;
       const isNaLine = i === 6 && index % 4 === 2;
       return {
@@ -1284,7 +1296,26 @@ function buildInspectionReports() {
       base: {
         id: `insp_${order.id}`,
         reportNumber,
-        title: `Inspection – ${order.title}`,
+        /**
+         * La feuille suit le type du bon, comme dans le portail technicien : une
+         * visite préventive donne une fiche d'entretien, le reste une inspection.
+         * Dérivé plutôt que tiré au hasard, pour que la démonstration montre le
+         * même lien que le produit.
+         */
+        kind: order.type === "PREVENTIVE" ? "ENTRETIEN" : "INSPECTION",
+        /**
+         * Le titre suit la même règle que la route — « Entretien – … » sur une
+         * visite préventive, « Inspection – … » sinon.
+         *
+         * Il ne l'a pas toujours suivie : la fixture écrivait « Inspection – … »
+         * en dur, et le filtre par feuille a rendu l'écart visible à l'écran —
+         * deux rapports marqués « Entretien mensuel » qui s'intitulaient
+         * « Inspection ». C'est précisément ce qu'une fixture dérivée doit
+         * éviter : elle doit montrer le produit, pas une version antérieure.
+         */
+        title: `${
+          order.type === "PREVENTIVE" ? "Entretien" : "Inspection"
+        } – ${order.title}`,
         summary:
           finding === "PASS"
             ? "Tous les contrôles sont dans les tolérances. Appareil remis en service."
@@ -1345,6 +1376,7 @@ export function demoInspectionReports(filters: {
   limit: number;
   skip: number;
   /** Les mêmes filtres que la route, pour que le mode démo se comporte pareil. */
+  kind?: string;
   result?: string;
   technicianId?: string;
   buildingId?: string;
@@ -1363,6 +1395,9 @@ export function demoInspectionReports(filters: {
    * puisqu'aucune base n'est là pour montrer la différence.
    */
   const matching = all.filter((report) => {
+    if (filters.kind && report.base.kind !== filters.kind) {
+      return false;
+    }
     if (filters.result && report.base.overallResult !== filters.result) {
       return false;
     }
