@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Printer } from "lucide-react";
 import { ErrorState } from "@/components/ui/states";
 import { EntretienSheet } from "@/components/maintenance/entretien-sheet";
+import { formatMeasurement } from "@/lib/ui/numbers";
 
 /**
  * A finished inspection report, as a document.
@@ -332,7 +333,9 @@ export default function InspectionReportPage() {
                   <td className="py-2 pr-3 tabular-nums text-gray-700">
                     {item.measuredValue === null
                       ? "—"
-                      : `${item.measuredValue}${item.unit ? ` ${item.unit}` : ""}`}
+                      : `${formatMeasurement(item.measuredValue)}${
+                          item.unit ? ` ${item.unit}` : ""
+                        }`}
                   </td>
                   <td className="py-2 text-gray-700">
                     {item.notes ?? "—"}

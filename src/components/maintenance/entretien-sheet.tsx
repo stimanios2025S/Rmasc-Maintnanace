@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment } from "react";
+import { formatMeasurement } from "@/lib/ui/numbers";
 import {
   ENTRETIEN_CHECKLIST,
   ENTRETIEN_FORM_CODE,
@@ -253,7 +254,7 @@ export function EntretienSheet({ report }: { report: EntretienSheetReport }) {
                   : { pass: false, fail: false, observations: "" };
                 const measured =
                   row.item && row.item.measuredValue !== null
-                    ? `Mesuré : ${row.item.measuredValue}${
+                    ? `Mesuré : ${formatMeasurement(row.item.measuredValue)}${
                         row.item.unit ? ` ${row.item.unit}` : ""
                       }. `
                     : "";

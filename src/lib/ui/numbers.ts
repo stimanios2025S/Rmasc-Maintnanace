@@ -49,3 +49,31 @@ export function parseDecimalInput(
   if (!options.allowNegative && value < 0) return null;
   return value;
 }
+
+/**
+ * Une mesure, telle qu'elle s'imprime sur une feuille de contrôle.
+ *
+ * POURQUOI CETTE FONCTION EXISTE
+ * Un `float` traverse le JSON avec tout ce que la virgule flottante a produit.
+ * Un relevé calculé — `11,2 + 2 × 0,35` — arrive donc sous la forme
+ * `11.899999999999999`, et c'est ce que la fiche d'entretien a imprimé : quinze
+ * décimales sur un document qu'un technicien signe et qu'un contrôle lit.
+ *
+ * Le défaut n'a été vu qu'en prenant la feuille en capture d'écran. Aucun
+ * contrôle de texte ne l'aurait montré — la valeur est bien là, elle est
+ * seulement écrite avec la précision du binaire plutôt qu'avec celle d'un
+ * appareil de mesure.
+ *
+ * Deux décimales suffisent à tout ce qu'un ascenseur se mesure : des ohms, des
+ * millimètres, des mètres par seconde. Un relevé qui en porte davantage n'est
+ * pas plus précis, il est illisible.
+ *
+ * La conversion est faite *ici* et non dans la donnée de démonstration, dont la
+ * valeur biscornue est conservée exprès : elle sert de cas de contrôle, et
+ * l'arrondir à la source aurait caché le défaut au lieu de le corriger.
+ */
+export function formatMeasurement(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  const rounded = Math.round(value * 100) / 100;
+  return rounded.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+}
