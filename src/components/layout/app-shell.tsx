@@ -28,6 +28,7 @@ import {
 import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
 import type { UserRole } from "@/types";
+import { OPEN_ACCESS_USER } from "@/lib/auth/open-access";
 import { NotificationBell } from "./notification-bell";
 import { onAlertsChanged } from "@/lib/ui/alert-events";
 
@@ -222,9 +223,25 @@ export function AppShell({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const user = session?.user;
+  const user = session?.user ?? (openAccess ? OPEN_ACCESS_USER : undefined);
 
-  const role = session?.user?.role;
+  /**
+   * Le rôle, et le cas de l'accès libre.
+   *
+   * `openAccess` est un mode appliqué par le *serveur* — `getSession()` rend une
+   * session ADMIN synthétique —, et il n'y a donc aucun cookie NextAuth.
+   * `useSession()`, qui interroge NextAuth depuis le navigateur, rend toujours
+   * `null` dans ce mode.
+   *
+   * Sans le repli ci-dessus, toutes les entrées réservées à un rôle
+   * disparaissaient de la barre latérale : on atteignait les écrans en tapant
+   * leur adresse, mais le menu n'en offrait plus aucun. Observé en capture, pas
+   * déduit.
+   *
+   * Le repli ne peut pas fuir en production : `openAccess` vient du serveur et
+   * `isOpenAccessEnabled()` rend `false` dès que `NODE_ENV` vaut `production`.
+   */
+  const role = user?.role;
   const navItems = NAV_ITEMS.filter(
     (item) => !item.roles || (role !== undefined && item.roles.includes(role))
   );
