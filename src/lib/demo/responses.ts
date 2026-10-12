@@ -1814,9 +1814,22 @@ function buildDemoQuotes() {
 }
 
 /** Le registre : les lignes sont retirées, il n'en garde que le nombre. */
-export function demoQuotes(filters: { status?: string } = {}) {
+export function demoQuotes(
+  filters: { status?: string; q?: string } = {}
+) {
+  const term = filters.q?.trim().toLowerCase();
+
   const filtered = buildDemoQuotes()
     .filter((row) => !filters.status || row.status === filters.status)
+    .filter((row) => {
+      if (!term) return true;
+      return [
+        row.number,
+        row.need,
+        row.client?.name ?? "",
+        row.building.name,
+      ].some((value) => value.toLowerCase().includes(term));
+    })
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   return {

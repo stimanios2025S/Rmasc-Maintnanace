@@ -24,6 +24,8 @@ import {
   Gauge,
   FileCheck,
   Receipt,
+  FileText,
+  FilePlus,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -107,6 +109,21 @@ const NAV_ITEMS: readonly NavItem[] = [
     icon: Receipt,
     roles: MANAGEMENT_ROLES,
   },
+  // Les devis, à côté des factures : les deux pièces commerciales de
+  // l'entreprise, et l'ordre où elles se produisent — on devis avant de
+  // facturer.
+  //
+  // Le registre vit sous `/administration`, et c'est cet emplacement qui lui
+  // donne sa porte : le matcher du middleware couvre déjà `/administration/:path*`
+  // et le garde aux rôles de gestion. Une adresse `/devis` aurait demandé une
+  // ligne de plus dans le matcher — exactement celle qu'on oublie, et qui laisse
+  // un écran échapper à **toute** la garde d'authentification.
+  {
+    href: "/administration/devis",
+    label: "Devis",
+    icon: FileText,
+    roles: MANAGEMENT_ROLES,
+  },
   // Le programme d'entretien — la moitié préventive du métier, à côté du
   // tableau des bons qui ne porte que le curatif. Filtré aux rôles de gestion
   // pour la même raison que le tableau des incidents : planifier une visite est
@@ -163,6 +180,17 @@ const NAV_ITEMS: readonly NavItem[] = [
   // The customer's own view of their equipment. Deliberately unrestricted — an
   // administrator needs to be able to open it to see what a customer sees.
   { href: "/client", label: "Espace client", icon: HelpCircle },
+  // Et la demande de devis du client, à sa place dans son espace.
+  //
+  // Ouverte au client et à l'administrateur — qui doit pouvoir ouvrir ce que
+  // voit un client —, mais pas aux rôles techniques : la route refuse une
+  // demande de leur part, et un lien qui mène à un refus n'est pas un lien.
+  {
+    href: "/client/devis",
+    label: "Mes devis",
+    icon: FilePlus,
+    roles: [...ADMIN_ROLES, "BUILDING_OWNER"],
+  },
 ];
 
 /** Display labels for the role identifiers. The identifiers themselves are

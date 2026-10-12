@@ -39,6 +39,7 @@ import {
   readJson,
 } from "@/lib/api/http";
 import { MANAGEMENT_ROLES, buildingScopeFor, requireRole } from "@/lib/api/guard";
+import { parseSearchTerm } from "@/lib/registers/filters";
 import { createQuote } from "@/lib/quotes/service";
 import { computeQuoteTotals } from "@/lib/quotes/totals";
 import { quoteTransitionRefusal } from "@/lib/quotes/status";
@@ -78,22 +79,33 @@ const LIST_SELECT = {
 type QuoteListRow = Prisma.QuoteGetPayload<{ select: typeof LIST_SELECT }>;
 
 /**
- * Une ligne de registre, augmentée de ses totaux.
+ * Les totaux d'une ligne de registre.
  *
- * Les totaux sont calculés ici plutôt qu'à l'écran, et c'est délibéré : le
- * registre affiche parfois vingt lignes, et vingt recalculs dans le navigateur
- * sur des `Decimal` reçus en chaînes finiraient par diverger de ce que le PDF
- * imprime. Un seul calcul, côté serveur, pour tout le monde.
+ * POURQUOI DEUX FONCTIONS ET NON UNE
+ * Le registre et la fiche ne lisent pas la même chose de `lines`. Le registre
+ * n'en veut que le **nombre** et de quoi calculer les totaux : rendre les
+ * désignations d'un tableau de vingt lignes serait du poids pour rien.
+ *
+ * La fiche, elle, les lit en entier — c'est même tout son objet.
+ *
+ * La première version n'avait qu'une fonction, qui retirait `lines` de la
+ * réponse. Le registre était correct et **la fiche de chiffrage recevait un
+ * tableau vide** : elle aurait affiché « aucune ligne » sur un devis qui en
+ * porte quatre. Le défaut ne se voyait pas tant que l'écran n'existait pas.
  */
-function withTotals(row: QuoteListRow) {
-  const totals = computeQuoteTotals(
-    row.lines.map((line) => ({
-      quantity: Number(line.quantity.toString()),
-      unitPrice: Number(line.unitPrice.toString()),
+function totalsFor(lines: readonly { quantity: unknown; unitPrice: unknown }[]) {
+  return computeQuoteTotals(
+    lines.map((line) => ({
+      quantity: Number(String(line.quantity)),
+      unitPrice: Number(String(line.unitPrice)),
     }))
   );
-  const { lines: _lines, ...rest } = row;
-  return { ...rest, totals, lineCount: row.lines.length };
+}
+
+/** Une ligne de registre : ses totaux, et le nombre de lignes, sans les lignes. */
+function registerRow(row: QuoteListRow) {
+  const { lines, ...rest } = row;
+  return { ...rest, totals: totalsFor(lines), lineCount: lines.length };
 }
 
 export async function GET(request: NextRequest) {
@@ -106,12 +118,29 @@ export async function GET(request: NextRequest) {
     const id = searchParams.get("id") || undefined;
     const buildingId = searchParams.get("buildingId") || undefined;
     const clientId = searchParams.get("clientId") || undefined;
+    const term = parseSearchTerm(searchParams);
 
     const where: Prisma.QuoteWhereInput = {
       ...(id ? { id } : {}),
       ...(status ? { status } : {}),
       ...(buildingId ? { buildingId } : {}),
       ...(clientId ? { clientId } : {}),
+      /**
+       * La recherche libre, sur ce qu'un bureau tape pour retrouver une offre :
+       * son numéro lu au téléphone, le nom du client, l'immeuble, ou un mot du
+       * besoin. `need` en fait partie délibérément — « rénovation cabine » est
+       * souvent tout ce dont on se souvient.
+       */
+      ...(term
+        ? {
+            OR: [
+              { number: { contains: term, mode: "insensitive" as const } },
+              { need: { contains: term, mode: "insensitive" as const } },
+              { client: { name: { contains: term, mode: "insensitive" as const } } },
+              { building: { name: { contains: term, mode: "insensitive" as const } } },
+            ],
+          }
+        : {}),
       // Le périmètre client est posé en dernier et écrase : un client qui
       // ajoute `?clientId=<un autre>` obtient ses propres devis.
       ...(session.user.role === "BUILDING_OWNER"
@@ -140,7 +169,8 @@ export async function GET(request: NextRequest) {
         },
       });
       if (!one) throw notFound(`Devis introuvable : ${id}`);
-      return jsonOk(withTotals(one));
+      // La fiche garde ses lignes : c'est ce que l'écran de chiffrage édite.
+      return jsonOk({ ...one, totals: totalsFor(one.lines), lineCount: one.lines.length });
     }
 
     const [rows, total] = await Promise.all([
@@ -157,7 +187,7 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({
-      data: rows.map(withTotals),
+      data: rows.map(registerRow),
       pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -172,7 +202,10 @@ export async function GET(request: NextRequest) {
           : handleRouteError(notFound(`Devis introuvable : ${id}`));
       }
       return NextResponse.json(
-        demoQuotes({ status: searchParams.get("status") || undefined })
+        demoQuotes({
+          status: searchParams.get("status") || undefined,
+          q: searchParams.get("q") || undefined,
+        })
       );
     }
     return handleRouteError(error);
@@ -215,7 +248,7 @@ export async function POST(request: NextRequest) {
      */
     const building = await prisma.building.findFirst({
       where: { id: body.buildingId, ...buildingScopeFor(session) },
-      select: { id: true },
+      select: { id: true, ownerId: true },
     });
     if (!building) {
       throw notFound(`Immeuble introuvable : ${body.buildingId}`);
@@ -241,16 +274,28 @@ export async function POST(request: NextRequest) {
     }
 
     /**
-     * Le demandeur enregistré est le compte qui appelle, jamais un champ du
-     * corps. Un client ne signe pas une demande au nom d'un autre, et le bureau
-     * qui saisit pour un client se nomme lui-même — c'est la vérité de qui est
-     * au clavier.
+     * À QUI LE DEVIS EST ADRESSÉ — ET CE N'EST PAS FORCÉMENT LE DEMANDEUR
+     *
+     * Un compte client demande pour lui-même : `clientId` est son identifiant.
+     * Un rôle de gestion qui saisit une demande prise par téléphone la saisit
+     * **au nom du client**, donc `clientId` est le propriétaire de l'immeuble.
+     *
+     * La première version écrivait `session.user.id` dans les deux cas, et le
+     * bureau se facturait lui-même ses propres devis : l'offre n'apparaissait
+     * dans le portail d'aucun client, et `decidedBy` comme `clientId` auraient
+     * désigné la même personne à la signature.
+     *
+     * `ownerId` peut être nul — un immeuble saisi avant l'ouverture du dossier
+     * client. Le devis existe alors sans destinataire, ce qui est exact : il
+     * reste consultable par le bureau, et n'apparaîtra dans aucun portail.
      */
+    const clientId =
+      session.user.role === "BUILDING_OWNER"
+        ? session.user.id
+        : (building.ownerId ?? null);
+
     const created = await createQuote({
-      clientId:
-        session.user.role === "BUILDING_OWNER"
-          ? session.user.id
-          : (session.user.id ?? null),
+      clientId,
       requestedById: session.user.id ?? null,
       buildingId: building.id,
       elevatorId: body.elevatorId ?? null,
@@ -411,7 +456,14 @@ export async function PATCH(request: NextRequest) {
       },
     });
 
-    return jsonOk(withTotals(updated));
+    // Le devis revient entier, lignes comprises : l'écran de chiffrage vient
+    // d'écrire et doit afficher ce qui a été enregistré, pas ce qu'il croit
+    // avoir envoyé.
+    return jsonOk({
+      ...updated,
+      totals: totalsFor(updated.lines),
+      lineCount: updated.lines.length,
+    });
   } catch (error) {
     return handleRouteError(error);
   }
