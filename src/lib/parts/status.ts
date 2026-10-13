@@ -29,6 +29,18 @@ import type { PartRequirementStatus, PartUrgency } from "@/types";
  * six mois plus tard, la question « qui a autorisé cette dépense ? » n'a de
  * réponse que si les deux ont été enregistrées.
  *
+ * `ORDERED` EST UNE ÉTAPE FACULTATIVE, ET C'EST DÉLIBÉRÉ
+ * Passer par la commande n'est exigé que pour empêcher de marquer posée une
+ * demande que personne n'a validée — ce qui est refusé juste en dessous. Une
+ * pièce déjà dans le véhicule se valide et se pose sans qu'on ouvre une
+ * commande ; une pièce qu'il a fallu se procurer passe par `ORDERED`, et c'est
+ * là que le bureau note qu'il l'a effectivement commandée.
+ *
+ * Exiger `ORDERED` dans tous les cas aurait ajouté un clic à un geste qui n'en a
+ * pas besoin. L'interdire aurait fait de `ORDERED` un état qu'on traverse sans
+ * pouvoir s'y arrêter — et un état où l'on ne peut pas s'arrêter ne se distingue
+ * pas d'un état qui n'existe pas.
+ *
  * `from === to` est permis et ne fait rien : l'écran n'a pas à distinguer
  * « je l'ai validée » de « elle l'était déjà ».
  */
@@ -49,7 +61,7 @@ export function transitionRefusal(
    */
   if (from === to) return null;
 
-  if (to === "FULFILLED" && from !== "APPROVED") {
+  if (to === "FULFILLED" && from !== "APPROVED" && from !== "ORDERED") {
     return (
       "Une pièce ne se pose qu'une fois la demande validée. Validez-la d'abord, " +
       "puis marquez-la posée."
@@ -61,9 +73,14 @@ export function transitionRefusal(
 /**
  * Vrai quand la demande attend encore une décision du bureau.
  *
- * Sert au badge de l'écran et au compteur du bon de travail. Écrit ici plutôt
- * qu'en `status === "PENDING"` à chaque appel : le jour où un état s'ajoute
- * avant la décision, c'est une ligne à changer et non une recherche.
+ * Sert au compteur du registre des pièces — « 3 en attente de décision » —, qui
+ * est la ligne pour laquelle un bureau ouvre l'écran. Écrit ici plutôt qu'en
+ * `status === "PENDING"` à chaque appel : le jour où un état s'ajoute avant la
+ * décision, c'est une ligne à changer et non une recherche.
+ *
+ * Cette fonction est restée un moment sans appelant, et le registre a d'abord
+ * recopié le test. La recopie était juste, et c'est ce qui la rendait invisible :
+ * elle n'aurait divergé qu'au premier état ajouté avant la décision.
  */
 export function awaitsDecision(status: PartRequirementStatus): boolean {
   return status === "PENDING";

@@ -53,7 +53,20 @@ import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
-/** Ce qu'une demande montre dans une liste. */
+/**
+ * Ce qu'une demande montre, sur le panneau d'un bon comme au registre du bureau.
+ *
+ * LE CONTEXTE EST TOUJOURS RENDU, MÊME QUAND LE PANNEAU N'EN A PAS BESOIN
+ * Le panneau vit sur la fiche d'un bon : il sait déjà de quel appareil et de
+ * quel immeuble il parle. Le registre, lui, mélange tout le parc, et une ligne
+ * qui ne dirait ni le site ni le bon ne dirait rien.
+ *
+ * Deux projections auraient été plus fines, et c'est ce qui a été fait pour les
+ * devis — mais là-bas la différence portait sur une collection imbriquée, les
+ * lignes d'un devis, qu'un registre n'a effectivement pas à transporter. Ici ce
+ * sont trois chaînes par ligne. Une seconde projection pour trois chaînes
+ * coûterait plus cher en risque de divergence qu'en octets.
+ */
 const LIST_SELECT = {
   id: true,
   number: true,
@@ -71,6 +84,19 @@ const LIST_SELECT = {
   workOrderId: true,
   requestedBy: { select: { id: true, name: true } },
   statusChangedBy: { select: { id: true, name: true } },
+  workOrder: {
+    select: {
+      orderNumber: true,
+      title: true,
+      elevator: {
+        select: {
+          id: true,
+          elevatorCode: true,
+          building: { select: { id: true, name: true, city: true } },
+        },
+      },
+    },
+  },
 } satisfies Prisma.PartRequirementSelect;
 
 const CreateSchema = z

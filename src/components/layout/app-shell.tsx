@@ -26,6 +26,7 @@ import {
   Receipt,
   FileText,
   FilePlus,
+  PackageSearch,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -122,6 +123,19 @@ const NAV_ITEMS: readonly NavItem[] = [
     href: "/administration/devis",
     label: "Devis",
     icon: FileText,
+    roles: MANAGEMENT_ROLES,
+  },
+  // Les pièces à commander, juste après les devis : c'est la même question —
+  // qu'est-ce qui attend une décision du bureau ? — posée aux fournitures
+  // plutôt qu'aux prestations.
+  //
+  // Le panneau par bon existait depuis le début, mais il fallait ouvrir les
+  // bons un par un pour savoir ce qui attendait. Cet écran rend visible ce qui
+  // était invisible.
+  {
+    href: "/administration/pieces",
+    label: "Pièces & Commandes",
+    icon: PackageSearch,
     roles: MANAGEMENT_ROLES,
   },
   // Le programme d'entretien — la moitié préventive du métier, à côté du

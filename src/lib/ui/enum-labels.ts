@@ -61,6 +61,7 @@ export const ENUM_LABELS: Record<string, string> = {
   IMMEDIATE: "Arrêt immédiat",
   PENDING: "En attente",
   APPROVED: "Validée",
+  ORDERED: "Commandée",
   REJECTED: "Refusée",
   FULFILLED: "Posée",
 

@@ -217,16 +217,20 @@ export type PartUrgency = (typeof PART_URGENCIES)[number];
 /**
  * Où en est une demande de pièce.
  *
- * `FULFILLED` n'est pas « validée » : c'est la pièce posée. Les deux moments sont
- * séparés par une commande et une livraison, souvent de plusieurs semaines, et
- * une demande validée qu'on croit posée est une pièce que personne n'ira
- * chercher.
+ * Cinq états pour trois moments distincts : le bureau **valide** une dépense,
+ * quelqu'un **passe la commande**, la pièce **arrive et se pose**. `REJECTED`
+ * est l'issue négative, et elle n'est pas terminale — un refus se rouvre.
+ *
+ * Une demande validée qu'on croit commandée est une pièce que personne n'ira
+ * chercher ; une demande commandée qu'on croit posée est un appareil qui reste
+ * à l'arrêt pour rien.
  */
 export const PART_REQUIREMENT_STATUSES = [
   "PENDING",
   "APPROVED",
-  "REJECTED",
+  "ORDERED",
   "FULFILLED",
+  "REJECTED",
 ] as const;
 export type PartRequirementStatus = (typeof PART_REQUIREMENT_STATUSES)[number];
 

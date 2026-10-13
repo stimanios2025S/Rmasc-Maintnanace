@@ -432,6 +432,36 @@ export function PartRequirementsPanel({
                     )}
 
                     {row.status === "APPROVED" && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void decide(row, "ORDERED", "commande passée")}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {isBusy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                          ) : null}
+                          Commander
+                        </button>
+                        {/*
+                          « Posée sans commande » existe parce que la règle
+                          l'autorise : une pièce déjà dans le véhicule se valide
+                          et se pose, et exiger une commande pour elle ajouterait
+                          un clic à un geste qui n'en a pas besoin.
+                        */}
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => void decide(row, "FULFILLED", "pièce posée")}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          Posée sans commande
+                        </button>
+                      </>
+                    )}
+
+                    {row.status === "ORDERED" && (
                       <button
                         type="button"
                         disabled={isBusy}
@@ -525,6 +555,8 @@ interface Draft {
 const STATUS_BADGE: Record<PartRequirementStatus, string> = {
   PENDING: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   APPROVED: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
+  ORDERED:
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300",
   REJECTED: "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-400",
   FULFILLED: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
 };

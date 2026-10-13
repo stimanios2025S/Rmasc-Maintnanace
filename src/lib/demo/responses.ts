@@ -1506,7 +1506,7 @@ export function demoPartRequirements(filters: {
   workOrderId?: string;
   status?: string;
 }) {
-  const { workOrders, users } = demoWorld();
+  const { workOrders, users, elevators } = demoWorld();
 
   const PARTS: {
     faulty: string;
@@ -1562,21 +1562,53 @@ export function demoPartRequirements(filters: {
     },
   ];
 
-  const STATUSES = ["PENDING", "PENDING", "APPROVED", "REJECTED", "FULFILLED"];
+  /**
+   * Le cycle des états, parcouru dans l'ordre.
+   *
+   * Trois demandes en attente — c'est l'état qui appelle une action, et une
+   * seule ligne dans le filtre « en attente » ne montrerait pas ce qu'un bureau
+   * a à traiter —, puis un exemplaire de chaque autre état, pour que chacun des
+   * cinq filtres du registre ait quelque chose à montrer.
+   */
+  const STATUSES = [
+    "PENDING",
+    "PENDING",
+    "PENDING",
+    "APPROVED",
+    "ORDERED",
+    "FULFILLED",
+    "REJECTED",
+  ];
 
   const now = Date.now();
   const daysAgo = (n: number) => new Date(now - n * 24 * 60 * 60 * 1000);
 
   const all = workOrders
     .map((order, orderIndex) => ({ order, orderIndex }))
-    // Une intervention sur trois, et toujours la même : une fixture doit être
-    // stable d'un appel à l'autre, sinon un écran qui se rafraîchit montre une
-    // histoire différente à chaque fois.
-    .filter(({ orderIndex }) => orderIndex % 3 === 1)
-    .map(({ order, orderIndex }) => {
-      const part = PARTS[orderIndex % PARTS.length];
-      const status = STATUSES[orderIndex % STATUSES.length];
-      const requestedAt = daysAgo(2 + (orderIndex % 21));
+    /**
+     * Une intervention sur deux, et toujours la même : une fixture doit être
+     * stable d'un appel à l'autre, sinon un écran qui se rafraîchit montre une
+     * histoire différente à chaque fois.
+     *
+     * Une sur trois donnait cinq demandes, et l'état était tiré par
+     * `orderIndex` — si bien que la multiplication des deux cycles laissait
+     * **le filtre « Posées » vide**, sans que rien ne le signale. Une sur deux
+     * en donne assez pour que les cinq états soient représentés.
+     */
+    .filter(({ orderIndex }) => orderIndex % 2 === 1)
+    .map(({ order }, index) => {
+      /**
+       * L'état et la pièce se prennent sur la **position dans la liste
+       * filtrée**, et non sur l'indice du bon.
+       *
+       * C'est ce qui garantit que les cinq états apparaissent, quel que soit le
+       * nombre de bons par ailleurs. Tirer sur l'indice du bon faisait dépendre
+       * la couverture de la fixture d'une multiplication de modules qu'aucun
+       * lecteur ne vérifie.
+       */
+      const part = PARTS[index % PARTS.length];
+      const status = STATUSES[index % STATUSES.length];
+      const requestedAt = daysAgo(2 + (index % 21));
       const decidedAt =
         status === "PENDING" ? null : new Date(requestedAt.getTime() + 36e5 * 8);
 
@@ -1585,11 +1617,21 @@ export function demoPartRequirements(filters: {
         : undefined;
       const decider = users.find((u) => u.role === "MAINTENANCE_MANAGER");
 
+      /**
+       * Le contexte du bon, joint comme la route le rend.
+       *
+       * Le registre du bureau mélange tout le parc : une ligne qui ne dirait ni
+       * le site ni le bon ne dirait rien. Le panneau, lui, l'ignore — il vit
+       * déjà sur la fiche du bon.
+       */
+      const unit = elevators.find((e) => e.id === order.elevatorId);
+      const building = unit ? buildingById(unit.buildingId) : null;
+
       return {
         id: `part_${order.id}`,
         number: `DP-${requestedAt.getUTCFullYear()}${String(
           requestedAt.getUTCMonth() + 1
-        ).padStart(2, "0")}-${String(1000 + orderIndex).slice(-6)}`,
+        ).padStart(2, "0")}-${String(1000 + index).slice(-6)}`,
         status,
         urgency: part.urgency,
         quantity: 1,
@@ -1612,6 +1654,19 @@ export function demoPartRequirements(filters: {
           status === "PENDING" || !decider
             ? null
             : { id: decider.id, name: decider.name },
+        workOrder: {
+          orderNumber: order.orderNumber,
+          title: order.title,
+          elevator: {
+            id: unit?.id ?? "—",
+            elevatorCode: unit?.elevatorCode ?? "—",
+            building: {
+              id: building?.id ?? "—",
+              name: building?.name ?? "—",
+              city: building?.city ?? "—",
+            },
+          },
+        },
       };
     })
     .filter((row) => !filters.workOrderId || row.workOrderId === filters.workOrderId)

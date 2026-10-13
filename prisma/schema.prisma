@@ -300,15 +300,24 @@ enum PartUrgency {
 
 /// Où en est une demande de pièce.
 ///
-/// `FULFILLED` n'est pas « validée » : c'est la pièce posée. La distinction
-/// compte, parce que les deux moments sont séparés par une commande et une
-/// livraison, souvent de plusieurs semaines — et une demande validée qu'on
-/// croit posée est une pièce que personne n'ira chercher.
+/// `ORDERED` ET `FULFILLED` NE SONT PAS LA MÊME CHOSE, ET AUCUN DES DEUX N'EST
+/// « VALIDÉE ». Trois moments distincts, séparés par des jours ou des semaines :
+/// le bureau **valide** une dépense, quelqu'un **passe la commande**, la pièce
+/// **arrive et se pose**. Une demande validée qu'on croit commandée est une
+/// pièce que personne n'ira chercher ; une demande commandée qu'on croit posée
+/// est un appareil qui reste à l'arrêt pour rien.
+///
+/// `ORDERED` a été ajouté après coup, et la raison vaut d'être notée : à la
+/// première version, valider et commander étaient le même geste, parce qu'on
+/// supposait une petite entreprise où le responsable fait les deux. En pratique
+/// la validation se prend en réunion et la commande se passe le lendemain, par
+/// quelqu'un d'autre — et rien ne disait laquelle des deux avait eu lieu.
 enum PartRequirementStatus {
   PENDING
   APPROVED
-  REJECTED
+  ORDERED
   FULFILLED
+  REJECTED
 }
 
 // ─── USERS & AUTH ───────────────────────────────────────────
