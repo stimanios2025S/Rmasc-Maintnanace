@@ -430,6 +430,8 @@ model User {
   partRequestsRaised   PartRequirement[]   @relation("PartRequestsRaised")
   /// Et celles qu'il a arbitrées, quand c'est un compte de bureau.
   partRequestDecisions PartRequirement[]   @relation("PartRequestDecisions")
+  /// Et celles qu'il a transmises au magasin central, quand c'est son rôle.
+  partRequestTransmissions PartRequirement[] @relation("PartRequestTransmissions")
 
   /// Les devis demandés *par* ce compte client, et ceux qu'il a décidés côté
   /// entreprise. Trois arêtes nommées, comme pour les factures : un devis a un
@@ -962,6 +964,28 @@ model PartRequirement {
   /// l'atteint est la seule qu'on cherche six mois plus tard.
   fulfilledAt      DateTime? @map("fulfilled_at")
 
+  // ─── La transmission au magasin central ───────────────────
+  //
+  // CE QUE LE MAGASIN A RÉPONDU, ET CE QU'ON LUI A ENVOYÉ
+  // Ces colonnes ne sont pas un journal : elles portent l'état courant d'un
+  // envoi, parce qu'un envoi peut échouer et qu'un échec doit laisser une trace
+  // qu'on puisse reprendre. Un magasin central éteint pendant une minute ne doit
+  // pas faire disparaître un besoin signalé depuis un toit.
+  //
+  // `stockReference` EST LA SEULE CHOSE QUI PERMETTE DE RÉCONCILIER
+  // Le magasin central répond une référence de sa propre série. Sans elle, la
+  // seule façon de savoir si un envoi a abouti serait de comparer des
+  // désignations saisies à la main — c'est-à-dire de deviner.
+  //
+  // `stockSendError` est conservé jusqu'à la transmission suivante, et pas
+  // effacé à la lecture : un refus qu'on ne peut lire qu'une fois est un refus
+  // qu'on ne lit pas.
+  stockDemandeId String?   @map("stock_demande_id")
+  stockReference String?   @map("stock_reference")
+  stockSentAt    DateTime? @map("stock_sent_at")
+  stockSentById  String?   @map("stock_sent_by_id")
+  stockSendError String?   @map("stock_send_error")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -972,6 +996,10 @@ model PartRequirement {
   workOrder         WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
   requestedBy       User?     @relation("PartRequestsRaised", fields: [requestedById], references: [id], onDelete: SetNull)
   statusChangedBy   User?     @relation("PartRequestDecisions", fields: [statusChangedById], references: [id], onDelete: SetNull)
+  /// Qui a transmis la demande au magasin central. `SetNull` pour la même
+  /// raison que les deux autres : le départ d'un salarié ne doit pas effacer
+  /// l'historique d'un envoi, seulement son auteur.
+  stockSentBy       User?     @relation("PartRequestTransmissions", fields: [stockSentById], references: [id], onDelete: SetNull)
 
   /// La seule requête de l'écran : « les demandes de ce bon, du plus récent ».
   @@index([workOrderId, createdAt])

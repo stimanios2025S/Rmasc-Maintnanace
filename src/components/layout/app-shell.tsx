@@ -27,6 +27,7 @@ import {
   FileText,
   FilePlus,
   PackageSearch,
+  Warehouse,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -136,6 +137,20 @@ const NAV_ITEMS: readonly NavItem[] = [
     href: "/administration/pieces",
     label: "Pièces & Commandes",
     icon: PackageSearch,
+    roles: MANAGEMENT_ROLES,
+  },
+  // Le poste du chef de service technique, à la suite des pièces parce que
+  // c'est l'étape d'après : ce que le bureau a validé part d'ici vers le
+  // magasin central, qui est une autre application.
+  //
+  // Deux écrans et non un seul, bien qu'ils parlent des mêmes demandes : celui
+  // d'avant décide du bien-fondé d'une dépense, celui-ci fait partir la
+  // commande. Les fondre obligerait celui qui transmet à pouvoir valider, ce
+  // qui reviendrait à supprimer la séparation que le circuit existe pour tenir.
+  {
+    href: "/administration/magasinier",
+    label: "Magasinier",
+    icon: Warehouse,
     roles: MANAGEMENT_ROLES,
   },
   // Le programme d'entretien — la moitié préventive du métier, à côté du

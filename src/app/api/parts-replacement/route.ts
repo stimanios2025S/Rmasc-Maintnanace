@@ -84,6 +84,17 @@ const LIST_SELECT = {
   workOrderId: true,
   requestedBy: { select: { id: true, name: true } },
   statusChangedBy: { select: { id: true, name: true } },
+  /**
+   * L'état de la transmission au magasin central.
+   *
+   * Joint ici, et non réservé au poste du magasinier : le registre du bureau
+   * montre les mêmes lignes, et une demande déjà commandée là-bas qui
+   * s'afficherait ici comme « à commander » ferait commander deux fois.
+   */
+  stockReference: true,
+  stockSentAt: true,
+  stockSendError: true,
+  stockSentBy: { select: { id: true, name: true } },
   workOrder: {
     select: {
       orderNumber: true,
