@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "diagnose-auth": "tsx scripts/diagnose-auth.ts",
     "db:backfill-positions": "tsx scripts/backfill-incident-positions.ts",
+    "db:rotate-demo-passwords": "tsx scripts/rotate-demo-passwords.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
