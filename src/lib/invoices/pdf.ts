@@ -4,6 +4,29 @@
  * Module serveur : il lit le disque et produit un flux binaire. Rien de ce qui
  * est ici ne doit atteindre un bundle navigateur.
  *
+ * LA MISE EN PAGE COMMUNE VIENT DE `documents/charte.ts`
+ * Ce fichier portait sa propre copie des marges, des encres, de `printable`,
+ * de `frenchDate`, du chemin du tampon, de l'en-tête et du trait de séparation.
+ * C'était la quatrième copie d'une mise en page qui doit rester identique d'un
+ * document à l'autre — le jour où l'adresse de l'entreprise change, une seule
+ * des quatre la voit changer. Tout ce qui doit *se ressembler* est désormais
+ * importé ; seule la composition propre à une facture reste ici.
+ *
+ * Ce qui reste propre à ce document, et ne doit pas remonter dans la charte :
+ * le bloc client/intervention, le bandeau d'état, le tableau des pièces et le
+ * total. Une « fonction de facture » paramétrée par un titre ne produirait
+ * correctement aucun des documents.
+ *
+ * LA RÉGRESSION VISUELLE A ÉTÉ VÉRIFIÉE, PAS SUPPOSÉE
+ * `scripts/pdf-golden.ts` rend sept variantes (ordinaire, sans pièces, réglée,
+ * annulée, sans coordonnées, textes longs, devise étrangère) et imprime
+ * l'empreinte SHA-256 de leurs flux de contenu décompressés. Les empreintes
+ * avant et après ce raccordement sont identiques.
+ *
+ * Elles ne peuvent pas porter sur le fichier entier : pdfkit inscrit la date de
+ * création dans le PDF, et deux rendus du même code diffèrent donc de quelques
+ * octets. C'est le *contenu* qui doit être identique, et il l'est.
+ *
  * IL N'INVENTE AUCUNE MENTION LÉGALE
  * Le cachet de l'entreprise — raison sociale, adresse, téléphone, numéro
  * d'identification fiscale — n'est pas écrit en dur. Une facture portant une
@@ -36,26 +59,26 @@
  * nécessaire, parce qu'une facture annulée qui continuerait de s'imprimer comme
  * une facture ordinaire réclame une somme que plus personne ne doit.
  *
- * Le risque que la règle d'origine écartait — deux personnes obtenant deux
- * documents différents à partir de la même adresse — n'est pas rouvert pour
- * autant : personne ne *choisit* cet état. Il vient de la base, il est le même
- * pour tout le monde, et aucun paramètre d'adresse ne peut le faire varier.
- *
  * Une facture restée `ISSUED` s'imprime exactement comme avant que la colonne
  * n'existe. Aucune pièce déjà envoyée à un client ne change d'aspect, donc
  * aucune réimpression ne devient une variante du document d'origine.
  */
 
-import { existsSync } from "node:fs";
-import path from "node:path";
 import PDFDocument from "pdfkit";
 import type { Invoice } from "@prisma/client";
+import {
+  INK,
+  MUTED,
+  PAGE_MARGIN,
+  RULE,
+  drawDocumentHeader,
+  drawSectionTitle,
+  drawStamp,
+  frame,
+  frenchDate,
+  printable,
+} from "@/lib/documents/charte";
 import { formatDzd } from "@/lib/ui/money";
-
-const PAGE_MARGIN = 48;
-const INK = "#111827";
-const MUTED = "#6b7280";
-const RULE = "#d1d5db";
 
 /** Une pièce telle qu'elle a été figée sur la facture. */
 interface FrozenPart {
@@ -90,30 +113,6 @@ function readParts(value: unknown): FrozenPart[] {
   return parts;
 }
 
-/**
- * Ramène un texte à ce que les polices standard savent écrire.
- *
- * Les polices standard de pdfkit — Helvetica, Times, Courier — sont encodées en
- * `WinAnsiEncoding`, qui couvre le latin-1 et rien au-delà. Le français
- * typographique, lui, utilise des espaces que le latin-1 ignore :
- * `toLocaleString("fr-FR")` sépare les milliers par une espace fine insécable
- * (U+202F), un copier-coller depuis un traitement de texte en apporte d'autres,
- * et une date formatée peut en poser aussi. Mal encodées, ces espaces
- * ressortent en caractère parasite — le montant s'imprime « 18 /500 DZD ».
- *
- * Sur une facture, ce n'est pas une coquette : c'est un montant faux, et c'est
- * exactement ce qu'un lecteur ne pardonne pas.
- *
- * Elles sont remplacées par une espace insécable ordinaire (U+00A0), qui est
- * dans le latin-1 et garde l'office qu'on attend d'elle — ne pas séparer « 18 »
- * de « 500 » en fin de ligne.
- */
-function printable(text: string): string {
-  return text
-    .replace(/[   ]/g, " ")
-    .replace(/‑/g, "-");
-}
-
 function amountLabel(amount: Invoice["amount"], currency: string): string {
   // `formatDzd` écrit « DZD » parce que tout montant de ce produit est en
   // dinars. La colonne existe pour qu'une seconde devise n'exige pas une
@@ -121,23 +120,6 @@ function amountLabel(amount: Invoice["amount"], currency: string): string {
   return currency === "DZD"
     ? formatDzd(amount.toString()) ?? "0 DZD"
     : `${amount.toString()} ${currency}`;
-}
-
-function frenchDate(date: Date): string {
-  return date.toLocaleDateString("fr-FR", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  });
-}
-
-/** Le chemin du tampon, ou `null` s'il n'a pas été déposé. */
-function resolveStampPath(): string | null {
-  const configured = process.env.INVOICE_STAMP_PATH;
-  const candidate = configured
-    ? path.resolve(configured)
-    : path.join(process.cwd(), "public", "cachet.png");
-  return existsSync(candidate) ? candidate : null;
 }
 
 /**
@@ -151,7 +133,7 @@ function resolveStampPath(): string | null {
  * seul laisse un lecteur devant la question de savoir s'il doit payer. Le
  * bandeau vert, lui, sert au règlement — la facture réglée qu'un client
  * redemande est un document qui circule, et il vaut mieux qu'il porte la réponse
- * que de laisser quelqu'un la chercher.
+ * que de la laisser chercher.
  */
 function statusBand(invoice: Invoice): {
   label: string;
@@ -207,9 +189,7 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const left = PAGE_MARGIN;
-    const right = doc.page.width - PAGE_MARGIN;
-    const width = right - left;
+    const { left, right, width } = frame(doc);
 
     /**
      * Tout ce que le document imprime, passé une fois par `printable`.
@@ -248,51 +228,14 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     }));
 
     // ─── En-tête ──────────────────────────────────────────────
-    doc.fillColor(INK).font("Helvetica-Bold").fontSize(18);
-    doc.text(
-      printable(process.env.INVOICE_COMPANY_NAME ?? "RMASC"),
-      left,
-      PAGE_MARGIN
-    );
-
-    doc.font("Helvetica").fontSize(9).fillColor(MUTED);
-    const companyLines = [
-      process.env.INVOICE_COMPANY_ADDRESS,
-      process.env.INVOICE_COMPANY_PHONE,
-      process.env.INVOICE_COMPANY_EMAIL,
-      process.env.INVOICE_COMPANY_TAX_ID,
-    ]
-      .filter((line): line is string => Boolean(line))
-      .map(printable);
-
-    if (companyLines.length > 0) {
-      doc.text(companyLines.join("  ·  "), left, PAGE_MARGIN + 24, {
-        width: width * 0.55,
-      });
-    }
-
-    // Le bloc « FACTURE » est aligné à droite, sur la même ligne de base que le
-    // nom. Il porte le numéro, qui est ce qu'on cherche en premier sur un
-    // document classé.
-    doc
-      .fillColor(INK)
-      .font("Helvetica-Bold")
-      .fontSize(22)
-      .text("FACTURE", left, PAGE_MARGIN - 4, { width, align: "right" });
-    doc
-      .font("Helvetica")
-      .fontSize(10)
-      .fillColor(MUTED)
-      .text(view.number, { width, align: "right" });
-    doc.text(`Émise le ${view.issuedAt}`, { width, align: "right" });
-
-    let y = headerBaseline(doc, PAGE_MARGIN);
-    doc
-      .moveTo(left, y)
-      .lineTo(right, y)
-      .strokeColor(RULE)
-      .lineWidth(1)
-      .stroke();
+    //
+    // L'entreprise à gauche, le document à droite, puis le trait de séparation.
+    // `drawDocumentHeader` rend la hauteur de ce trait : l'appelant n'a pas à
+    // recalculer où il tombe.
+    let y = drawDocumentHeader(doc, {
+      title: "FACTURE",
+      lines: [view.number, `Émise le ${view.issuedAt}`],
+    });
     y += 18;
 
     // ─── État de la pièce ─────────────────────────────────────
@@ -315,6 +258,10 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     // ─── Client et lieu ───────────────────────────────────────
     const columnWidth = (width - 24) / 2;
 
+    // Les deux étiquettes ne passent pas par `drawSectionTitle` : elles sont
+    // posées sur une demi-largeur, alors que la charte écrit sur toute la
+    // ligne. Les forcer dans l'aide commune les ferait déborder l'une sur
+    // l'autre.
     doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8);
     doc.text("FACTURÉ À", left, y, { width: columnWidth });
     doc.text("INTERVENTION", left + columnWidth + 24, y, { width: columnWidth });
@@ -373,8 +320,7 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     y = doc.y + 16;
 
     // ─── Travaux effectués ────────────────────────────────────
-    doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8);
-    doc.text("TRAVAUX EFFECTUÉS", left, y, { width });
+    drawSectionTitle(doc, "TRAVAUX EFFECTUÉS", y);
     doc.fillColor(INK).font("Helvetica").fontSize(10);
     doc.text(view.reportNotes?.trim() || "Non renseigné.", left, y + 13, {
       width,
@@ -383,8 +329,7 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     y = doc.y + 20;
 
     // ─── Pièces ───────────────────────────────────────────────
-    doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8);
-    doc.text("PIÈCES REMPLACÉES", left, y, { width });
+    drawSectionTitle(doc, "PIÈCES REMPLACÉES", y);
     y += 14;
 
     const colRef = left + width * 0.62;
@@ -455,40 +400,11 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     y += 56;
 
     // ─── Tampon ───────────────────────────────────────────────
-    const stampPath = resolveStampPath();
-    if (stampPath) {
-      const stampWidth = 110;
-      const stampX = right - stampWidth;
-      /**
-       * Sous le total, et jamais par-dessus : un cachet qui recouvre le montant
-       * rend la facture illisible, ce qui est l'exact inverse de son objet. La
-       * borne basse garde le tampon dans la page quand le rapport est long — un
-       * cachet à moitié hors du papier ne vaut pas mieux qu'un cachet absent.
-       */
-      const stampY = Math.min(doc.page.height - PAGE_MARGIN - stampWidth, y);
-      try {
-        doc.image(stampPath, stampX, stampY, { width: stampWidth });
-      } catch {
-        // Un fichier illisible ne fait pas échouer la facture : elle s'imprime
-        // sans cachet. Une facture manquante serait pire que la découverte, dans
-        // les journaux, d'un PNG que pdfkit n'a pas su lire.
-        console.error(`[invoices] cachet illisible : ${stampPath}`);
-      }
-    }
+    //
+    // `drawStamp` borne le tampon dans la page et ne fait jamais échouer le
+    // document sur un fichier illisible.
+    drawStamp(doc, y);
 
     doc.end();
   });
-}
-
-/**
- * La ligne de séparation sous l'en-tête.
- *
- * L'en-tête est écrit en deux blocs qui se chevauchent verticalement — le nom à
- * gauche, le titre et le numéro à droite — et la hauteur du plus grand n'est pas
- * connue à l'avance. pdfkit suit `doc.y` tout seul ; on repart donc de là, avec
- * un minimum, pour que le trait ne remonte jamais dans le titre quand la raison
- * sociale est courte.
- */
-function headerBaseline(doc: PDFKit.PDFDocument, margin: number): number {
-  return Math.max(doc.y, margin + 62) + 12;
 }
