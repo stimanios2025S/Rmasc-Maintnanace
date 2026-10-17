@@ -452,6 +452,17 @@ model User {
   /// board, in which case `clientId` is that client's id, not theirs.
   technicalSheets      TechnicalSheet[]
 
+  // ─── Contrats & SLA ─────────────────────────────────────
+  //
+  // Deux arêtes nommées vers `Contract`, pour la même raison que les factures :
+  // le titulaire d'un contrat et celui qui l'a résilié sont deux personnes
+  // différentes, et une arête non nommée obligerait Prisma à deviner laquelle
+  // est laquelle.
+  contracts             Contract[]           @relation("ClientContracts")
+  terminatedContracts   Contract[]           @relation("ContractTerminations")
+  /// Les révisions de contrat que ce compte a écrites.
+  contractRevisions     ContractRevision[]
+
   @@map("users")
 }
 
@@ -507,6 +518,12 @@ model Building {
   /// Les devis émis pour ce site. L'immeuble est obligatoire sur un devis : une
   /// offre sans adresse ne se visite pas.
   quotes        Quote[]
+
+  /// Les contrats qui couvrent ce site. Plusieurs lignes possibles dans le
+  /// temps — un contrat résilié puis un nouveau — mais une seule **active** à
+  /// la fois : c'est la règle vérifiée par `lib/contracts/status.ts`, PostgreSQL
+  /// ne pouvant pas l'exprimer sans un index partiel.
+  contracts     ContractBuilding[]
 
   // Every BUILDING_OWNER read is filtered on `owner_id` (see
   // `buildingScopeFor` in src/lib/api/guard.ts), so this is a hot filter, not
@@ -1573,4 +1590,194 @@ model TechnicalSheet {
   @@index([clientId])
   @@index([createdAt])
   @@map("technical_sheets")
+}
+
+// ─── CONTRATS & SLA ─────────────────────────────────────────
+//
+// POURQUOI CE MODULE EXISTE
+// `SLATier` vivait sur l'immeuble et `ClientType` sur le compte. L'un était une
+// étiquette colorée, l'autre séparait deux portails. Aucun des deux n'était un
+// engagement : il n'existait ni date de début ni de fin, ni renouvellement, ni
+// résiliation, ni délai promis, ni pénalité. Un client « sous contrat » l'était
+// donc sans qu'aucune pièce ne dise jusqu'à quand, ni ce que cela promettait.
+//
+// Un contrat est un engagement opposable. Tout ce qu'il porte est donc daté,
+// révisable, et conservé — voir `ContractRevision`.
+
+enum ContractStatus {
+  /// Rédigé, pas encore signé. Ne couvre aucun immeuble.
+  DRAFT
+  /// En vigueur. C'est le seul état qui couvre réellement les immeubles.
+  ACTIVE
+  /// En vigueur mais suspendu — impayé, litige. Les immeubles restent couverts
+  /// administrativement, mais l'écran doit dire que le service est suspendu.
+  SUSPENDED
+  /// Résilié avant l'échéance. Terminal pour cette période.
+  TERMINATED
+  /// Arrivé à échéance sans reconduction. Terminal pour cette période.
+  EXPIRED
+}
+
+/// Ce qui se passe à l'échéance.
+///
+/// `AUTO` est le défaut, et c'est un choix commercial autant que technique :
+/// un contrat qui expire par oubli est un client perdu, et personne ne s'aperçoit
+/// de l'oubli avant que le client n'appelle. La reconduction tacite est la norme
+/// de ce métier ; `MANUAL` et `NONE` existent pour les clients qui l'ont exigé.
+enum ContractRenewalMode {
+  /// Reconduction tacite : la date de fin est repoussée d'une période.
+  AUTO
+  /// Le contrat s'arrête à l'échéance, mais une alerte est émise `noticeDays`
+  /// avant pour qu'une décision soit prise à temps.
+  MANUAL
+  /// Le contrat s'arrête à l'échéance, sans alerte. Choix explicite du client.
+  NONE
+}
+
+enum BillingCycle {
+  MONTHLY
+  QUARTERLY
+  ANNUALLY
+}
+
+/// Ce qui a changé sur un contrat, et quand.
+///
+/// Même raison que `WorkOrderRevision` : six mois plus tard, « qui a résilié, et
+/// quand ? » ou « ce client était-il PREMIUM en mars ? » n'ont de réponse que si
+/// l'événement a été écrit au moment où il s'est produit. Un état courant ne se
+/// reconstitue pas.
+enum ContractRevisionKind {
+  CREATED
+  TIER_CHANGED
+  DATES_CHANGED
+  RENEWAL_CHANGED
+  STATUS_CHANGED
+  BUILDINGS_CHANGED
+  COMMITMENT_CHANGED
+}
+
+/// Un contrat de maintenance.
+///
+/// UN CONTRAT PAR CLIENT, COUVRANT N IMEUBLES
+/// Le titulaire est un compte client, et les immeubles couverts sont une
+/// sélection de son parc — pas forcément tout son parc. Un client qui possède
+/// six immeubles peut n'en confier que quatre ; la table
+/// `ContractBuilding` porte cette sélection.
+///
+/// `slaTier` EST LA SOURCE DE VÉRITÉ, L'IMMEUBLE N'EST QU'UN REPLI
+/// `Building.slaTier` reste en place pour les immeubles qu'aucun contrat ne
+/// couvre — un client sans contrat a quand même un site, et son badge doit
+/// afficher quelque chose. La règle de lecture est unique et vit dans
+/// `lib/contracts/status.ts` : *le palier effectif est celui du contrat actif,
+/// sinon celui de l'immeuble.*
+///
+/// LES DÉLAIS SONT STOCKÉS, PAS DÉDUITS DU PALIER
+/// Le barème du palier fournit les valeurs par défaut à la création, mais un
+/// contrat négocié peut promettre mieux que son palier. Les déduire à la lecture
+/// rendrait impossible une clause particulière — c'est-à-dire précisément ce
+/// qu'un contrat sert à écrire.
+model Contract {
+  id        String @id @default(cuid())
+  /// La forme imprimée, `CT-2026-0001`.
+  reference String @unique
+  year      Int
+  sequence  Int
+
+  clientId String  @map("client_id")
+  /// Le palier **engagé** par ce contrat.
+  slaTier  SLATier @map("sla_tier")
+
+  status   ContractStatus @default(DRAFT)
+  startsAt DateTime       @map("starts_at")
+  endsAt   DateTime       @map("ends_at")
+  /// Quand le document a été signé. NULL sur un brouillon.
+  signedAt DateTime?      @map("signed_at")
+
+  renewalMode ContractRenewalMode @default(AUTO) @map("renewal_mode")
+  /// Préavis, en jours, avant l'échéance — pour l'alerte et pour la résiliation.
+  noticeDays  Int                @default(60) @map("notice_days")
+
+  billingCycle BillingCycle     @default(ANNUALLY) @map("billing_cycle")
+  /// `Decimal` comme les factures : un montant d'abonnement en virgule flottante
+  /// finit par afficher 12 345,599999 dans un document.
+  amount       Decimal          @db.Decimal(12, 2)
+  currency     String           @default("DZD")
+
+  // ─── Les délais promis ────────────────────────────────────
+  //
+  // Deux engagements distincts, et les confondre serait un défaut de lecture :
+  // « prise en charge » est le temps avant qu'un technicien réponde, «
+  // intervention » le temps avant qu'il soit sur site. Un contrat PREMIUM peut
+  // promettre 4 h de prise en charge et 24 h d'intervention.
+  responseHours     Int @map("response_hours")
+  interventionHours Int @map("intervention_hours")
+
+  // ─── Résiliation ──────────────────────────────────────────
+  terminatedAt      DateTime? @map("terminated_at")
+  terminationReason String?   @map("termination_reason")
+  terminatedById    String?   @map("terminated_by_id")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  /// `Restrict` : supprimer un compte client qui a des contrats effacerait des
+  /// engagements opposables. La suppression doit être refusée, pas cascadée.
+  client       User               @relation("ClientContracts", fields: [clientId], references: [id], onDelete: Restrict)
+  terminatedBy User?              @relation("ContractTerminations", fields: [terminatedById], references: [id], onDelete: SetNull)
+  buildings    ContractBuilding[]
+  revisions    ContractRevision[]
+
+  /// La séquence est la vérité, `reference` en est la forme lisible — même choix
+  /// que les factures : trier des chaînes finit par mentir au-delà de 9999.
+  @@unique([year, sequence])
+  /// Le registre : « les contrats actifs qui arrivent à échéance ».
+  @@index([status, endsAt])
+  @@index([clientId])
+  @@map("contracts")
+}
+
+/// Les immeubles couverts par un contrat.
+///
+/// Table de jointure explicite plutôt qu'une relation implicite : elle permet un
+/// jour d'y poser une date d'entrée ou de sortie sans migration de structure.
+/// `Cascade` des deux côtés — détacher un immeuble d'un contrat ou supprimer un
+/// site n'est pas un engagement, c'est une ligne de sélection.
+model ContractBuilding {
+  contractId String @map("contract_id")
+  buildingId String @map("building_id")
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@id([contractId, buildingId])
+  /// « Ce site est-il couvert, et par quoi ? » — la question de la fiche.
+  @@index([buildingId])
+  @@map("contract_buildings")
+}
+
+/// Une modification d'un contrat, journalisée.
+///
+/// `before` et `after` portent les champs modifiés, pas le contrat entier : un
+/// journal qui recopie tout grossit sans rien dire de plus, et la question qu'on
+/// lui pose est toujours « qu'est-ce qui a changé ? ».
+model ContractRevision {
+  id          String               @id @default(cuid())
+  contractId  String               @map("contract_id")
+  kind        ContractRevisionKind
+  /// La phrase lisible affichée dans l'historique — écrite par l'appelant, dans
+  /// la langue du lecteur, et non reconstituée à l'affichage.
+  summary     String
+  before      Json?
+  after       Json?
+  changedById String?              @map("changed_by_id")
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  changedBy User?    @relation(fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([contractId, createdAt])
+  @@map("contract_revisions")
 }

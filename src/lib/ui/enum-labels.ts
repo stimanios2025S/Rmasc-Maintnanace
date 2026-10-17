@@ -17,7 +17,7 @@
  * caught, harmless enough not to break a screen.
  */
 
-import type { InvoiceStatus, PartUrgency } from "@/types";
+import type { BillingCycle, InvoiceStatus, PartUrgency } from "@/types";
 
 export const ENUM_LABELS: Record<string, string> = {
   // ─── Work order status ────────────────────────────────────
@@ -75,6 +75,29 @@ export const ENUM_LABELS: Record<string, string> = {
   SENT: "Envoyé",
   ACCEPTED: "Accepté",
   REFUSED: "Refusé",
+
+  // ─── État d'un contrat ────────────────────────────────────
+  //
+  // `CANCELLED` n'est PAS utilisé ici, et c'est délibéré : la sortie anticipée
+  // d'un contrat est une **résiliation**, pas une annulation. « Annulé »
+  // laisserait croire que le contrat n'a jamais existé ; `TERMINATED` dit qu'il a
+  // vécu puis qu'une décision y a mis fin — et c'est cette distinction qu'on
+  // cherche en relisant l'historique.
+  DRAFT: "Brouillon",
+  ACTIVE: "En vigueur",
+  SUSPENDED: "Suspendu",
+  TERMINATED: "Résilié",
+  EXPIRED: "Échu",
+
+  // ─── Mode de renouvellement ───────────────────────────────
+  //
+  // « Échu » et « Sans renouvellement » ne disent pas la même chose : le premier
+  // est un état atteint, le second une décision prise à l'avance. Un contrat
+  // `NONE` qui arrive à échéance devient `EXPIRED` ; l'un décrit la politique,
+  // l'autre le résultat.
+  AUTO: "Reconduction tacite",
+  MANUAL: "Renouvellement manuel",
+  NONE: "Sans renouvellement",
 
   // ─── Priority ─────────────────────────────────────────────
   LOW: "Faible",
@@ -246,6 +269,25 @@ export function invoiceStatusLabel(status: string): string {
     INVOICE_STATUS_LABELS[status as InvoiceStatus] ?? enumLabel(status)
   );
 }
+
+/**
+ * Le cycle de facturation d'un contrat, avec sa propre table.
+ *
+ * `MONTHLY` et `QUARTERLY` sont déjà définis plus haut pour la **fréquence d'un
+ * programme d'entretien**, où ils se lisent « Mensuelle » et « Trimestrielle » —
+ * une fréquence est un nom féminin. Un cycle de facturation se lit « Mensuel »,
+ * « Trimestriel », « Annuel » : masculin. Une table indexée par la valeur
+ * stockée ne peut pas porter les deux accords, et écrire « Facturation
+ * trimestrielle » n'est pas faux mais « cycle trimestrielle » le serait.
+ *
+ * `ANNUALLY` n'existe nulle part ailleurs ; il est défini ici avec les deux
+ * autres pour que les trois se lisent ensemble.
+ */
+export const BILLING_CYCLE_LABELS: Record<BillingCycle, string> = {
+  MONTHLY: "Mensuel",
+  QUARTERLY: "Trimestriel",
+  ANNUALLY: "Annuel",
+};
 
 /**
  * L'urgence d'une demande de pièce, telle que la fiche l'imprime.

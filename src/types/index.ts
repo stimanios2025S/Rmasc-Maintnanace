@@ -106,6 +106,49 @@ export const SLA_TIERS = [
 ] as const;
 export type SLATier = (typeof SLA_TIERS)[number];
 
+/**
+ * Les états d'un contrat, et ce que chacun autorise.
+ *
+ * Mirrors the Prisma enum so an écran can use it without importing the Prisma
+ * client — même raison que `CLIENT_TYPES` et `SLA_TIERS` plus haut.
+ *
+ * `TERMINATED` et `EXPIRED` ne sont pas la même chose et ne se confondent pas à
+ * l'affichage : l'un est une décision, l'autre une échéance oubliée. Les fondre
+ * effacerait la seule information qui permet de savoir pourquoi un client n'est
+ * plus couvert.
+ */
+export const CONTRACT_STATUSES = [
+  "DRAFT",
+  "ACTIVE",
+  "SUSPENDED",
+  "TERMINATED",
+  "EXPIRED",
+] as const;
+export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
+
+/** Ce qui se passe à l'échéance. `AUTO` est la reconduction tacite. */
+export const CONTRACT_RENEWAL_MODES = ["AUTO", "MANUAL", "NONE"] as const;
+export type ContractRenewalMode = (typeof CONTRACT_RENEWAL_MODES)[number];
+
+export const BILLING_CYCLES = [
+  "MONTHLY",
+  "QUARTERLY",
+  "ANNUALLY",
+] as const;
+export type BillingCycle = (typeof BILLING_CYCLES)[number];
+
+/** Ce qui a changé sur un contrat, pour le journal des révisions. */
+export const CONTRACT_REVISION_KINDS = [
+  "CREATED",
+  "TIER_CHANGED",
+  "DATES_CHANGED",
+  "RENEWAL_CHANGED",
+  "STATUS_CHANGED",
+  "BUILDINGS_CHANGED",
+  "COMMITMENT_CHANGED",
+] as const;
+export type ContractRevisionKind = (typeof CONTRACT_REVISION_KINDS)[number];
+
 export const ELEVATOR_STATUSES = [
   "OPERATIONAL",
   "SERVICE_REQUIRED",
