@@ -77,7 +77,7 @@ async function main() {
 
   console.log(`URL      : ${url}`);
   console.log(`HTTP     : ${response.status}`);
-  console.log(`CONTENU  : ${text.slice(0, 300) || "(vide)"}`);
+  console.log(`CONTENU  : ${text.slice(0, 4000) || "(vide)"}`);
 
   if (!response.ok) {
     console.error(
