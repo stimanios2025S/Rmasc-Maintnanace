@@ -16,6 +16,7 @@
 
 - [Architecture Overview](#architecture-overview)
 - [Tech Stack](#tech-stack)
+- [Functional Modules](#functional-modules)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
 - [Running Without a Database (UI preview)](#running-without-a-database-ui-preview)
@@ -77,6 +78,49 @@ no push channel (see [Known Gaps](#known-gaps)).
 > Earlier revisions of this file advertised Socket.io, BullMQ/Redis and
 > TanStack Query. None of those are imported anywhere in `src/`; the dependency
 > entries and the claims have been removed rather than left to mislead.
+
+---
+
+## 🧩 Functional Modules
+
+The platform is no longer only telemetry and work orders. What follows is the
+current map — screens that exist, with the route that reaches them.
+
+| Module | Route(s) | What it does |
+|---|---|---|
+| **Dashboard** | `/tableau-de-bord` | Fleet KPIs, health, attention list, alerts |
+| **Fleet map** | `/carte` | Geolocated fleet, five attention levels, site detail |
+| **Elevators** | `/ascenseurs`, `/ascenseurs/[id]` | Components, health, RUL, predictive scoring |
+| **Work orders** | `/bons-de-travail`, `/bons-de-travail/[id]` | Registry, dispatch, revisions, end-of-job validation |
+| **Field portal** | `/technicien` | Technician queue, geofenced check-in, report, signature |
+| **Preventive** | `/entretien` | Visit programme, due dates, planning into work orders |
+| **Alerts** | `/alertes` | Triage queue, bulk acknowledge/resolve |
+| **Thresholds** | `/seuils` | Per-metric alert rules, merged so one rule cannot silence the rest |
+| **Incidents** | `/administration/incidents`, `/client` | Client-reported faults, positions, escalation |
+| **Inspection reports** | `/rapports-inspection`, `/rapports-inspection/[id]` | Register + printable sheet `APP/DA/04/13` |
+| **Quotes** | `/administration/devis`, `/administration/devis/[id]`, `/client/devis` | Registry, line editing, TVA 19 %, amount in words, PDF `APP/DA/04/14` |
+| **Invoices** | `/factures` | Frozen, numbered invoices, settlement state, PDF |
+| **Parts** | `/administration/pieces` | Part requests: validate → order → fit |
+| **Storekeeper** | `/administration/magasinier` | Reception desk; transmits a validated need to the central store |
+| **Clients** | `/administration/clients`, `/administration/clients/[id]` | Accounts, buildings, generated access |
+| **Personnel** | `/administration/personnel` | Staff accounts and credentials |
+| **Client portal** | `/client`, `/client/devis`, `/client/fiche-technique` | Two genuinely different portals: contracted, and non-contracted |
+| **Documents** | — | Shared PDF charter in `src/lib/documents/charte.ts` |
+
+### The storekeeper link, and what is not yet proven
+
+`/administration/magasinier` transmits a validated part request to a **second
+RMASC application** — the stock manager — over HMAC-signed HTTP
+(`x-rmasc-key`, `x-rmasc-timestamp`, `x-rmasc-signature`; signed string is
+`<timestamp>\n<METHOD>\n<pathname>\n<raw body>`).
+
+A successful transmission advances the request to `ORDERED` and records the
+store's reference; a failure records the error and leaves the status alone.
+
+**This link has never been exercised against the real verifier.** The stock
+application was not running when it was written, and `STOCK_API_URL` /
+`STOCK_API_KEY` / `STOCK_API_SECRET` are unset. The signature is checked against
+the written contract and the route source, not against a live exchange.
 
 ---
 
@@ -654,7 +698,7 @@ Treat it as a design reference for a future ML microservice.
 
 ## 🗃️ Database Schema
 
-### Core Entities (17 models)
+### Core Entities (23 models)
 
 ```
 User ──┬── Session
@@ -674,6 +718,21 @@ Building ──┬── Elevator ──┬── ElevatorComponent ── Predi
            │              └── WorkOrder ──┬── Alert
            └── User (owner)               └── IncidentReport (0..1)
 ```
+
+### Commercial entities, added since
+
+```
+User ──┬── Quote ── QuoteLine          (devis, TVA 19 %, PDF APP/DA/04/14)
+       ├── Invoice                      (facture figée et numérotée)
+       └── PartRequirement ── WorkOrder (demande de pièce, transmission magasin)
+
+WorkOrder ── WorkOrderRevision          (corrections journalisées du bureau)
+```
+
+`Invoice` **recopies** what it prints — client, site, works, parts, amount —
+instead of re-reading the work order. A reissued invoice must be identical to the
+one the client received, and every one of those values can change over time.
+`PartRequirement` is the opposite: it is a live request, and its state moves.
 
 `IncidentReport` carries **two** relations to `User` — the client who reported
 the fault and the technician sent to it — so both are explicitly named
@@ -769,6 +828,14 @@ orders assigned to them.
 | `npm run db:seed` | Seed database with sample data |
 | `npm run db:studio` | Open Prisma Studio |
 | `npm run simulate-iot` | Start the IoT telemetry simulator |
+| `npm run typecheck` | Run `tsc --noEmit` |
+| `npm run diagnose-auth` | Check accounts; `--fix` **resets demo passwords to `password123`** |
+| `npm run db:rotate-demo-passwords` | Replace every password still equal to `password123` (dry run by default; `--apply` to write) |
+| `npm run db:backfill-positions` | Backfill incident positions |
+| `npx tsx scripts/pdf-golden.ts <dir>` | Render seven invoice PDFs and print their content fingerprints (used to prove the `charte.ts` refactor changed nothing) |
+
+> ⚠️ `npm run diagnose-auth -- --fix` re-arms the demo password. It is a
+> diagnostic for a fresh local seed, never a production tool.
 
 ---
 
@@ -794,8 +861,27 @@ production-ready in places where it is not yet:
   that could never work across multiple instances has been deleted rather than
   left to imply otherwise.
 - **No automated tests and no CI.** There is no test runner configured. The
-  verification in this revision was `npm run typecheck`, `npm run lint` and a
-  manual walk of each screen against a live database.
+  verification in this revision was `npm run typecheck`, `npm run lint`,
+  `npm run build`, and `scripts/pdf-golden.ts` for the invoice PDF. The pure
+  functions — `computeQuoteTotals`, `amountInWords`, `transitionRefusal`,
+  `boundsViolation`, `transmissionRefusal`, `buildStockSignature` — are exercised
+  by hand only, and several defects in this project were found that way rather
+  than by a suite.
+- **Contracts & SLA do not exist.** `SLATier` is a label on the building and
+  `ClientType` splits two portals; neither is a contract. There are no dates, no
+  renewal, no termination, no promised lead time and no penalty. The proposed
+  model and the decisions it needs are in `CONTRATS-SLA-CADRAGE.md`.
+- **The storekeeper link is unproven.** `/administration/magasinier` signs and
+  sends a request to the stock application, but it has never exchanged a message
+  with it: that application was not running, and `STOCK_API_*` is unset. A wrong
+  header name or path would only surface on the first real send.
+- **No Prisma migration history.** There is no `prisma/migrations/` directory;
+  the project relies on `db push`. No reviewable schema log, no reproducible
+  upgrade, no rollback path.
+- **`GET /api/telemetry` has no consumer.** Ingest (`POST`) is used by devices
+  and the simulator; the read endpoint is called by nothing. Recorded rather than
+  removed, because removing a public-looking endpoint is a decision, not a
+  cleanup.
 - **Photo evidence is a URL, not an upload.** `InspectionCheckItem.photoUrl` is
   now written, but the technician portal accepts a link to a file in the
   customer's own photo storage — there is no upload endpoint, no object-store
