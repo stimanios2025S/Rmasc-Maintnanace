@@ -411,17 +411,26 @@ export async function transmitDemande(
       };
     }
 
+    /**
+     * Le magasin répond `{ ok: true, demande: { id, reference, status, … } }`
+     * en 201. La demande est imbriquée — lire `reference` à la racine rendait
+     * `null` alors que l'envoi avait bien abouti, et la référence perdue était
+     * exactement ce qui permet de retrouver la commande là-bas.
+     */
     const data = (parsed ?? {}) as {
-      demandeId?: unknown;
-      reference?: unknown;
-      status?: unknown;
+      demande?: {
+        id?: unknown;
+        reference?: unknown;
+        status?: unknown;
+      };
     };
+    const demande = data.demande ?? {};
 
     return {
       ok: true,
-      demandeId: typeof data.demandeId === "string" ? data.demandeId : null,
-      reference: typeof data.reference === "string" ? data.reference : null,
-      status: typeof data.status === "string" ? data.status : null,
+      demandeId: typeof demande.id === "string" ? demande.id : null,
+      reference: typeof demande.reference === "string" ? demande.reference : null,
+      status: typeof demande.status === "string" ? demande.status : null,
     };
   } catch (error) {
     /**
