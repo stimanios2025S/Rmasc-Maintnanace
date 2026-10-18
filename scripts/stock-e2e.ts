@@ -113,6 +113,12 @@ async function main() {
     buildingCity: workOrder.elevator.building.city,
     workOrderNumber: workOrder.orderNumber,
     requestedByName: workOrder.createdBy?.name ?? null,
+    /**
+     * Un article réel du catalogue du magasin : `ELE-001`, « Armoire de
+     * commande ascenseur 4 étages ». Le magasin refuse une ligne sans code —
+     * c'est le 422 qui a été constaté au premier essai.
+     */
+    stockCodeRef: "ELE-001",
   });
 
   console.log("\nCHARGE UTILE :");

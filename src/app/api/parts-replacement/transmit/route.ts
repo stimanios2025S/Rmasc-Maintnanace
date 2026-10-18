@@ -75,8 +75,24 @@ const MAX_BATCH = 25;
 
 const TransmitSchema = z
   .object({
-    ids: z
-      .array(z.string().trim().min(1))
+    items: z
+      .array(
+        z
+          .object({
+            id: z.string().trim().min(1),
+            /**
+             * Le code d'article du catalogue du magasin. Obligatoire : le stock
+             * refuse une ligne sans lui (422, constaté sur un échange réel).
+             * Le choisir est le travail du chef de service technique — notre
+             * application n'a pas de catalogue pour le déduire.
+             */
+            codeRef: z
+              .string()
+              .trim()
+              .min(1, "Choisissez l'article du magasin central"),
+          })
+          .strict()
+      )
       .min(1, "Sélectionnez au moins une demande")
       .max(MAX_BATCH, `Au plus ${MAX_BATCH} demandes par envoi`),
   })
@@ -100,6 +116,7 @@ const TRANSMIT_SELECT = {
   faultyPartName: true,
   notes: true,
   stockReference: true,
+  stockCodeRef: true,
   stockSentAt: true,
   requestedBy: { select: { name: true } },
   workOrder: {
@@ -158,11 +175,17 @@ export async function POST(request: NextRequest) {
     if (configRefusal) throw badRequest(configRefusal);
 
     /**
-     * Les identifiants sont dédupliqués. Un écran qui enverrait deux fois le
-     * même ne créerait pas deux commandes — la clé d'idempotence l'empêche —
-     * mais ferait deux appels réseau et deux écritures pour rien.
+     * Une entrée par demande, dédupliquée par identifiant.
+     *
+     * Le code d'article est porté par l'entrée et non par la demande : il est
+     * choisi au moment de transmettre, dans le catalogue du magasin, et deux
+     * demandes n'appellent presque jamais le même article.
      */
-    const ids = [...new Set(parsed.ids)];
+    const items = [
+      ...new Map(parsed.items.map((item) => [item.id, item])).values(),
+    ];
+    const ids = items.map((item) => item.id);
+    const codeRefById = new Map(items.map((item) => [item.id, item.codeRef]));
 
     const rows = await prisma.partRequirement.findMany({
       where: {
@@ -180,6 +203,8 @@ export async function POST(request: NextRequest) {
     const results: Outcome[] = [];
 
     for (const row of rows) {
+      /** Vide si l'écran ne l'a pas fourni — le schéma l'interdit déjà. */
+      const codeRef = codeRefById.get(row.id) ?? "";
       const refusal = transmissionRefusal(row);
 
       if (refusal) {
@@ -206,6 +231,7 @@ export async function POST(request: NextRequest) {
         buildingCity: row.workOrder.elevator.building.city,
         workOrderNumber: row.workOrder.orderNumber,
         requestedByName: row.requestedBy?.name ?? null,
+        stockCodeRef: codeRef,
       });
 
       /**
@@ -227,6 +253,7 @@ export async function POST(request: NextRequest) {
           where: { id: row.id },
           data: {
             stockSendError: result.error,
+            stockCodeRef: codeRef,
             stockSentAt: now,
             stockSentById: session.user.id ?? null,
           },
@@ -250,6 +277,7 @@ export async function POST(request: NextRequest) {
         data: {
           stockDemandeId: result.demandeId,
           stockReference: result.reference,
+          stockCodeRef: codeRef,
           stockSentAt: now,
           stockSentById: session.user.id ?? null,
           stockSendError: null,

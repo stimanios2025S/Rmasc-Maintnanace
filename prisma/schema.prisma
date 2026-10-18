@@ -999,6 +999,14 @@ model PartRequirement {
   // qu'on ne lit pas.
   stockDemandeId String?   @map("stock_demande_id")
   stockReference String?   @map("stock_reference")
+  /// Le code d'article du magasin central choisi pour cette demande.
+  ///
+  /// Le stock REFUSE une ligne sans `codeRef` — constaté sur un échange réel.
+  /// Notre application n'ayant aucun catalogue, ce code est choisi par le chef
+  /// de service technique parmi les articles que le stock expose, et conservé
+  /// ici : sans lui, une nouvelle tentative après échec obligerait à le
+  /// rechercher, et l'audit ne dirait pas quelle pièce a été commandée.
+  stockCodeRef   String?   @map("stock_code_ref")
   stockSentAt    DateTime? @map("stock_sent_at")
   stockSentById  String?   @map("stock_sent_by_id")
   stockSendError String?   @map("stock_send_error")

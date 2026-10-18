@@ -65,6 +65,7 @@ interface PartRow {
   requestedBy: { id: string; name: string } | null;
   /** L'état de la transmission. Absent tant que la demande n'est jamais partie. */
   stockReference: string | null;
+  stockCodeRef: string | null;
   stockSentAt: string | null;
   stockSendError: string | null;
   stockSentBy: { id: string; name: string } | null;
@@ -84,6 +85,24 @@ interface Outcome {
   outcome: "sent" | "failed" | "skipped";
   reference?: string | null;
   error?: string;
+}
+
+/**
+ * Un article du catalogue du magasin central.
+ *
+ * Le magasin refuse une ligne de demande sans `codeRef` — 422 constaté sur un
+ * échange réel. Nos pièces sont du texte libre : l'article est donc choisi ici,
+ * par le chef de service technique, parmi ceux que le magasin expose.
+ */
+interface StockArticle {
+  codeRef: string;
+  designation: string;
+  unite: string;
+  emplacement: string | null;
+  location: string;
+  quantiteStock: number;
+  seuilAlerte: number;
+  enAlerte: boolean;
 }
 
 /**
@@ -118,6 +137,17 @@ export default function MagasinierPage() {
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [configRefusal, setConfigRefusal] = useState<string | null>(null);
   const [configKnown, setConfigKnown] = useState(false);
+  /** Le catalogue du magasin, pour choisir l'article de chaque demande. */
+  const [articles, setArticles] = useState<StockArticle[]>([]);
+  const [catalogueError, setCatalogueError] = useState<string | null>(null);
+  /**
+   * L'article choisi pour chaque demande, par identifiant.
+   *
+   * Par demande et non global : deux besoins du même bon n'appellent presque
+   * jamais le même article, et un choix unique enverrait la mauvaise pièce pour
+   * l'un des deux.
+   */
+  const [articleByRow, setArticleByRow] = useState<Record<string, string>>({});
 
   const load = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -158,10 +188,36 @@ export default function MagasinierPage() {
     }
   }, []);
 
+  /**
+   * Le catalogue du magasin.
+   *
+   * Chargé une fois, et seulement si la liaison est configurée : sans
+   * identifiants, l'appel échouerait avec un message qui n'apprendrait rien de
+   * plus que le bandeau déjà affiché.
+   */
+  const loadCatalogue = useCallback(async () => {
+    setCatalogueError(null);
+    try {
+      const res = await fetch("/api/parts-replacement/stock-catalogue");
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          json?.error ?? json?.message ?? `Le catalogue a répondu ${res.status}`
+        );
+      }
+      setArticles(Array.isArray(json?.data?.articles) ? json.data.articles : []);
+    } catch (e) {
+      setCatalogueError(
+        e instanceof Error ? e.message : "Catalogue du magasin indisponible."
+      );
+    }
+  }, []);
+
   useEffect(() => {
     void load();
     void loadConfig();
-  }, [load, loadConfig]);
+    void loadCatalogue();
+  }, [load, loadConfig, loadCatalogue]);
 
   /**
    * Les trois familles, calculées une fois.
@@ -215,6 +271,25 @@ export default function MagasinierPage() {
   async function transmit(ids: string[]) {
     if (ids.length === 0) return;
 
+    /**
+     * L'article est exigé AVANT l'appel.
+     *
+     * Le magasin refuse une ligne sans `codeRef` — 422 constaté sur un échange
+     * réel. Le vérifier ici évite un aller-retour pour dire ce qu'on sait déjà,
+     * et nomme la demande concernée.
+     */
+    const missing = ids.filter((id) => !articleByRow[id]);
+    if (missing.length > 0) {
+      setActionError(
+        "Choisissez l'article du magasin central pour chaque demande sélectionnée."
+      );
+      setNotice(null);
+      setOutcomes([]);
+      return;
+    }
+
+    const items = ids.map((id) => ({ id, codeRef: articleByRow[id] }));
+
     setBusy(true);
     setActionError(null);
     setNotice(null);
@@ -224,7 +299,7 @@ export default function MagasinierPage() {
       const res = await fetch("/api/parts-replacement/transmit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ items }),
       });
       const body = await res.json().catch(() => null);
 
@@ -296,6 +371,18 @@ export default function MagasinierPage() {
             <span>
               {configRefusal} La liste reste consultable, mais aucun envoi
               n&apos;aboutira tant que ces variables ne sont pas posées.
+            </span>
+          </p>
+        </div>
+      )}
+
+      {catalogueError && (
+        <div className="rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/40">
+          <p className="flex items-start gap-2 text-sm font-medium text-red-900 dark:text-red-200">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+            <span>
+              Catalogue du magasin indisponible : {catalogueError} Aucun envoi ne
+              peut aboutir sans article.
             </span>
           </p>
         </div>
@@ -375,7 +462,12 @@ export default function MagasinierPage() {
 
             <button
               type="button"
-              disabled={busy || selectedInView.length === 0 || cannotTransmit}
+              disabled={
+                busy ||
+                selectedInView.length === 0 ||
+                cannotTransmit ||
+                selectedInView.some((id) => !articleByRow[id])
+              }
               onClick={() => void transmit(selectedInView)}
               className={`${PRIMARY} ml-auto`}
             >
@@ -543,6 +635,9 @@ export default function MagasinierPage() {
                         <span className="font-mono font-semibold">
                           {row.stockReference}
                         </span>
+                        {row.stockCodeRef ? (
+                          <span className="font-mono"> · article {row.stockCodeRef}</span>
+                        ) : null}
                         {row.stockSentAt
                           ? ` le ${format(new Date(row.stockSentAt), "d MMMM yyyy", { locale: fr })}`
                           : ""}
@@ -571,10 +666,49 @@ export default function MagasinierPage() {
                     </p>
                   )}
 
+                  {/* Le choix de l'article : obligatoire, et propre à chaque
+                      demande. Le magasin refuse une ligne sans `codeRef`, et
+                      notre application n'a aucun catalogue pour le déduire. */}
+                  {transmittable && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <label
+                        htmlFor={`article-${row.id}`}
+                        className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400"
+                      >
+                        Article du magasin
+                      </label>
+                      <select
+                        id={`article-${row.id}`}
+                        value={articleByRow[row.id] ?? ""}
+                        onChange={(event) =>
+                          setArticleByRow((current) => ({
+                            ...current,
+                            [row.id]: event.target.value,
+                          }))
+                        }
+                        className="min-w-[18rem] flex-1 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                      >
+                        <option value="">— choisir dans le catalogue —</option>
+                        {articles.map((article) => (
+                          <option key={article.codeRef} value={article.codeRef}>
+                            {article.codeRef} — {article.designation} (
+                            {article.quantiteStock} {article.unite}
+                            {article.enAlerte ? " · en alerte" : ""})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={busy || !transmittable || cannotTransmit}
+                      disabled={
+                        busy ||
+                        !transmittable ||
+                        cannotTransmit ||
+                        !articleByRow[row.id]
+                      }
                       onClick={() => void transmit([row.id])}
                       className={PRIMARY}
                       title={

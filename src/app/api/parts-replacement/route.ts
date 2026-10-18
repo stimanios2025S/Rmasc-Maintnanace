@@ -92,6 +92,7 @@ const LIST_SELECT = {
    * s'afficherait ici comme « à commander » ferait commander deux fois.
    */
   stockReference: true,
+  stockCodeRef: true,
   stockSentAt: true,
   stockSendError: true,
   stockSentBy: { select: { id: true, name: true } },

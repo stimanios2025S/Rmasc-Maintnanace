@@ -99,6 +99,113 @@ export function stockConfigRefusal(): string | null {
   );
 }
 
+/** Un article du catalogue du magasin, tel qu'il est proposé au choix. */
+export interface StockArticle {
+  codeRef: string;
+  designation: string;
+  unite: string;
+  emplacement: string | null;
+  location: string;
+  quantiteStock: number;
+  seuilAlerte: number;
+  enAlerte: boolean;
+}
+
+/**
+ * Le catalogue du magasin, en lecture seule.
+ *
+ * POURQUOI NOTRE APPLICATION EN A BESOIN
+ * Le magasin refuse une ligne de demande sans `codeRef` — 422 constaté sur un
+ * échange réel. Nos pièces sont du texte libre et nous n'avons aucun catalogue :
+ * le code doit donc être choisi parmi les articles du magasin, et pour choisir
+ * il faut les voir.
+ *
+ * C'EST UNE LECTURE, SIGNÉE COMME LES AUTRES
+ * Une requête GET se signe avec un corps vide, et la query string n'entre pas
+ * dans la signature.
+ */
+export async function fetchStockArticles(): Promise<
+  { ok: true; articles: StockArticle[] } | { ok: false; error: string }
+> {
+  const config = readConfig();
+  if (!config) return { ok: false, error: stockConfigRefusal()! };
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const rawBody = "";
+
+  const signature = buildStockSignature({
+    timestamp,
+    method: "GET",
+    pathname: "/api/v1/external/stock",
+    rawBody,
+    secret: config.secret,
+  });
+
+  try {
+    const response = await fetch(`${config.url}/api/v1/external/stock`, {
+      method: "GET",
+      headers: {
+        "x-rmasc-key": config.key,
+        "x-rmasc-timestamp": String(timestamp),
+        "x-rmasc-signature": signature,
+      },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `Le magasin central a refusé la lecture (${response.status}) : ${text.slice(0, 200)}`,
+      };
+    }
+
+    const parsed = JSON.parse(text) as { articles?: unknown };
+    const raw = Array.isArray(parsed.articles) ? parsed.articles : [];
+
+    /**
+     * Ce qui n'a pas de `codeRef` est ignoré : une ligne sans code ne peut pas
+     * être commandée, et l'afficher dans le sélecteur offrirait un choix qui
+     * échouerait.
+     */
+    const articles: StockArticle[] = [];
+    for (const entry of raw) {
+      const item = entry as Record<string, unknown>;
+      if (typeof item.codeRef !== "string" || !item.codeRef.trim()) continue;
+      if (typeof item.designation !== "string") continue;
+      articles.push({
+        codeRef: item.codeRef.trim(),
+        designation: item.designation,
+        unite: typeof item.unite === "string" ? item.unite : "U",
+        emplacement:
+          typeof item.emplacement === "string" ? item.emplacement : null,
+        location: typeof item.location === "string" ? item.location : "",
+        quantiteStock:
+          typeof item.quantiteStock === "number" ? item.quantiteStock : 0,
+        seuilAlerte:
+          typeof item.seuilAlerte === "number" ? item.seuilAlerte : 0,
+        enAlerte: item.enAlerte === true,
+      });
+    }
+
+    return { ok: true, articles };
+  } catch (error) {
+    const name = (error as { name?: string }).name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      return {
+        ok: false,
+        error: "Le magasin central n'a pas répondu dans le délai imparti (10 s).",
+      };
+    }
+    return {
+      ok: false,
+      error: `Le magasin central est injoignable : ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+}
+
 /**
  * La signature d'une requête. Pure, donc vérifiable sans réseau.
  *
@@ -126,15 +233,19 @@ export function buildStockSignature(params: {
 /** Une ligne de la demande, telle que le magasin central l'attend. */
 interface StockDemandeLine {
   /**
-   * Volontairement absent. Notre application n'a **aucun catalogue d'articles**
-   * — les pièces y sont du texte libre, ce qui est un choix assumé. Le magasin
-   * central, lui, identifie une ligne par `codeRef` ou `articleId`. Envoyer
-   * notre référence de terrain comme si c'était un code d'article produirait au
-   * mieux une non-correspondance, au pire un mauvais rapprochement sur un
-   * article qui existe vraiment. La désignation part donc dans `note`, et le
-   * magasinier la rapproche à la main — c'est le travail pour lequel sa file
-   * d'attente existe.
+   * Le code d'article du magasin central. **Obligatoire en pratique** : son
+   * vérificateur refuse toute ligne sans `codeRef` ni `articleId` — constaté
+   * sur un échange réel, 422 « Chaque ligne doit porter « articleId » ou
+   * « codeRef » ».
+   *
+   * Notre application n'a aucun catalogue : le code est choisi par le chef de
+   * service technique, sur l'écran magasinier, parmi les articles que le stock
+   * expose. Envoyer notre référence de terrain à sa place produirait au mieux
+   * une non-correspondance, au pire un rapprochement sur un article qui existe
+   * vraiment et ne correspond pas.
    */
+  codeRef: string;
+  /** La désignation, telle qu'elle sera lue par le magasinier. */
   note: string;
   quantite: number;
 }
@@ -178,6 +289,13 @@ export function buildStockDemande(params: {
   buildingCity?: string | null;
   workOrderNumber: string;
   requestedByName?: string | null;
+  /**
+   * Le code d'article choisi dans le catalogue du magasin. Obligatoire : le
+   * stock refuse une ligne qui n'en porte pas (422, constaté en conditions
+   * réelles). Le rendre obligatoire ici fait échouer la compilation plutôt que
+   * la transmission, ce qui est le bon endroit pour s'en apercevoir.
+   */
+  stockCodeRef: string;
 }): StockDemandePayload {
   const site = params.buildingCity
     ? `${params.buildingName} — ${params.buildingCity}`
@@ -200,7 +318,13 @@ export function buildStockDemande(params: {
     projet: site,
     priority: stockPriorityFor(params.urgency),
     note: `${params.requirementNumber} — ${context.join(" · ")}`,
-    lignes: [{ note: designation, quantite: params.quantity }],
+    lignes: [
+      {
+        codeRef: params.stockCodeRef,
+        note: designation,
+        quantite: params.quantity,
+      },
+    ],
     correlationId: params.requirementNumber,
   };
 }
