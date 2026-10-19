@@ -28,8 +28,10 @@ import {
   FilePlus,
   PackageSearch,
   Warehouse,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
 import type { UserRole } from "@/types";
 import { OPEN_ACCESS_USER } from "@/lib/auth/open-access";
@@ -54,166 +56,218 @@ type NavItem = {
   roles?: readonly UserRole[];
 };
 
-const NAV_ITEMS: readonly NavItem[] = [
-  { href: "/tableau-de-bord", label: "Tableau de bord", icon: LayoutDashboard },
-  // La file des alertes, juste après le tableau de bord : c'est la deuxième
-  // chose qu'un opérateur regarde, et le badge de l'en-tête y mène aussi.
-  //
-  // Ouverte aux rôles techniques, pas seulement à la gestion : un technicien
-  // doit pouvoir lire qu'une machine surchauffe. Ce sont les boutons
-  // d'acquittement qui lui sont refusés — par l'écran comme par la route, qui
-  // applique la même règle.
-  { href: "/alertes", label: "Alertes", icon: Bell, roles: OPS_ROLES },
-  // Les seuils qui décident du déclenchement des alertes, juste après elles.
-  //
-  // Ouvert aux rôles techniques en lecture : un technicien qui reçoit une
-  // alerte de vibration doit pouvoir lire à partir de quoi elle s'est
-  // déclenchée. Ce sont les modifications qui sont réservées — l'écran et la
-  // route appliquent la même règle. La page vit hors de `/administration`
-  // précisément pour rester atteignable par eux.
-  { href: "/seuils", label: "Seuils d'alerte", icon: Gauge, roles: OPS_ROLES },
-  // Les écrans d'exploitation sont réservés aux rôles techniques et de gestion.
-  //
-  // Ils ne l'étaient pas dans la barre latérale, alors qu'ils l'étaient déjà
-  // côté API : chaque route applique `buildingScopeFor`, donc rien ne fuyait.
-  // Mais un client voyait « Carte du parc », « Ascenseurs » et « Bons de
-  // travail » dans son menu, et ces trois écrans sont des postes de travail —
-  // la carte plein écran se pilote, la liste du parc couvre tous les immeubles
-  // qu'on entretient, et le tableau des bons est l'outil du bureau. Ce qu'un
-  // client a besoin de savoir de ses appareils lui est montré chez lui, dans
-  // son propre tableau de bord.
-  { href: "/carte", label: "Carte du parc", icon: MapIcon, roles: OPS_ROLES },
-  { href: "/ascenseurs", label: "Ascenseurs", icon: Activity, roles: OPS_ROLES },
+/**
+ * Un groupe de la barre latérale.
+ *
+ * POURQUOI DES GROUPES PLUTÔT QU'UNE LISTE
+ * Dix-neuf entrées à plat ne se parcourent plus : on ne cherche pas un écran par
+ * son nom, on cherche ce qu'on est en train de faire. Les cinq groupes suivent
+ * le métier — le parc, l'intervention, la fourniture, la pièce commerciale,
+ * l'administration —, et se replient pour que le menu tienne dans une hauteur
+ * d'écran sans défilement.
+ *
+ * Chaque groupe porte une icône : quand la barre est réduite à sa largeur
+ * d'icônes, l'en-tête de groupe n'a plus de place pour son libellé.
+ */
+type NavSection = {
+  key: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  items: readonly NavItem[];
+};
+
+const NAV_SECTIONS: readonly NavSection[] = [
   {
-    href: "/bons-de-travail",
-    label: "Bons de travail",
+    key: "supervision",
+    label: "Supervision & parc",
+    icon: LayoutDashboard,
+    items: [
+      {
+        href: "/tableau-de-bord",
+        label: "Tableau de bord",
+        icon: LayoutDashboard,
+      },
+      // La file des alertes, juste après le tableau de bord : c'est la deuxième
+      // chose qu'un opérateur regarde, et le badge de l'en-tête y mène aussi.
+      //
+      // Ouverte aux rôles techniques, pas seulement à la gestion : un technicien
+      // doit pouvoir lire qu'une machine surchauffe. Ce sont les boutons
+      // d'acquittement qui lui sont refusés — par l'écran comme par la route.
+      { href: "/alertes", label: "Alertes", icon: Bell, roles: OPS_ROLES },
+      // Les seuils qui décident du déclenchement des alertes, juste après elles.
+      // Ouverts aux rôles techniques en lecture : un technicien qui reçoit une
+      // alerte de vibration doit pouvoir lire à partir de quoi elle s'est
+      // déclenchée. Ce sont les modifications qui sont réservées.
+      {
+        href: "/seuils",
+        label: "Seuils d'alerte",
+        icon: Gauge,
+        roles: OPS_ROLES,
+      },
+      // Les écrans d'exploitation sont réservés aux rôles techniques et de
+      // gestion : un client voyait « Carte du parc », « Ascenseurs » et « Bons de
+      // travail » dans son menu, alors que ces trois écrans sont des postes de
+      // travail. Ce qu'un client a besoin de savoir de ses appareils lui est
+      // montré chez lui, dans son propre tableau de bord.
+      { href: "/ascenseurs", label: "Ascenseurs", icon: Activity, roles: OPS_ROLES },
+      { href: "/carte", label: "Carte du parc", icon: MapIcon, roles: OPS_ROLES },
+      // The « Fiche Technique » board for non-contract clients. The middleware
+      // gates it to OPS_ROLES, so the link is filtered to exactly those roles
+      // rather than offered and then refused.
+      {
+        href: "/fiches-techniques",
+        label: "Fiches techniques",
+        icon: FileSpreadsheet,
+        roles: OPS_ROLES,
+      },
+    ],
+  },
+  {
+    key: "interventions",
+    label: "Interventions & maintenance",
     icon: ClipboardList,
-    roles: OPS_ROLES,
+    items: [
+      {
+        href: "/bons-de-travail",
+        label: "Bons de travail",
+        icon: ClipboardList,
+        roles: OPS_ROLES,
+      },
+      // The dispatch board for escalated client faults. The middleware redirects
+      // anyone below management, so the link is filtered to exactly those roles.
+      {
+        href: "/administration/incidents",
+        label: "Incidents",
+        icon: AlertOctagon,
+        roles: MANAGEMENT_ROLES,
+      },
+      // Le programme d'entretien — la moitié préventive du métier, à côté du
+      // tableau des bons qui ne porte que le curatif. Planifier une visite est un
+      // engagement d'heures et une date convenue avec un client, pas une
+      // information destinée à tous.
+      {
+        href: "/entretien",
+        label: "Entretien programmé",
+        icon: CalendarClock,
+        roles: MANAGEMENT_ROLES,
+      },
+      // Les rapports d'inspection sont ouverts aux rôles techniques, comme la
+      // route qui les sert — un technicien n'y voit que ses propres rapports.
+      {
+        href: "/rapports-inspection",
+        label: "Rapports d'inspection",
+        icon: FileCheck,
+        roles: OPS_ROLES,
+      },
+      // Mirrors the middleware rule for /technicien. Without the filter a
+      // building owner would see a link that silently bounces them back.
+      { href: "/technicien", label: "Portail technicien", icon: Wrench, roles: OPS_ROLES },
+    ],
   },
-  // Les deux registres, après le travail qu'ils archivent : le tableau des bons
-  // est ce qu'on a à faire, ces deux-là sont ce qui a été fait. Un onglet
-  // « Archives » à côté d'un onglet « À faire » se comprend sans qu'on l'explique.
-  //
-  // Les rapports d'inspection sont ouverts aux rôles techniques, comme la route
-  // qui les sert — un technicien n'y voit que ses propres rapports. Les factures
-  // sont plus étroites : c'est un relevé de toute la facturation de
-  // l'entreprise, et un compte de terrain n'a rien à y faire. Ces deux listes
-  // sont exactement celles du middleware, qui les tient aussi.
   {
-    href: "/rapports-inspection",
-    label: "Rapports d'inspection",
-    icon: FileCheck,
-    roles: OPS_ROLES,
-  },
-  {
-    href: "/factures",
-    label: "Factures",
-    icon: Receipt,
-    roles: MANAGEMENT_ROLES,
-  },
-  // Les devis, à côté des factures : les deux pièces commerciales de
-  // l'entreprise, et l'ordre où elles se produisent — on devis avant de
-  // facturer.
-  //
-  // Le registre vit sous `/administration`, et c'est cet emplacement qui lui
-  // donne sa porte : le matcher du middleware couvre déjà `/administration/:path*`
-  // et le garde aux rôles de gestion. Une adresse `/devis` aurait demandé une
-  // ligne de plus dans le matcher — exactement celle qu'on oublie, et qui laisse
-  // un écran échapper à **toute** la garde d'authentification.
-  {
-    href: "/administration/devis",
-    label: "Devis",
-    icon: FileText,
-    roles: MANAGEMENT_ROLES,
-  },
-  // Les pièces à commander, juste après les devis : c'est la même question —
-  // qu'est-ce qui attend une décision du bureau ? — posée aux fournitures
-  // plutôt qu'aux prestations.
-  //
-  // Le panneau par bon existait depuis le début, mais il fallait ouvrir les
-  // bons un par un pour savoir ce qui attendait. Cet écran rend visible ce qui
-  // était invisible.
-  {
-    href: "/administration/pieces",
-    label: "Pièces & Commandes",
+    key: "logistique",
+    label: "Logistique & stocks",
     icon: PackageSearch,
-    roles: MANAGEMENT_ROLES,
+    items: [
+      // Les pièces à commander : la même question que les devis — qu'est-ce qui
+      // attend une décision du bureau ? — posée aux fournitures plutôt qu'aux
+      // prestations.
+      //
+      // Le panneau par bon existait depuis le début, mais il fallait ouvrir les
+      // bons un par un pour savoir ce qui attendait. Cet écran rend visible ce
+      // qui était invisible.
+      {
+        href: "/administration/pieces",
+        label: "Pièces & Commandes",
+        icon: PackageSearch,
+        roles: MANAGEMENT_ROLES,
+      },
+      // Le poste du chef de service technique, à la suite des pièces parce que
+      // c'est l'étape d'après : ce que le bureau a validé part d'ici vers le
+      // magasin central, qui est une autre application.
+      {
+        href: "/administration/magasinier",
+        label: "Magasinier",
+        icon: Warehouse,
+        roles: MANAGEMENT_ROLES,
+      },
+    ],
   },
-  // Le poste du chef de service technique, à la suite des pièces parce que
-  // c'est l'étape d'après : ce que le bureau a validé part d'ici vers le
-  // magasin central, qui est une autre application.
-  //
-  // Deux écrans et non un seul, bien qu'ils parlent des mêmes demandes : celui
-  // d'avant décide du bien-fondé d'une dépense, celui-ci fait partir la
-  // commande. Les fondre obligerait celui qui transmet à pouvoir valider, ce
-  // qui reviendrait à supprimer la séparation que le circuit existe pour tenir.
   {
-    href: "/administration/magasinier",
-    label: "Magasinier",
-    icon: Warehouse,
-    roles: MANAGEMENT_ROLES,
+    key: "commercial",
+    label: "Commercial & finances",
+    icon: Receipt,
+    items: [
+      // Les deux pièces commerciales de l'entreprise, dans l'ordre où elles se
+      // produisent : on devis avant de facturer.
+      //
+      // Le registre des devis vit sous `/administration`, et c'est cet
+      // emplacement qui lui donne sa porte : le matcher du middleware couvre
+      // déjà `/administration/:path*` et le garde aux rôles de gestion.
+      {
+        href: "/administration/devis",
+        label: "Devis",
+        icon: FileText,
+        roles: MANAGEMENT_ROLES,
+      },
+      // C'est un relevé de toute la facturation de l'entreprise, et un compte de
+      // terrain n'a rien à y faire. Le middleware tient la même liste.
+      {
+        href: "/factures",
+        label: "Factures",
+        icon: Receipt,
+        roles: MANAGEMENT_ROLES,
+      },
+      // CONTRATS & SLA : volontairement absent. Aucun écran n'existe encore —
+      // seuls le modèle, l'API et le cadrage. Une entrée de menu qui mène à un
+      // 404 se remarque une fois et fait douter de toutes les autres ; elle
+      // sera ajoutée le jour où la route existera.
+    ],
   },
-  // Le programme d'entretien — la moitié préventive du métier, à côté du
-  // tableau des bons qui ne porte que le curatif. Filtré aux rôles de gestion
-  // pour la même raison que le tableau des incidents : planifier une visite est
-  // un engagement d'heures et une date convenue avec un client, pas une
-  // information destinée à tous.
   {
-    href: "/entretien",
-    label: "Entretien programmé",
-    icon: CalendarClock,
-    roles: MANAGEMENT_ROLES,
-  },
-  // The « Fiche Technique » board for non-contract clients. Same reasoning as
-  // /technicien below: the middleware gates it to OPS_ROLES, so the link is
-  // filtered to exactly those roles rather than offered and then refused.
-  {
-    href: "/fiches-techniques",
-    label: "Fiches techniques",
-    icon: FileSpreadsheet,
-    roles: OPS_ROLES,
-  },
-  // Mirrors the middleware rule for /technicien. Without the filter a building
-  // owner would see a link that silently bounces them back to the dashboard.
-  { href: "/technicien", label: "Technicien", icon: Wrench, roles: OPS_ROLES },
-  // The dispatch board for escalated client faults. Same reasoning as above:
-  // the middleware redirects anyone below management, so the link is filtered
-  // to exactly those roles.
-  {
-    href: "/administration/incidents",
-    label: "Incidents",
-    icon: AlertOctagon,
-    roles: MANAGEMENT_ROLES,
-  },
-  // Opening customer accounts and setting their contract status. Narrower than
-  // the incidents board above: the middleware gates this path to ADMIN alone,
-  // so a maintenance manager is not offered a link they cannot follow.
-  {
-    href: "/administration/clients",
-    label: "Comptes clients",
-    icon: Users,
-    roles: ADMIN_ROLES,
-  },
-  // Les comptes du personnel : embaucher, corriger une fiche, rendre un accès.
-  //
-  // Administrateur seul, pour la même raison que le module lui-même. Le point
-  // décisif n'est pas la hiérarchie, c'est que créer un compte, c'est *choisir
-  // son rôle* — un responsable qui peut créer un administrateur peut se donner
-  // les droits d'administrateur. Le middleware applique la même règle.
-  {
-    href: "/administration/personnel",
-    label: "Personnel",
+    key: "administration",
+    label: "Administration",
     icon: UserCog,
-    roles: ADMIN_ROLES,
+    items: [
+      // Opening customer accounts and setting their contract status. The
+      // middleware gates this path to ADMIN alone, so a maintenance manager is
+      // not offered a link they cannot follow.
+      {
+        href: "/administration/clients",
+        label: "Comptes clients",
+        icon: Users,
+        roles: ADMIN_ROLES,
+      },
+      // Les comptes du personnel. Administrateur seul, pour la même raison que le
+      // module : créer un compte, c'est *choisir son rôle* — un responsable qui
+      // peut créer un administrateur peut se donner les droits d'administrateur.
+      {
+        href: "/administration/personnel",
+        label: "Personnel",
+        icon: UserCog,
+        roles: ADMIN_ROLES,
+      },
+    ],
   },
-  // The customer's own view of their equipment. Deliberately unrestricted — an
-  // administrator needs to be able to open it to see what a customer sees.
-  { href: "/client", label: "Espace client", icon: HelpCircle },
-  // Et la demande de devis du client, à sa place dans son espace.
-  //
-  // Ouverte au client et à l'administrateur — qui doit pouvoir ouvrir ce que
-  // voit un client —, mais pas aux rôles techniques : la route refuse une
-  // demande de leur part, et un lien qui mène à un refus n'est pas un lien.
+];
+
+/**
+ * L'espace client, hors des cinq groupes.
+ *
+ * POURQUOI IL N'EST PAS DANS UN GROUPE
+ * Les cinq catégories décrivent le travail du personnel. Un compte client n'y a
+ * accès à presque rien : son menu tient en deux entrées, et les ranger sous
+ * « Supervision » ou « Commercial » lui proposerait des rubriques vides. Ils
+ * restent donc un bloc à part, affiché seulement s'il reste des entrées après
+ * le filtrage par rôle — un administrateur peut l'ouvrir pour voir ce que voit
+ * un client, un technicien ne le voit pas du tout.
+ */
+const CLIENT_ITEMS: readonly NavItem[] = [
+  {
+    href: "/client",
+    label: "Espace client",
+    icon: HelpCircle,
+  },
   {
     href: "/client/devis",
     label: "Mes devis",
@@ -259,6 +313,9 @@ function activeItem(pathname: string, items: readonly NavItem[]): NavItem | unde
     .sort((a, b) => b.href.length - a.href.length)[0];
 }
 
+/** La clé de mémorisation de l'état replié. */
+const COLLAPSE_STORAGE_KEY = "rmasc.nav.collapsed";
+
 export function AppShell({
   children,
   openAccess = false,
@@ -279,6 +336,17 @@ export function AppShell({
   const { data: session, status } = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
+  /**
+   * Les groupes repliés, par clé.
+   *
+   * Tous dépliés au premier affichage : un menu dont on ne voit ni les entrées
+   * ni les rubriques dès l'ouverture demande un clic avant de dire ce qu'il
+   * contient. L'état est ensuite mémorisé par navigateur — c'est une commodité
+   * de lecture, pas une donnée.
+   */
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const user = session?.user ?? (openAccess ? OPEN_ACCESS_USER : undefined);
 
@@ -299,10 +367,103 @@ export function AppShell({
    * `isOpenAccessEnabled()` rend `false` dès que `NODE_ENV` vaut `production`.
    */
   const role = user?.role;
-  const navItems = NAV_ITEMS.filter(
-    (item) => !item.roles || (role !== undefined && item.roles.includes(role))
+
+  /**
+   * Les groupes réellement affichables.
+   *
+   * Un groupe dont aucune entrée ne survit au filtrage disparaît : laisser un
+   * en-tête « Administration » à un technicien ouvrirait sur du vide, ce qui est
+   * plus déroutant qu'un menu plus court.
+   */
+  const sections = useMemo(() => {
+    const canSee = (item: NavItem) =>
+      !item.roles || (role !== undefined && item.roles.includes(role));
+
+    return NAV_SECTIONS.map((section) => ({
+      ...section,
+      items: section.items.filter(canSee),
+    })).filter((section) => section.items.length > 0);
+  }, [role]);
+
+  const clientItems = useMemo(() => {
+    const canSee = (item: NavItem) =>
+      !item.roles || (role !== undefined && item.roles.includes(role));
+    return CLIENT_ITEMS.filter(canSee);
+  }, [role]);
+
+  /**
+   * Toutes les entrées visibles, à plat.
+   *
+   * Sert à deux choses : retrouver l'écran courant — l'en-tête affiche son nom —
+   * et alimenter la barre réduite, où les groupes n'ont plus de place.
+   */
+  const allItems = useMemo(
+    () => [...sections.flatMap((section) => section.items), ...clientItems],
+    [sections, clientItems]
   );
-  const current = activeItem(pathname, navItems);
+
+  const current = activeItem(pathname, allItems);
+
+  /**
+   * La section qui contient l'écran courant.
+   *
+   * Elle ne reste pas repliée : un menu qui cache l'endroit où l'on se trouve
+   * oblige à déplier pour vérifier qu'on est bien arrivé.
+   */
+  const activeSectionKey = NAV_SECTIONS.find((section) =>
+    section.items.some((item) => item.href === current?.href)
+  )?.key;
+
+  // Restaure l'état replié mémorisé par ce navigateur.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(COLLAPSE_STORAGE_KEY);
+      if (raw) {
+        const keys = JSON.parse(raw);
+        if (Array.isArray(keys)) {
+          setCollapsedSections(new Set(keys.filter((k) => typeof k === "string")));
+        }
+      }
+    } catch {
+      // Stockage refusé ou contenu illisible : on reste tout déplié.
+    }
+  }, []);
+
+  // Déplie la section de l'écran courant, et mémorise le choix.
+  useEffect(() => {
+    if (!activeSectionKey) return;
+    setCollapsedSections((current) => {
+      if (!current.has(activeSectionKey)) return current;
+      const next = new Set(current);
+      next.delete(activeSectionKey);
+      try {
+        window.localStorage.setItem(
+          COLLAPSE_STORAGE_KEY,
+          JSON.stringify([...next])
+        );
+      } catch {
+        // Sans mémorisation, le dépliage vaut pour cette visite seulement.
+      }
+      return next;
+    });
+  }, [activeSectionKey]);
+
+  function toggleSection(key: string) {
+    setCollapsedSections((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        window.localStorage.setItem(
+          COLLAPSE_STORAGE_KEY,
+          JSON.stringify([...next])
+        );
+      } catch {
+        // Idem : l'état reste en mémoire pour la session.
+      }
+      return next;
+    });
+  }
 
   // "1 alerte ouverte" / "3 alertes ouvertes" — spelled out so the singular
   // does not read like a machine translation.
@@ -353,6 +514,35 @@ export function AppShell({
     };
   }, [status]);
 
+  /** Un lien de navigation, dans un groupe ou dans la barre réduite. */
+  function navLink(item: NavItem, indented = false) {
+    const isActive = current?.href === item.href;
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        aria-current={isActive ? "page" : undefined}
+        title={sidebarOpen ? undefined : item.label}
+        className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+          indented ? "ml-1" : ""
+        } ${
+          isActive
+            ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+            : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800"
+        }`}
+      >
+        <item.icon className="h-5 w-5 flex-shrink-0" />
+        {sidebarOpen && <span className="min-w-0 truncate">{item.label}</span>}
+        {isActive && sidebarOpen && (
+          <span
+            aria-hidden="true"
+            className="ml-auto h-1.5 w-1.5 flex-none rounded-full bg-blue-600 dark:bg-blue-400"
+          />
+        )}
+      </Link>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
@@ -394,26 +584,66 @@ export function AppShell({
           </button>
         </div>
 
-        <nav className="flex-1 py-4 space-y-1 px-2">
-          {navItems.map((item) => {
-            const isActive = current?.href === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={isActive ? "page" : undefined}
-                title={sidebarOpen ? undefined : item.label}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
-                    : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800"
-                }`}
-              >
-                <item.icon className="w-5 h-5 flex-shrink-0" />
-                {sidebarOpen && <span>{item.label}</span>}
-              </Link>
-            );
-          })}
+        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
+          {/*
+            Barre réduite : les groupes n'ont plus de place pour leur en-tête.
+            Tout est rendu à plat, en icônes, et le titre au survol dit de quoi
+            il s'agit — même comportement qu'avant la réorganisation.
+          */}
+          {!sidebarOpen
+            ? allItems.map((item) => navLink(item))
+            : sections.map((section) => {
+                const collapsed = collapsedSections.has(section.key);
+                const containsActive = section.items.some(
+                  (item) => item.href === current?.href
+                );
+
+                return (
+                  <div key={section.key} className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection(section.key)}
+                      aria-expanded={!collapsed}
+                      aria-controls={`nav-section-${section.key}`}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+                        containsActive
+                          ? "text-gray-700 dark:text-gray-200"
+                          : "text-gray-500 dark:text-gray-400"
+                      } hover:bg-gray-50 dark:hover:bg-gray-800`}
+                    >
+                      <section.icon className="h-4 w-4 flex-none" aria-hidden="true" />
+                      <span className="flex-1 truncate text-left">
+                        {section.label}
+                      </span>
+                      <span className="text-[10px] tabular-nums text-gray-400">
+                        {section.items.length}
+                      </span>
+                      {collapsed ? (
+                        <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 flex-none" aria-hidden="true" />
+                      )}
+                    </button>
+
+                    {!collapsed && (
+                      <div
+                        id={`nav-section-${section.key}`}
+                        className="mt-0.5 space-y-0.5"
+                      >
+                        {section.items.map((item) => navLink(item, true))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+          {/* L'espace client reste séparé : il ne décrit pas le travail du
+              personnel, et son contenu dépend d'un autre rôle. */}
+          {clientItems.length > 0 && (
+            <div className="mt-2 border-t border-gray-200 pt-2 dark:border-gray-800">
+              {clientItems.map((item) => navLink(item))}
+            </div>
+          )}
         </nav>
 
         <div className="border-t border-gray-200 dark:border-gray-800 p-4">
