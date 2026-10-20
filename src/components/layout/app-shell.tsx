@@ -32,6 +32,7 @@ import {
   ChevronRight,
   ShieldCheck,
   UserPlus,
+  ScrollText,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -229,10 +230,16 @@ const NAV_SECTIONS: readonly NavSection[] = [
         icon: Receipt,
         roles: MANAGEMENT_ROLES,
       },
-      // CONTRATS & SLA : volontairement absent. Aucun écran n'existe encore —
-      // seuls le modèle, l'API et le cadrage. Une entrée de menu qui mène à un
-      // 404 se remarque une fois et fait douter de toutes les autres ; elle
-      // sera ajoutée le jour où la route existera.
+      // CONTRATS & SLA : l'engagement lui-même, à côté des deux pièces
+      // commerciales qu'il produit. Il était absent tant que l'écran n'existait
+      // pas ; la route et le modèle existaient seuls, et une entrée de menu
+      // menant à un 404 aurait fait douter des autres.
+      {
+        href: "/administration/contrats",
+        label: "Contrats & SLA",
+        icon: ScrollText,
+        roles: MANAGEMENT_ROLES,
+      },
     ],
   },
   {
