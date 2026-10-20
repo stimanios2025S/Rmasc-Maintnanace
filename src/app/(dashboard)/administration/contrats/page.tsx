@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   CalendarClock,
   ChevronRight,
   Loader2,
@@ -67,6 +68,11 @@ interface ContractRow {
   client: { id: string; name: string; email: string };
   buildings: { id: string; name: string; city: string }[];
   expiry: { level: ExpiryLevel; days: number; message: string | null };
+  /**
+   * Le contrat est dans la fenêtre de préavis, en vigueur, et n'est pas `NONE`.
+   * Calculé par la route avec la même règle que le balayage d'alertes.
+   */
+  decisionRequired: boolean;
 }
 
 interface ClientOption {
@@ -170,6 +176,14 @@ export default function ContractsPage() {
   const [tierFilter, setTierFilter] = useState("");
   const [clientFilter, setClientFilter] = useState("");
   const [search, setSearch] = useState("");
+  /**
+   * L'onglet « Décision requise ».
+   *
+   * Il ne filtre pas sur un état mais sur la fenêtre de préavis : les contrats
+   * qui demandent un arbitrage humain avant que la reconduction tacite ne les
+   * engage pour une période de plus.
+   */
+  const [decisionOnly, setDecisionOnly] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -241,6 +255,7 @@ export default function ContractsPage() {
     const term = search.trim().toLowerCase();
 
     return rows.filter((row) => {
+      if (decisionOnly && !row.decisionRequired) return false;
       if (statusFilter && row.effectiveStatus !== statusFilter) return false;
       if (tierFilter && row.slaTier !== tierFilter) return false;
       if (clientFilter && row.client.id !== clientFilter) return false;
@@ -250,7 +265,12 @@ export default function ContractsPage() {
         row.client.name.toLowerCase().includes(term)
       );
     });
-  }, [rows, statusFilter, tierFilter, clientFilter, search]);
+  }, [rows, decisionOnly, statusFilter, tierFilter, clientFilter, search]);
+
+  const decisionCount = useMemo(
+    () => rows.filter((row) => row.decisionRequired).length,
+    [rows]
+  );
 
   const counts = useMemo(() => {
     const result: Record<string, number> = {};
@@ -261,9 +281,14 @@ export default function ContractsPage() {
   }, [rows]);
 
   const filtersActive =
-    statusFilter !== "" || tierFilter !== "" || clientFilter !== "" || search !== "";
+    decisionOnly ||
+    statusFilter !== "" ||
+    tierFilter !== "" ||
+    clientFilter !== "" ||
+    search !== "";
 
   function clearFilters() {
+    setDecisionOnly(false);
     setStatusFilter("");
     setTierFilter("");
     setClientFilter("");
@@ -328,6 +353,64 @@ export default function ContractsPage() {
             void load();
           }}
         />
+      )}
+
+      {/* ─── Onglets de travail ────────────────────────────── */}
+      <div
+        className="flex flex-wrap gap-2"
+        role="tablist"
+        aria-label="Vue du registre"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!decisionOnly}
+          onClick={() => setDecisionOnly(false)}
+          className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+            !decisionOnly
+              ? "bg-blue-600 text-white"
+              : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          }`}
+        >
+          Tous les contrats
+          <span className={!decisionOnly ? "opacity-80" : "text-gray-500"}>
+            {rows.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={decisionOnly}
+          onClick={() => setDecisionOnly(true)}
+          className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+            decisionOnly
+              ? "bg-amber-500 text-white"
+              : "bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950"
+          }`}
+        >
+          <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+          Décision requise
+          <span className={decisionOnly ? "opacity-80" : "text-amber-600 dark:text-amber-400"}>
+            {decisionCount}
+          </span>
+        </button>
+      </div>
+
+      {decisionOnly && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+          <p className="font-medium">
+            Contrats en vigueur dans la fenêtre de préavis (60 jours, puis 30).
+          </p>
+          <p className="mt-0.5 text-xs">
+            Il faut décider avant l&apos;échéance : résilier, renégocier, ou
+            choisir entre renouveler et laisser le contrat s&apos;arrêter. Les
+            contrats en reconduction tacite sont les plus urgents — passé le
+            terme, une période de plus est engagée. Les contrats « sans
+            renouvellement » et les brouillons sont exclus : rien n&apos;y est
+            reconduit par oubli.
+          </p>
+        </div>
       )}
 
       {/* ─── Filtres ───────────────────────────────────────── */}
@@ -418,12 +501,16 @@ export default function ContractsPage() {
           title={
             rows.length === 0
               ? "Aucun contrat enregistré"
-              : "Aucun contrat ne correspond aux filtres"
+              : decisionOnly && decisionCount === 0
+                ? "Aucune décision en attente"
+                : "Aucun contrat ne correspond aux filtres"
           }
           hint={
             rows.length === 0
               ? "Créez le premier contrat avec le bouton « Nouveau contrat »."
-              : "Effacez la recherche ou changez de filtre."
+              : decisionOnly && decisionCount === 0
+                ? "Aucun contrat en vigueur n'entre dans la fenêtre de préavis. La file est vide : c'est une bonne nouvelle."
+                : "Effacez la recherche ou changez de filtre."
           }
         />
       )}

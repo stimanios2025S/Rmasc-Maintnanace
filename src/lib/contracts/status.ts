@@ -347,6 +347,45 @@ export function expiryAlert(contract: DatedContract, now: Date): ExpiryAlert {
   };
 }
 
+/**
+ * Le palier d'alerte qui demande une décision humaine, ou `null`.
+ *
+ * CE QUE CETTE RÈGLE AJOUTE À `expiryAlert`
+ * `expiryAlert` dit ce qui va se passer. Elle ne dit pas si quelqu'un doit
+ * décider : un brouillon qui arrive à sa date de fin n'engage rien, un contrat
+ * `NONE` a explicitement renoncé à toute reconduction, et un contrat déjà échu
+ * n'a plus de décision à prendre — il est à traiter, pas à arbitrer. La file
+ * « Décision requise » et le balayage des alertes doivent poser la même
+ * question, donc elle est écrite ici une fois.
+ *
+ * POURQUOI `MANUAL` EN FAIT PARTIE
+ * La reconduction tacite n'est pas le seul cas qui demande un arbitrage : un
+ * contrat à renouvellement manuel s'arrête si personne ne le renouvelle. Le
+ * laisser hors de la file reviendrait à traiter le silence comme une décision.
+ */
+export type DecisionLevel = "notice" | "urgent";
+
+export function decisionLevel(
+  contract: DatedContract,
+  now: Date
+): DecisionLevel | null {
+  if (contract.renewalMode === "NONE") return null;
+
+  const status = effectiveStatus(contract, now);
+  if (status !== "ACTIVE" && status !== "SUSPENDED") return null;
+
+  const level = expiryAlert(contract, now).level;
+  return level === "notice" || level === "urgent" ? level : null;
+}
+
+/** Vrai quand le contrat est dans la fenêtre de préavis, en vigueur, et non `NONE`. */
+export function requiresDecision(
+  contract: DatedContract,
+  now: Date
+): boolean {
+  return decisionLevel(contract, now) !== null;
+}
+
 // ─── Contrôles de cohérence ─────────────────────────────────
 
 interface ContractDates {

@@ -1685,6 +1685,12 @@ enum ContractRevisionKind {
   STATUS_CHANGED
   BUILDINGS_CHANGED
   COMMITMENT_CHANGED
+  /// La date de fin a été repoussée par le traitement de reconduction tacite.
+  ///
+  /// Distinct de `DATES_CHANGED` : une correction de date est un geste humain,
+  /// une reconduction est l'application d'une clause. Le journal doit dire
+  /// laquelle des deux a produit la ligne.
+  TACIT_RENEWAL
 }
 
 /// Un contrat de maintenance.

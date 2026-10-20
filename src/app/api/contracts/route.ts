@@ -44,6 +44,7 @@ import {
   effectiveEndsAt,
   effectiveStatus,
   expiryAlert,
+  requiresDecision,
   revisionSummary,
 } from "@/lib/contracts/status";
 import {
@@ -160,6 +161,12 @@ function decorate(row: ContractListRow, now: Date) {
     client: row.client,
     buildings: row.buildings.map((link) => link.building),
     expiry: expiryAlert(dated, now),
+    /**
+     * La même question que pose le balayage d'alertes et l'onglet « Décision
+     * requise ». Calculée ici une fois : deux écrans qui la déduiraient de
+     * `expiry` et de `renewalMode` finiraient par diverger sur le cas `NONE`.
+     */
+    decisionRequired: requiresDecision(dated, now),
   };
 }
 

@@ -20,12 +20,14 @@ import {
   addMonthsUtc,
   datesRefusal,
   daysUntil,
+  decisionLevel,
   effectiveEndsAt,
   effectiveSlaTier,
   effectiveStatus,
   expiryAlert,
   nextTermEnd,
   renewalRefusal,
+  requiresDecision,
   revisionSummary,
   termMonths,
   terminationRefusal,
@@ -161,6 +163,38 @@ check(
   )
 );
 eq("jours négatifs une fois dépassé", daysUntil(D("2026-01-01"), D("2026-01-11")), -10);
+
+// ─── File « Décision requise » ─────────────────────────────
+
+eq("décision : préavis à 47 jours", decisionLevel(autoEnded, D("2025-11-15")), "notice");
+eq("décision : urgence à 17 jours", decisionLevel(autoEnded, D("2025-12-15")), "urgent");
+eq("décision : hors fenêtre à 214 jours", decisionLevel(autoEnded, D("2025-06-01")), null);
+eq(
+  "décision : manuel inclus",
+  decisionLevel(manualEnded, D("2025-11-15")),
+  "notice"
+);
+eq(
+  "décision : sans renouvellement exclu",
+  decisionLevel({ ...autoEnded, renewalMode: "NONE" }, D("2025-11-15")),
+  null
+);
+eq(
+  "décision : brouillon exclu",
+  decisionLevel({ ...autoEnded, status: "DRAFT" }, D("2025-11-15")),
+  null
+);
+eq(
+  "décision : suspendu inclus",
+  decisionLevel({ ...autoEnded, status: "SUSPENDED" }, D("2025-11-15")),
+  "notice"
+);
+eq("décision : échu exclu", decisionLevel(manualEnded, D("2026-02-01")), null);
+check(
+  "requiresDecision résume la règle",
+  requiresDecision(autoEnded, D("2025-11-15")) &&
+    !requiresDecision(autoEnded, D("2025-06-01"))
+);
 
 // ─── Cohérence ─────────────────────────────────────────────
 

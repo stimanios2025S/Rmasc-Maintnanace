@@ -47,6 +47,20 @@ const ServerEnvSchema = z.object({
   IOT_INGEST_TOKEN: optionalString(z.string().min(1)),
 
   /**
+   * Le secret du planificateur de contrats.
+   *
+   * `POST /api/cron/contracts-rollover` l'attend en `Authorization: Bearer …`.
+   * Facultatif : sans lui, la route reste utilisable depuis une session de
+   * gestion, et le script `scripts/contracts-rollover.ts` reste le chemin d'un
+   * planificateur système. Avec lui, un planificateur HTTP peut l'appeler sans
+   * compte.
+   *
+   * 16 caractères au minimum : un secret court se devine, et celui-ci déclenche
+   * des écritures de dates et des notifications à toute l'équipe de gestion.
+   */
+  CONTRACTS_CRON_TOKEN: optionalString(z.string().min(16)),
+
+  /**
    * The number an escalated incident is messaged on WhatsApp.
    *
    * Optional, because in-app notifications already reach every manager and a

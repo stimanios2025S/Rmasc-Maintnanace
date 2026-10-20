@@ -239,6 +239,22 @@ export default withAuth(
           return true;
         }
 
+        /**
+         * Le passage planifié des contrats.
+         *
+         * Un planificateur n'a pas de cookie de session : exiger une connexion
+         * ici rendrait la route inutilisable par le seul appelant pour lequel
+         * elle existe. Le handler ne fait pas confiance à cette exemption — il
+         * exige soit le jeton `CONTRACTS_CRON_TOKEN` comparé à temps constant,
+         * soit une session de gestion. La porte s'ouvre, la vérification reste.
+         *
+         * Seul POST est exempté : un GET n'a rien à y faire et garde la règle
+         * commune.
+         */
+        if (pathname === "/api/cron/contracts-rollover") {
+          return req.method === "POST" ? true : !!token;
+        }
+
         // IoT ingestion only — and only for POST. The handler separately
         // checks the `IOT_INGEST_TOKEN` bearer, so an unauthenticated POST is
         // not automatically an authorised one.

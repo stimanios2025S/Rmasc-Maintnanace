@@ -162,6 +162,7 @@ export const CONTRACT_REVISION_KINDS = [
   "STATUS_CHANGED",
   "BUILDINGS_CHANGED",
   "COMMITMENT_CHANGED",
+  "TACIT_RENEWAL",
 ] as const;
 export type ContractRevisionKind = (typeof CONTRACT_REVISION_KINDS)[number];
 

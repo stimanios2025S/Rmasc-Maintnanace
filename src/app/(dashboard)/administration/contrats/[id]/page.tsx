@@ -125,6 +125,7 @@ const REVISION_LABELS: Record<ContractRevisionKind, string> = {
   STATUS_CHANGED: "État",
   BUILDINGS_CHANGED: "Immeubles",
   COMMITMENT_CHANGED: "Délais promis",
+  TACIT_RENEWAL: "Reconduction tacite",
 };
 
 function formatDay(value: string | null | undefined): string {

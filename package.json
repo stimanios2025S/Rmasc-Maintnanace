@@ -9,6 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "diagnose-auth": "tsx scripts/diagnose-auth.ts",
+    "contracts:check": "tsx scripts/contracts-check.ts",
+    "contracts:rollover": "tsx scripts/contracts-rollover.ts",
     "db:backfill-positions": "tsx scripts/backfill-incident-positions.ts",
     "db:rotate-demo-passwords": "tsx scripts/rotate-demo-passwords.ts",
     "db:generate": "prisma generate",
