@@ -39,6 +39,9 @@ import {
 } from "recharts";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { ContractSlaBadge } from "@/components/contracts/contract-sla-badge";
+import { contractForBuilding } from "@/lib/contracts/coverage";
+import type { CoverageContract } from "@/lib/contracts/coverage";
 import { formatEnum } from "@/lib/utils";
 import { elevatorStatusStyle } from "@/lib/ui/status-styles";
 import { OPS_ROLES } from "@/types";
@@ -64,7 +67,7 @@ interface ElevatorDetail {
   overallHealth: number;
   lastMaintenance: string | null;
   nextMaintenance: string | null;
-  building: { name: string; address: string; city: string };
+  building: { id: string; name: string; address: string; city: string };
   components: Array<{
     id: string;
     name: string;
@@ -217,6 +220,16 @@ export default function ElevatorDetailPage() {
   const [data, setData] = useState<ElevatorDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  /**
+   * La couverture contractuelle du parc, lue une fois.
+   *
+   * Elle ne dépend pas de l'appareil : c'est le contrat de son immeuble. La
+   * charger dans `load()` la rejouerait à chaque analyse prédictive ou création
+   * de bon, pour une donnée qui ne change pas à ce rythme.
+   */
+  const [coverage, setCoverage] = useState<CoverageContract[]>([]);
+  /** Faux tant que la couverture n'a pas été lue : pas de faux « Hors contrat ». */
+  const [coverageLoaded, setCoverageLoaded] = useState(false);
   // The tab list is built at render time — one entry is added only for the
   // management roles — so the union is written out rather than inferred from
   // an array that no longer carries every key.
@@ -248,6 +261,35 @@ export default function ElevatorDetailPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/contracts/coverage")
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((json) => {
+        if (cancelled) return;
+        if (!Array.isArray(json?.data)) {
+          throw new Error("Réponse de couverture inattendue");
+        }
+        setCoverage(json.data);
+        setCoverageLoaded(true);
+      })
+      .catch(() => {
+        // Sans couverture, la fiche reste complète — seul le badge manque.
+        if (!cancelled) {
+          setCoverage([]);
+          setCoverageLoaded(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const runPrediction = async () => {
     setRunningPrediction(true);
@@ -325,6 +367,7 @@ export default function ElevatorDetailPage() {
   }
 
   const el = data;
+  const contract = contractForBuilding(coverage, el.building.id);
   const telemetry = [...el.telemetryStreams].reverse().map((t) => ({
     time: new Date(t.timestamp).toLocaleTimeString("fr-FR", {
       hour: "2-digit",
@@ -377,6 +420,21 @@ export default function ElevatorDetailPage() {
                 />
                 {STATUS_LABELS[el.status] ?? formatEnum(el.status)}
               </span>
+              {/*
+                Le contrat de l'immeuble, et non l'étiquette SLA du site : le
+                palier affiché est celui qui engage réellement l'entreprise.
+              */}
+              {coverageLoaded ? (
+                <ContractSlaBadge
+                  contract={contract}
+                  size="sm"
+                  showReference
+                />
+              ) : (
+                <span className="text-[10px] text-gray-400">
+                  couverture indisponible
+                </span>
+              )}
             </div>
             <p className="text-gray-500 mt-1">
               {BRAND_LABELS[el.brand] ?? el.brand} {el.model} —{" "}

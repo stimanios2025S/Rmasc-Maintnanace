@@ -4,9 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ClipboardList, Download, Receipt, RefreshCw } from "lucide-react";
+import { ClipboardList, Download, FileCheck, Receipt, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/states";
+import { ContractSlaBadge } from "@/components/contracts/contract-sla-badge";
+import type { CoverageContract } from "@/lib/contracts/coverage";
+import { enumLabel } from "@/lib/ui/enum-labels";
 import { formatDzd } from "@/lib/ui/money";
 import { ProgressTrack } from "@/components/ui/progress-track";
 import { ValidationBadge } from "@/components/ui/validation-badge";
@@ -79,12 +82,32 @@ interface InvoiceRow {
   buildingName: string;
 }
 
+function formatDay(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 export default function ClientPortalPage() {
   const { data: session, status } = useSession();
   const [elevators, setElevators] = useState<EmergencyElevator[]>([]);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [invoiceError, setInvoiceError] = useState("");
+  /**
+   * Les contrats qui couvrent le portefeuille de ce compte.
+   *
+   * La route ne reçoit aucun identifiant : elle lit le client dans la session.
+   * Un client ne peut donc pas demander les contrats d'un autre en changeant
+   * une adresse.
+   */
+  const [contracts, setContracts] = useState<CoverageContract[]>([]);
+  const [contractsLoaded, setContractsLoaded] = useState(false);
+  const [contractError, setContractError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -157,6 +180,32 @@ export default function ClientPortalPage() {
     }
   }, []);
 
+  /**
+   * Les contrats sont chargés à part, comme les factures.
+   *
+   * Une panne de la couverture ne doit pas priver le client du bouton
+   * d'urgence : la section affiche son propre message, le reste du portail
+   * continue de fonctionner. Aucun identifiant n'est envoyé — le serveur lit le
+   * titulaire dans la session.
+   */
+  const loadContracts = useCallback(async () => {
+    setContractError("");
+    try {
+      const res = await fetch("/api/contracts/coverage");
+      if (!res.ok) {
+        throw new Error(`Impossible de charger vos contrats (${res.status})`);
+      }
+      const json = await res.json();
+      setContracts(Array.isArray(json?.data) ? json.data : []);
+    } catch (e) {
+      setContractError(
+        e instanceof Error ? e.message : "Impossible de charger vos contrats."
+      );
+    } finally {
+      setContractsLoaded(true);
+    }
+  }, []);
+
   useEffect(() => {
     // Wait for the session before fetching: until it resolves we do not know
     // which portal this account gets, and firing both requests for a
@@ -171,12 +220,14 @@ export default function ClientPortalPage() {
 
     void load();
     void loadInvoices();
-  }, [load, loadInvoices, nonContracted, status]);
+    void loadContracts();
+  }, [load, loadContracts, loadInvoices, nonContracted, status]);
 
   const refresh = useCallback(() => {
     void load({ silent: true });
     void loadInvoices();
-  }, [load, loadInvoices]);
+    void loadContracts();
+  }, [load, loadContracts, loadInvoices]);
 
   // Checked before the loading state so a non-contracted client never sees the
   // emergency skeleton of a portal that is not theirs.
@@ -313,10 +364,116 @@ export default function ClientPortalPage() {
         )}
       </Card>
 
+      {/* ─── Mes contrats & SLA ───────────────────────────────── */}
+      <Card className="p-5">
+        <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
+          <FileCheck className="h-5 w-5 text-gray-400" aria-hidden="true" />
+          {session?.user?.role === "BUILDING_OWNER"
+            ? "Mes contrats & SLA"
+            : "Contrats & SLA"}
+        </h2>
+
+        {!contractsLoaded ? (
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            Chargement de vos contrats…
+          </p>
+        ) : contractError ? (
+          // Le message reste dans la section : le reste du portail, dont le
+          // bouton d'urgence, ne dépend pas de la couverture contractuelle.
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            {contractError}
+          </p>
+        ) : contracts.length === 0 ? (
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            Aucun contrat actif ne couvre vos immeubles. Le bureau peut vous
+            indiquer la marche à suivre.
+          </p>
+        ) : (
+          <ul className="mt-4 space-y-4">
+            {contracts.map((contract) => (
+              <li
+                key={contract.id}
+                className="rounded-xl border border-gray-200 dark:border-gray-800 p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
+                    {contract.reference}
+                  </span>
+                  <ContractSlaBadge contract={contract} size="sm" />
+                </div>
+
+                <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <dt className="text-xs text-gray-500 dark:text-gray-400">
+                      Palier souscrit
+                    </dt>
+                    <dd className="font-medium text-gray-900 dark:text-white">
+                      {enumLabel(contract.slaTier)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500 dark:text-gray-400">
+                      Engagements de service
+                    </dt>
+                    <dd className="text-gray-700 dark:text-gray-300">
+                      Prise en charge {contract.responseHours} h · intervention{" "}
+                      {contract.interventionHours} h
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500 dark:text-gray-400">
+                      Période
+                    </dt>
+                    <dd className="text-gray-700 dark:text-gray-300">
+                      Du {formatDay(contract.startsAt)} au{" "}
+                      {formatDay(contract.effectiveEndsAt)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-gray-500 dark:text-gray-400">
+                      Renouvellement
+                    </dt>
+                    <dd className="text-gray-700 dark:text-gray-300">
+                      {enumLabel(contract.renewalMode)} · préavis{" "}
+                      {contract.noticeDays} jours
+                    </dd>
+                  </div>
+                </dl>
+
+                <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                  Immeubles couverts :{" "}
+                  {contract.buildings
+                    .map((building) => building.name)
+                    .join(", ") || "—"}
+                </p>
+
+                {contract.effectiveStatus === "SUSPENDED" && (
+                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                    Service suspendu — contactez le bureau.
+                  </p>
+                )}
+
+                {(contract.expiry.level === "notice" ||
+                  contract.expiry.level === "urgent") && (
+                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                    Échéance dans {contract.expiry.days} jour
+                    {contract.expiry.days > 1 ? "s" : ""}
+                    {contract.renewalMode === "AUTO"
+                      ? " — reconduction tacite prévue."
+                      : " — sans reconduction automatique."}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       {/* Une section, et non un onglet : ce portail n'a aucun onglet — tout y
           est empilé, et en introduire un pour la seule facturation ferait de ce
           bloc le seul endroit qu'on ne trouve pas en faisant défiler la page.
-          L'ordre suit celui du parcours : signaler, suivre, puis payer. */}
+          L'ordre suit celui du parcours : signaler, suivre, consulter ses
+          contrats, puis payer. */}
       <Card className="p-5">
         <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
           <Receipt className="h-5 w-5 text-gray-400" aria-hidden="true" />

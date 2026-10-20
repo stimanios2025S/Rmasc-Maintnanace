@@ -5,6 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Printer } from "lucide-react";
 import { ErrorState } from "@/components/ui/states";
 import { EntretienSheet } from "@/components/maintenance/entretien-sheet";
+import { ContractSlaBadge } from "@/components/contracts/contract-sla-badge";
+import { contractForBuilding } from "@/lib/contracts/coverage";
+import type { CoverageContract } from "@/lib/contracts/coverage";
 import { formatMeasurement } from "@/lib/ui/numbers";
 
 /**
@@ -72,7 +75,7 @@ interface Report {
     elevatorCode: string;
     brand: string;
     model: string;
-    building: { name: string; address: string; city: string };
+    building: { id: string; name: string; address: string; city: string };
   };
 }
 
@@ -126,6 +129,15 @@ export default function InspectionReportPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  /**
+   * Le contrat de l'immeuble, pour la carte d'inspection.
+   *
+   * `coverageLoaded` distingue « pas de contrat » de « pas encore lu » : sans
+   * lui, la barre afficherait « Hors contrat » pendant la requête, ce qui est
+   * une affirmation fausse le temps d'un aller-retour.
+   */
+  const [coverage, setCoverage] = useState<CoverageContract | null>(null);
+  const [coverageLoaded, setCoverageLoaded] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +169,40 @@ export default function InspectionReportPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const buildingId = report?.elevator.building.id;
+    if (!buildingId) return;
+
+    let cancelled = false;
+    setCoverageLoaded(false);
+
+    fetch("/api/contracts/coverage")
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((json) => {
+        if (cancelled) return;
+        if (!Array.isArray(json?.data)) {
+          throw new Error("Réponse de couverture inattendue");
+        }
+        setCoverage(contractForBuilding(json.data, buildingId));
+        setCoverageLoaded(true);
+      })
+      .catch(() => {
+        // La carte reste lisible sans son badge ; on ne prétend simplement pas
+        // qu'il n'y a pas de contrat.
+        if (!cancelled) {
+          setCoverage(null);
+          setCoverageLoaded(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [report?.elevator.building.id]);
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -183,15 +229,31 @@ export default function InspectionReportPage() {
       {/* Screen-only toolbar. Hidden in print so the paper carries the report
           and nothing else. */}
       <div className="sticky top-0 z-10 border-b border-gray-200 bg-white px-4 py-3 print:hidden">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Retour
-          </button>
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              Retour
+            </button>
+            {/*
+              La couverture de l'immeuble, sur la carte d'inspection. Elle est
+              dans la barre d'écran et non sur la feuille : le rapport
+              APP/DA/04/13 reproduit un formulaire officiel, et un badge
+              commercial n'y a pas sa place. `coverageLoaded` évite d'afficher
+              « Hors contrat » pendant la lecture.
+            */}
+            {coverageLoaded && (
+              <ContractSlaBadge
+                contract={coverage}
+                size="sm"
+                showReference
+              />
+            )}
+          </div>
           <button
             type="button"
             onClick={() => window.print()}

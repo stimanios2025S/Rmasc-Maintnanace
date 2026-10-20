@@ -11,6 +11,9 @@ import {
   Clock,
 } from "lucide-react";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { ContractSlaBadge } from "@/components/contracts/contract-sla-badge";
+import { contractForBuilding } from "@/lib/contracts/coverage";
+import type { CoverageContract } from "@/lib/contracts/coverage";
 import { formatEnum } from "@/lib/utils";
 import { elevatorStatusStyle } from "@/lib/ui/status-styles";
 
@@ -71,6 +74,21 @@ function plural(count: number, suffix = "s"): string {
 
 export default function ElevatorsPage() {
   const [elevators, setElevators] = useState<ElevatorRow[]>([]);
+  /**
+   * La couverture contractuelle, lue à part.
+   *
+   * Un badge n'est pas une raison de faire échouer le parc : si la couverture
+   * est indisponible, la liste s'affiche sans badge plutôt qu'avec un message
+   * d'erreur à la place des appareils.
+   */
+  const [contracts, setContracts] = useState<CoverageContract[]>([]);
+  /**
+   * Distingue « aucun contrat » de « couverture non lue ».
+   *
+   * Sans cet état, une panne de la route afficherait « Hors contrat » sur tout
+   * le parc — une affirmation fausse, et plus grave qu'un badge absent.
+   */
+  const [coverageLoaded, setCoverageLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("ALL");
   const [loading, setLoading] = useState(true);
@@ -80,10 +98,20 @@ export default function ElevatorsPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/elevators");
+      const [res, coverageRes] = await Promise.all([
+        fetch("/api/elevators"),
+        fetch("/api/contracts/coverage").catch(() => null),
+      ]);
       if (!res.ok) throw new Error(`L'API des ascenseurs a renvoyé ${res.status}`);
       const json = await res.json();
       setElevators(json.data ?? []);
+
+      const coverage = coverageRes?.ok
+        ? await coverageRes.json().catch(() => null)
+        : null;
+      const rows = Array.isArray(coverage?.data) ? coverage.data : null;
+      setContracts(rows ?? []);
+      setCoverageLoaded(rows !== null);
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Impossible de charger les ascenseurs"
@@ -189,6 +217,7 @@ export default function ElevatorsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((el) => {
             const statusStyle = elevatorStatusStyle(el.status);
+            const contract = contractForBuilding(contracts, el.building.id);
             return (
               <Link
                 key={el.id}
@@ -214,17 +243,31 @@ export default function ElevatorsPage() {
                   </span>
                 </div>
 
-                {/* Model Info */}
-                <p className="text-xs text-gray-500 mb-3">
-                  {BRAND_LABELS[el.brand] ?? el.brand} {el.model}
+                {/* Model Info + couverture contractuelle */}
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <p className="text-xs text-gray-500">
+                    {BRAND_LABELS[el.brand] ?? el.brand} {el.model}
+                  </p>
+                  {/*
+                    Le palier vient du contrat qui couvre l'immeuble, pas de
+                    l'étiquette statique du site. Un appareil hors contrat le
+                    dit au lieu d'afficher une promesse éteinte.
+                  */}
+                  {coverageLoaded ? (
+                    <ContractSlaBadge contract={contract} size="sm" />
+                  ) : (
+                    <span className="text-[10px] text-gray-400">
+                      couverture indisponible
+                    </span>
+                  )}
                   {el._count.alerts > 0 && (
-                    <span className="ml-2 text-red-500 font-medium">
+                    <span className="text-xs text-red-500 font-medium">
                       • {el._count.alerts} alerte
                       {plural(el._count.alerts)} ouverte
                       {plural(el._count.alerts)}
                     </span>
                   )}
-                </p>
+                </div>
 
                 {/* Health Bar */}
                 <div className="mb-3">
