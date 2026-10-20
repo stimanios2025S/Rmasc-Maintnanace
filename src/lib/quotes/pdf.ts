@@ -50,6 +50,7 @@ import {
   lineAmountHt,
 } from "@/lib/quotes/totals";
 import { amountInWords } from "@/lib/quotes/words";
+import { qrPng, scanUrlFor } from "@/lib/documents/qr";
 
 export interface QuoteDocumentLine {
   reference: string | null;
@@ -73,6 +74,14 @@ export interface QuoteDocument {
   buildingAddress: string;
   buildingCity: string;
   elevatorCode: string | null;
+  /**
+   * L'appareil visé, pour le QR imprimé en pied de page.
+   *
+   * Null pour un devis qui ne vise aucune machine — une rénovation de gaine
+   * concerne le site. Le document s'imprime alors sans QR plutôt qu'avec
+   * celui d'un appareil qui n'est pas le sujet de l'offre.
+   */
+  elevatorId: string | null;
   lines: readonly QuoteDocumentLine[];
 }
 
@@ -371,7 +380,9 @@ export function renderQuotePdf(quote: QuoteDocument): Promise<Buffer> {
     y += 22;
 
     // ─── Bon pour accord ──────────────────────────────────────
-    y = ensureRoom(y, 110);
+    // La place réservée comprend le QR de pied de page : sans elle, la
+    // dernière ligne du document pousserait le code hors de la page.
+    y = ensureRoom(y, 190);
     doc.fillColor(INK).font("Helvetica-Bold").fontSize(9.5);
     doc.text("Bon pour accord et confirmation", left, y, { width: width * 0.55 });
     doc.fillColor(MUTED).font("Helvetica").fontSize(8);
@@ -391,6 +402,39 @@ export function renderQuotePdf(quote: QuoteDocument): Promise<Buffer> {
       .strokeColor(RULE)
       .lineWidth(0.5)
       .stroke();
+
+    // ─── Le QR de l'appareil — For: APP/DA/04/14 ─────────────
+    //
+    // La même marque que celle collée sur la machine : elle ouvre l'état de
+    // l'appareil et la demande d'accès client. Sous les signatures, et à
+    // gauche, pour ne pas disputer la place au cachet de l'entreprise.
+    if (quote.elevatorId) {
+      const qrSize = 64;
+      const qrY = y + 92;
+      if (qrY + qrSize + 24 < doc.page.height - PAGE_MARGIN) {
+        try {
+          doc.image(qrPng(scanUrlFor(quote.elevatorId), 4), left, qrY, {
+            width: qrSize,
+          });
+          doc
+            .fillColor(MUTED)
+            .font("Helvetica")
+            .fontSize(6.5)
+            .text(
+              printable(
+                "État de l'appareil et demande d'accès client : scanner ce code."
+              ),
+              left + qrSize + 8,
+              qrY + 6,
+              { width: width * 0.5 - qrSize - 8 }
+            );
+        } catch (error) {
+          // Un QR qui ne se dessine pas ne doit pas retirer le devis : le
+          // document signé reste le document, la marque est un complément.
+          console.error("[documents] QR du devis non dessiné", error);
+        }
+      }
+    }
 
     // ─── Le tampon ────────────────────────────────────────────
     drawStamp(doc, y + 92);

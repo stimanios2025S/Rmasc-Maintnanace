@@ -57,6 +57,18 @@ export default withAuth(
     }
 
     /**
+     * La page ouverte par le QR collé sur un appareil est publique.
+     *
+     * Elle l'est aussi pour un compte client connecté : la règle du portail
+     * ci-dessous le redirigerait vers son tableau de bord, alors que cette page
+     * ne montre rien de plus que ce que la machine affiche déjà — son état et sa
+     * dernière visite.
+     */
+    if (pathname.startsWith("/scan")) {
+      return NextResponse.next();
+    }
+
+    /**
      * Le client n'a que deux écrans : son tableau de bord et son espace client.
      *
      * La règle elle-même vit dans `src/lib/auth/client-routes.ts`, où elle est
@@ -210,6 +222,23 @@ export default withAuth(
           return true;
         }
 
+        /**
+         * La page ouverte par le QR, et le dépôt d'une demande d'accès.
+         *
+         * Toutes deux publiques par construction : la personne qui scanne n'a
+         * aucun compte — c'est précisément pourquoi elle demande un accès. Ce
+         * qui est public est étroit : la page ne lit que l'état de l'appareil,
+         * et le POST ne fait qu'écrire une demande en attente. La lecture du
+         * registre, l'approbation et la création de compte restent au bureau.
+         */
+        if (pathname.startsWith("/scan")) {
+          return true;
+        }
+
+        if (pathname === "/api/access-requests" && req.method === "POST") {
+          return true;
+        }
+
         // IoT ingestion only — and only for POST. The handler separately
         // checks the `IOT_INGEST_TOKEN` bearer, so an unauthenticated POST is
         // not automatically an authorised one.
@@ -250,6 +279,11 @@ export const config = {
     // piège que `/alertes` a déjà rencontré, et il se représente à chaque écran
     // ajouté hors de `/administration`.
     "/factures/:path*",
+    // La page publique ouverte par le QR. Déclarée ici pour que le middleware
+    // s'exécute et rende la décision explicitement — un chemin absent du
+    // matcher échappe à toute la garde, ce qui est le comportement voulu ici
+    // mais doit rester une décision écrite, pas un oubli.
+    "/scan/:path*",
     "/connexion",
     "/api/:path*",
   ],

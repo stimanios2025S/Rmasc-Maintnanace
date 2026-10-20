@@ -522,6 +522,10 @@ function build(): DemoWorld {
       elevatorCode: bp.code,
       buildingId: bp.buildingId,
       brand: bp.brand,
+      // Aucun appareil de démonstration n'est une reprise : la marque d'origine
+      // et le matricule RMASC restent vides, comme pour un appareil d'origine.
+      originBrand: null,
+      rmascCode: null,
       model: bp.model,
       serialNumber: `SN-${bp.code}-${1000 + Math.floor(rng() * 8999)}`,
       installationDate: iso(ageMs),

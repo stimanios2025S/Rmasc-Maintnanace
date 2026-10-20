@@ -463,6 +463,14 @@ model User {
   /// Les révisions de contrat que ce compte a écrites.
   contractRevisions     ContractRevision[]
 
+  // ─── Demandes d'accès (QR sur l'appareil) ────────────────
+  //
+  // Deux arêtes nommées : le décideur d'une demande et le compte qu'elle a
+  // créé sont deux personnes différentes — et la seconde n'existe pas encore
+  // quand la première statue.
+  accessRequestDecisions AccessRequest[] @relation("AccessRequestDecisions")
+  accessRequestsCreated  AccessRequest[] @relation("AccessRequestAccounts")
+
   @@map("users")
 }
 
@@ -537,6 +545,19 @@ model Elevator {
   elevatorCode     String         @unique @map("elevator_code")
   buildingId       String         @map("building_id")
   brand            ElevatorBrand
+  /// La marque d'origine, quand l'appareil n'est pas de notre parc.
+  ///
+  /// `brand` est une énumération fermée, et `OTHER` ne dit pas *quoi*. Un
+  /// ascenseur Otis ou KONE repris en maintenance doit garder son constructeur
+  /// d'origine : c'est la première chose qu'un technicien demande avant
+  /// d'ouvrir l'armoire, et un « OTHER » ne l'aide pas.
+  originBrand      String?        @map("origin_brand")
+  /// Le matricule RMASC, `ASC-2026-0001`.
+  ///
+  /// Attribué à la reprise d'un appareil, quand le contrat est validé — pas à la
+  /// création de la fiche : un appareil visité pour un audit n'est pas encore du
+  /// parc. C'est ce matricule que porte le QR code collé sur la machine.
+  rmascCode        String?        @unique @map("rmasc_code")
   model            String
   serialNumber     String?        @map("serial_number")
   installationDate DateTime?      @map("installation_date")
@@ -569,6 +590,8 @@ model Elevator {
   /// de gaine concerne le site, pas une machine.
   quotes           Quote[]
   latestTelemetry  TelemetrySnapshot? @relation("LatestTelemetry")
+  /// Les demandes d'accès déposées en scannant le QR de cet appareil.
+  accessRequests   AccessRequest[]
 
   /// The « Fiche Technique » for this unit, when one has been submitted. At
   /// most one per elevator — the unique constraint on the other side is what
@@ -1788,4 +1811,62 @@ model ContractRevision {
 
   @@index([contractId, createdAt])
   @@map("contract_revisions")
+}
+
+// ─── DEMANDES D'ACCÈS (QR SUR L'APPAREIL) ───────────────────
+//
+// POURQUOI CE MODÈLE EXISTE
+// Une personne qui voit l'appareil — gardien, syndic, exploitant — n'a aucun
+// compte et ne peut rien faire. Jusqu'ici, l'ouverture d'un accès passait par un
+// appel au bureau, une saisie manuelle, et un mot de passe transmis de mémoire.
+//
+// Le QR collé sur la machine ouvre une page publique qui décrit l'appareil et
+// permet de déposer une demande. Le bureau la valide en un geste, et le compte
+// est créé avec un mot de passe tiré par le système.
+//
+// LA DEMANDE N'OUVRE RIEN
+// Elle ne crée aucun accès, ne modifie aucun immeuble, et ne donne aucune
+// session. Elle attend. C'est le bureau qui décide, et c'est la seule chose que
+// ce modèle permette.
+
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model AccessRequest {
+  id         String @id @default(cuid())
+  elevatorId String @map("elevator_id")
+
+  firstName String  @map("first_name")
+  lastName  String  @map("last_name")
+  phone     String
+  email     String
+  /// Le rôle déclaré — « gardien », « syndic », « exploitant »… Texte libre :
+  /// ce n'est pas un rôle applicatif, et le figurer dans une énumération
+  /// inventerait une taxonomie que personne n'a demandée.
+  role      String
+  message   String?
+
+  status        AccessRequestStatus @default(PENDING)
+  /// Qui a statué, et quand. NULL sur une demande en attente — et non
+  /// « décision inconnue ».
+  decidedAt     DateTime?           @map("decided_at")
+  decidedById   String?             @map("decided_by_id")
+  /// Le compte client créé par l'approbation. NULL tant que rien n'est créé.
+  createdUserId String?             @map("created_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  elevator    Elevator @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
+  decidedBy   User?    @relation("AccessRequestDecisions", fields: [decidedById], references: [id], onDelete: SetNull)
+  createdUser User?    @relation("AccessRequestAccounts", fields: [createdUserId], references: [id], onDelete: SetNull)
+
+  /// Le registre du bureau : « ce qui attend une décision ».
+  @@index([status, createdAt])
+  @@index([elevatorId])
+  @@index([email])
+  @@map("access_requests")
 }

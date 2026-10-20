@@ -30,6 +30,8 @@ import {
   Warehouse,
   ChevronDown,
   ChevronRight,
+  ShieldCheck,
+  UserPlus,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ADMIN_ROLES, MANAGEMENT_ROLES, OPS_ROLES } from "@/types";
@@ -110,6 +112,15 @@ const NAV_SECTIONS: readonly NavSection[] = [
       // travail. Ce qu'un client a besoin de savoir de ses appareils lui est
       // montré chez lui, dans son propre tableau de bord.
       { href: "/ascenseurs", label: "Ascenseurs", icon: Activity, roles: OPS_ROLES },
+      // La reprise d'un appareil tiers : la fiche, son audit d'état des lieux,
+      // puis le matricule et le QR. Gardée aux rôles de gestion, comme la route
+      // qui la sert — c'est une décision d'entrée au parc, pas une lecture.
+      {
+        href: "/administration/ascenseurs",
+        label: "Reprises d'appareils",
+        icon: ShieldCheck,
+        roles: MANAGEMENT_ROLES,
+      },
       { href: "/carte", label: "Carte du parc", icon: MapIcon, roles: OPS_ROLES },
       // The « Fiche Technique » board for non-contract clients. The middleware
       // gates it to OPS_ROLES, so the link is filtered to exactly those roles
@@ -236,6 +247,16 @@ const NAV_SECTIONS: readonly NavSection[] = [
         href: "/administration/clients",
         label: "Comptes clients",
         icon: Users,
+        roles: ADMIN_ROLES,
+      },
+      // Les demandes déposées en scannant le QR d'un appareil. Juste après les
+      // comptes clients, parce que c'est de là qu'ils viennent : une demande
+      // approuvée devient un compte. Administrateur seul, comme la route et
+      // comme tout `/administration/clients/*`.
+      {
+        href: "/administration/clients/demandes",
+        label: "Demandes d'accès",
+        icon: UserPlus,
         roles: ADMIN_ROLES,
       },
       // Les comptes du personnel. Administrateur seul, pour la même raison que le

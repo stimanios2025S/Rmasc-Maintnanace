@@ -73,6 +73,22 @@ export const OWNER_ELIGIBLE_ROLES: readonly UserRole[] = [
 export const CLIENT_TYPES = ["CONTRACTED", "NON_CONTRACTED"] as const;
 export type ClientType = (typeof CLIENT_TYPES)[number];
 
+/**
+ * L'état d'une demande d'accès déposée depuis le QR d'un appareil.
+ *
+ * Mirrors the Prisma enum, so the registre can filter without importing the
+ * Prisma client — la même raison que `CLIENT_TYPES` juste au-dessus.
+ *
+ * `PENDING` n'est pas un brouillon : c'est une demande réelle qui attend une
+ * décision du bureau. `APPROVED` et `REJECTED` disent qui a statué, et quand.
+ */
+export const ACCESS_REQUEST_STATUSES = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+] as const;
+export type AccessRequestStatus = (typeof ACCESS_REQUEST_STATUSES)[number];
+
 /** French display labels. The identifiers themselves never reach the screen. */
 export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
   CONTRACTED: "Avec contrat",

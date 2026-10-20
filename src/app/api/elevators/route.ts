@@ -27,6 +27,7 @@ import {
 } from "@/types";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoElevatorList } from "@/lib/demo/responses";
+import { createWorkOrderWithUniqueNumber } from "@/lib/work-orders/service";
 
 const CreateElevatorSchema = z
   .object({
@@ -40,6 +41,23 @@ const CreateElevatorSchema = z
       ),
     buildingId: z.string().min(1, "L'immeuble est obligatoire"),
     brand: z.enum(ELEVATOR_BRANDS),
+    /**
+     * La marque d'origine, pour un appareil repris d'un autre constructeur.
+     *
+     * `brand` est une énumération fermée : un Otis repris porte `OTHER`, et le
+     * champ ci-dessous dit « Otis » — la seule information qu'un technicien
+     * demande avant d'ouvrir l'armoire.
+     */
+    originBrand: z.string().trim().max(80).optional(),
+    /**
+     * Reprise d'un appareil tiers.
+     *
+     * Demande explicitement le bon de visite d'état des lieux. Ce n'est pas
+     * déduit de la présence d'une marque d'origine : un appareil de notre parc
+     * peut aussi en porter une, et un audit ne doit pas naître d'une écriture
+     * approximative dans un champ libre.
+     */
+    takeover: z.boolean().optional(),
     model: z.string().min(1, "Le modèle est obligatoire").max(100),
     serialNumber: z.string().max(100).optional(),
     installationDate: z.string().datetime().optional(),
@@ -51,7 +69,12 @@ const CreateElevatorSchema = z
     controllerType: z.enum(CONTROLLER_TYPES),
     floorsServed: z.number().int().positive().max(200),
   })
-  .strict();
+  .strict()
+  .refine((value) => !value.takeover || Boolean(value.originBrand?.trim()), {
+    message:
+      "La marque d'origine est obligatoire pour la reprise d'un appareil tiers",
+    path: ["originBrand"],
+  });
 
 export async function GET() {
   try {
@@ -91,7 +114,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireRole(...MANAGEMENT_ROLES);
+    const session = await requireRole(...MANAGEMENT_ROLES);
     const parsed = CreateElevatorSchema.parse(await readJson(request));
 
     const building = await prisma.building.findFirst({
@@ -117,6 +140,7 @@ export async function POST(request: NextRequest) {
         elevatorCode: parsed.elevatorCode,
         buildingId: parsed.buildingId,
         brand: parsed.brand,
+        originBrand: parsed.originBrand?.trim() || null,
         model: parsed.model,
         serialNumber: parsed.serialNumber,
         installationDate: parsed.installationDate
@@ -129,7 +153,58 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ data: elevator }, { status: 201 });
+    /**
+     * La reprise d'un appareil tiers ouvre un bon de visite d'état des lieux.
+     *
+     * Sans lui, l'appareil entrerait dans le parc sans qu'aucun technicien ne
+     * l'ait regardé : ses caractéristiques seraient celles qu'un formulaire a
+     * déclarées, pas celles de la machine. Le bon est le document qui manque —
+     * il est créé ici, ouvert, pour que le bureau puisse l'affecter.
+     *
+     * Une erreur ici ne défait pas la fiche : elle est déjà en base, et un
+     * appareil sans bon se rattrape depuis le tableau des bons. Lever à ce
+     * stade ferait croire à l'appelant que rien n'a été écrit.
+     */
+    let auditWorkOrder: { id: string; orderNumber: string } | null = null;
+    if (parsed.takeover) {
+      const brandLabel = parsed.originBrand?.trim() || elevator.brand;
+      try {
+        const order = await createWorkOrderWithUniqueNumber(
+          {
+            title: `Inspection état des lieux – ${brandLabel} ${parsed.model} (${elevator.elevatorCode})`,
+            description: [
+              `Visite d'inspection avant reprise en maintenance de l'appareil ${elevator.elevatorCode}.`,
+              "",
+              "L'appareil n'est pas encore du parc RMASC : ce bon établit son état avant",
+              "toute prise en charge. Relever la marque d'origine, le modèle, le numéro de",
+              "série, l'état de la gaine et des organes de sécurité, et consigner les",
+              "réserves éventuelles. Le matricule RMASC n'est attribué qu'à la validation",
+              "de cette visite.",
+            ].join("\n"),
+            type: "INSPECTION",
+            priority: "MEDIUM",
+            status: "OPEN",
+            elevatorId: elevator.id,
+            createdById: session.user.id,
+          },
+          "AUD"
+        );
+        auditWorkOrder = {
+          id: order.id,
+          orderNumber: order.orderNumber,
+        };
+      } catch (error) {
+        console.error(
+          "[elevators] le bon d'inspection de reprise n'a pas pu être créé",
+          error
+        );
+      }
+    }
+
+    return NextResponse.json(
+      { data: elevator, auditWorkOrder },
+      { status: 201 }
+    );
   } catch (error) {
     return handleRouteError(error);
   }

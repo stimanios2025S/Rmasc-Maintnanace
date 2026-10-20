@@ -69,6 +69,14 @@ export interface EntretienSheetReport {
     completedAt: string | null;
   };
   elevator: {
+    /**
+     * L'identifiant de l'appareil — ce que le QR de pied de feuille encode.
+     *
+     * Il n'est pas imprimé : c'est l'adresse publique de l'appareil qui l'est,
+     * sous forme de code. Sans lui, la feuille ne porterait aucune marque
+     * rattachable à la machine qu'elle décrit.
+     */
+    id: string;
     elevatorCode: string;
     brand: string;
     model: string;
@@ -311,10 +319,32 @@ export function EntretienSheet({ report }: { report: EntretienSheetReport }) {
         />
       </section>
 
-      <footer className="mt-6 border-t border-gray-400 pt-2 text-[10px] text-gray-600">
-        {report.elevator.elevatorCode} · {report.elevator.building.name} ·
-        rapport établi le {formatDay(report.submittedAt)} par{" "}
-        {report.technician.name ?? "—"}.
+      <footer className="mt-6 flex items-end justify-between gap-4 border-t border-gray-400 pt-2 text-[10px] text-gray-600">
+        <p>
+          {report.elevator.elevatorCode} · {report.elevator.building.name} ·
+          rapport établi le {formatDay(report.submittedAt)} par{" "}
+          {report.technician.name ?? "—"}.
+        </p>
+        {/*
+          Le QR de l'appareil — For: APP/DA/04/13.
+          La même marque que celle collée sur la machine : la feuille classée
+          et l'appareil qu'elle décrit se rejoignent par ce code. Il est chargé
+          par une adresse, et non calculé dans la page, pour qu'il soit présent
+          à l'impression comme à l'écran.
+        */}
+        <div className="shrink-0 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`/api/elevators/${report.elevator.id}/qr`}
+            alt={`QR de l'appareil ${report.elevator.elevatorCode}`}
+            width={80}
+            height={80}
+            className="h-20 w-20"
+          />
+          <p className="mt-0.5 max-w-[6rem] leading-tight">
+            État de l&apos;appareil
+          </p>
+        </div>
       </footer>
     </article>
   );

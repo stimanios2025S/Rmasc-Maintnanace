@@ -48,7 +48,7 @@ const DOCUMENT_SELECT = {
   notes: true,
   client: { select: { name: true } },
   building: { select: { name: true, address: true, city: true } },
-  elevator: { select: { elevatorCode: true } },
+  elevator: { select: { id: true, elevatorCode: true } },
   lines: {
     select: {
       reference: true,
@@ -109,7 +109,7 @@ function toDocument(row: {
   notes: string | null;
   client: { name: string } | null;
   building: { name: string; address: string; city: string };
-  elevator: { elevatorCode: string } | null;
+  elevator: { id: string; elevatorCode: string } | null;
   lines: readonly {
     reference: string | null;
     designation: string;
@@ -143,6 +143,12 @@ function toDocument(row: {
     buildingAddress: row.building.address,
     buildingCity: row.building.city,
     elevatorCode: row.elevator?.elevatorCode ?? null,
+    /**
+     * L'appareil lui-même, quand le devis en vise un. C'est ce que le QR du
+     * document encode : sans identifiant, pas de QR — et un devis de rénovation
+     * de gaine qui ne vise aucune machine ne doit pas porter celui d'une autre.
+     */
+    elevatorId: row.elevator?.id ?? null,
     // Un `Decimal` de Prisma traverse la frontière typée en `unknown` : on le
     // ramène ici à un nombre, une fois, plutôt qu'à chaque usage.
     lines: row.lines.map((line) => ({
