@@ -90,21 +90,25 @@ current map — screens that exist, with the route that reaches them.
 |---|---|---|
 | **Dashboard** | `/tableau-de-bord` | Fleet KPIs, health, attention list, alerts |
 | **Fleet map** | `/carte` | Geolocated fleet, five attention levels, site detail |
-| **Elevators** | `/ascenseurs`, `/ascenseurs/[id]` | Components, health, RUL, predictive scoring |
+| **Elevators** | `/ascenseurs`, `/ascenseurs/[id]` | Components, health, RUL, predictive scoring, active-contract SLA badge |
 | **Work orders** | `/bons-de-travail`, `/bons-de-travail/[id]` | Registry, dispatch, revisions, end-of-job validation |
 | **Field portal** | `/technicien` | Technician queue, geofenced check-in, report, signature |
 | **Preventive** | `/entretien` | Visit programme, due dates, planning into work orders |
 | **Alerts** | `/alertes` | Triage queue, bulk acknowledge/resolve |
 | **Thresholds** | `/seuils` | Per-metric alert rules, merged so one rule cannot silence the rest |
 | **Incidents** | `/administration/incidents`, `/client` | Client-reported faults, positions, escalation |
-| **Inspection reports** | `/rapports-inspection`, `/rapports-inspection/[id]` | Register + printable sheet `APP/DA/04/13` |
+| **Inspection reports** | `/rapports-inspection`, `/rapports-inspection/[id]` | Register + printable sheet `APP/DA/04/13`; SLA badge in the screen toolbar |
 | **Quotes** | `/administration/devis`, `/administration/devis/[id]`, `/client/devis` | Registry, line editing, TVA 19 %, amount in words, PDF `APP/DA/04/14` |
 | **Invoices** | `/factures` | Frozen, numbered invoices, settlement state, PDF |
+| **Contracts & SLA** | `/administration/contrats`, `/administration/contrats/[id]`, `/client` | Registry, state machine, tacit renewal + expiry alerts, client coverage |
 | **Parts** | `/administration/pieces` | Part requests: validate → order → fit |
 | **Storekeeper** | `/administration/magasinier` | Reception desk; transmits a validated need to the central store |
 | **Clients** | `/administration/clients`, `/administration/clients/[id]` | Accounts, buildings, generated access |
+| **Access requests** | `/administration/clients/demandes` | QR access requests: approve → account created, building attached, invitation |
+| **Takeovers** | `/administration/ascenseurs` | Third-party unit intake, audit work order, RMASC code + QR |
 | **Personnel** | `/administration/personnel` | Staff accounts and credentials |
-| **Client portal** | `/client`, `/client/devis`, `/client/fiche-technique` | Two genuinely different portals: contracted, and non-contracted |
+| **QR landing page** | `/scan/[elevatorId]` | Public: device status + access request form |
+| **Client portal** | `/client`, `/client/devis`, `/client/fiche-technique` | Two genuinely different portals: contracted (with SLA contracts), and non-contracted |
 | **Documents** | — | Shared PDF charter in `src/lib/documents/charte.ts` |
 
 ### The storekeeper link, and what is not yet proven
@@ -121,6 +125,74 @@ store's reference; a failure records the error and leaves the status alone.
 application was not running when it was written, and `STOCK_API_URL` /
 `STOCK_API_KEY` / `STOCK_API_SECRET` are unset. The signature is checked against
 the written contract and the route source, not against a live exchange.
+
+---
+
+### Client onboarding by QR
+
+Every unit can carry a QR code that opens `/scan/[elevatorId]` **without an
+account**. The page shows the device's public state (code, brand/model, status,
+building name and city, last visit) and a form asking for a name, phone, e-mail
+and declared role (Syndic / Promoteur / Propriétaire). Submitting writes a
+`PENDING` access request; it opens nothing.
+
+The office reads the queue at `/administration/clients/demandes`. **Approve &
+create the account** is the only path from a scan to a customer account: it
+creates a `BUILDING_OWNER` with a generated password, attaches the scanned
+building when it has no owner (an already-owned building is never taken away
+silently), records who decided, and sends the invitation. WhatsApp is delivered
+through the Evolution transport when configured; the e-mail is prepared as a
+`mailto:` because this product has no SMTP transport — the account exists either
+way.
+
+The QR generator lives in the repository (`src/lib/documents/qr.ts`, pure
+TypeScript + `node:zlib`) so a mark can be produced offline, with no external
+service. It is printed on quotes (`APP/DA/04/14`) and on the monthly maintenance
+sheet (`APP/DA/04/13`).
+
+### Third-party unit takeovers
+
+`/administration/ascenseurs` records a unit that is not yet part of the fleet:
+the **original manufacturer** is kept in `originBrand` (the closed `ElevatorBrand`
+enum only says `OTHER`). Creating a takeover opens an `INSPECTION` work order —
+the état des lieux — automatically. Validating it assigns the RMASC number
+`ASC-YYYY-NNNN` and its QR; validation is refused while an inspection order is
+still open. The QR opens the same public scan page as any other unit.
+
+### Contracts & SLA
+
+The commercial engagement lives in `Contract`, `ContractBuilding` and
+`ContractRevision`, governed by the pure rules in `src/lib/contracts/status.ts`
+(consumed by the API **and** the screens, never copied).
+
+- **Registry** `/administration/contrats`: filters by calculated status, SLA
+  tier and client; search by reference or client name; expiry badges at 60/30
+  days with the tacit-renewal marker; a **Décision requise** tab for in-force
+  contracts in the notice window (`NONE` and drafts excluded).
+- **Detail** `/administration/contrats/[id]`: calculated status, effective end
+  date, tier and its two commitments, renewal mode, covered buildings and the
+  revision journal. Actions (activate, resume, renew, suspend, terminate) are
+  offered only when `transitionRefusal` allows them; renewal requires a later
+  end date, termination a reason.
+- **Coverage** `GET /api/contracts/coverage`: the data behind the SLA badge on
+  `/ascenseurs`, `/ascenseurs/[id]` and the inspection card toolbar, and behind
+  the client portal's **Mes contrats & SLA** section. It carries no amount,
+  currency or client contact. A `BUILDING_OWNER` is scoped to the `clientId`
+  read from the session; the route accepts no client parameter.
+- **Renewal and alerts** `scripts/contracts-rollover.ts` and
+  `POST /api/cron/contracts-rollover` share `runContractsRollover`: tacit
+  renewals are materialised with a `TACIT_RENEWAL` revision (compare-and-swap
+  idempotence), and 60/30-day notifications go to management. `?dryRun=1` reads
+  and reports without writing. The route accepts `CONTRACTS_CRON_TOKEN` or a
+  management session.
+- **Rules harness** `npm run contracts:check` exercises the full transition
+  matrix, dates, renewals, alerts, decision window, journal and coverage
+  selection (179 cases). It is a script, not a test runner.
+
+Known limits: the batch is code, not a scheduler — nothing runs it until a cron,
+PM2 job or HTTP scheduler is configured; the alert thresholds are the fixed 60/30
+day constants, not each contract's `noticeDays`; and creating a contract from
+the UI still requires ADMIN because the client list it needs is ADMIN-only.
 
 ---
 
@@ -595,6 +667,49 @@ GET   /api/technician?technicianId=xxx   # managers/admins only
 A `FIELD_TECHNICIAN` always receives their own queue — the `technicianId`
 parameter is ignored for that role.
 
+### Contracts & SLA
+
+```bash
+GET   /api/contracts                       # managers/admins; status, slaTier, clientId, buildingId
+POST  /api/contracts                       # managers/admins; creates a DRAFT
+GET   /api/contracts/[id]                  # detail, revisions, calculated fields
+PATCH /api/contracts/[id]                  # status, tier, dates, buildings, commitments, termination
+GET   /api/contracts/coverage              # any session; owner-scoped; no amounts
+
+POST  /api/cron/contracts-rollover         # Bearer $CONTRACTS_CRON_TOKEN, or a management session
+POST  /api/cron/contracts-rollover?dryRun=1  # reads and reports, writes nothing
+```
+
+`GET /api/contracts` is the office registry. It returns the **calculated**
+`effectiveStatus`, `effectiveEndsAt` and `expiry` alongside the stored row, so
+the client never re-derives a rule. `GET /api/contracts/coverage` is the read
+model for badges and the client portal: tier, commitments and dates only, with
+no amount or contact. A `BUILDING_OWNER` is scoped to `session.user.id` and the
+route accepts no client parameter.
+
+`POST /api/cron/contracts-rollover` and `scripts/contracts-rollover.ts` share
+`runContractsRollover`. Tacit renewals are written with a compare-and-swap on
+the old `endsAt`, so two concurrent passes cannot write two revisions; the 60/30
+day alerts are deduplicated by a title carrying the term and the threshold. The
+route is exempt from the session gate at the middleware layer **for POST only**;
+the handler then requires the bearer token (constant-time comparison) or a
+management session.
+
+### Client onboarding (QR)
+
+```bash
+POST  /api/access-requests                 # public; writes a PENDING request
+GET   /api/access-requests?status=PENDING  # ADMIN; the queue
+PATCH /api/access-requests/[id]            # ADMIN; { "action": "APPROVE" | "REJECT" }
+```
+
+The POST is public because the person scanning a QR has no account — that is why
+they are asking. It writes a `PENDING` line and nothing else. Approval creates
+the `BUILDING_OWNER` with a generated password, attaches the scanned building
+when it has no owner, records the decision and returns the invitation (WhatsApp
+result plus a prepared `mailto:`). The password is returned once and never
+stored in clear.
+
 ---
 
 ## 🔧 IoT Simulator
@@ -698,7 +813,7 @@ Treat it as a design reference for a future ML microservice.
 
 ## 🗃️ Database Schema
 
-### Core Entities (23 models)
+### Core Entities (27 models)
 
 ```
 User ──┬── Session
@@ -724,15 +839,34 @@ Building ──┬── Elevator ──┬── ElevatorComponent ── Predi
 ```
 User ──┬── Quote ── QuoteLine          (devis, TVA 19 %, PDF APP/DA/04/14)
        ├── Invoice                      (facture figée et numérotée)
-       └── PartRequirement ── WorkOrder (demande de pièce, transmission magasin)
+       ├── PartRequirement ── WorkOrder (demande de pièce, transmission magasin)
+       ├── Contract ──┬── ContractBuilding ── Building
+       │              └── ContractRevision
+       └── AccessRequest (décideur / compte créé)
 
 WorkOrder ── WorkOrderRevision          (corrections journalisées du bureau)
+Elevator ── AccessRequest               (demandes déposées depuis le QR)
 ```
 
 `Invoice` **recopies** what it prints — client, site, works, parts, amount —
 instead of re-reading the work order. A reissued invoice must be identical to the
 one the client received, and every one of those values can change over time.
 `PartRequirement` is the opposite: it is a live request, and its state moves.
+
+`Contract` is the commercial engagement. Its stored `status` is not the whole
+truth: `effectiveStatus` and `effectiveEndsAt` are computed on read, so an
+`ACTIVE` row whose date has passed without renewal reads as `EXPIRED`, and a
+tacitly renewed `AUTO` contract ends on its next future term. The batch
+materialises that term and writes a `TACIT_RENEWAL` revision; every other
+change — date, tier, status, buildings, commitments — is journalised too.
+`ContractBuilding` is the selection of the client's portfolio the contract
+covers; `Building.slaTier` remains a fallback only for sites without a contract.
+
+`AccessRequest` is a QR scan turned into a pending line. It creates nothing by
+itself: `decidedBy` is the administrator who approved or rejected it, and
+`createdUser` is the account it produced. `Elevator.originBrand` preserves a
+third-party manufacturer, and `Elevator.rmascCode` (`ASC-2026-0001`) is assigned
+at takeover validation, never at creation.
 
 `IncidentReport` carries **two** relations to `User` — the client who reported
 the fault and the technician sent to it — so both are explicitly named
@@ -748,6 +882,11 @@ none.
 - **WorkOrderType**: PREVENTIVE, PREDICTIVE, CORRECTIVE, EMERGENCY, INSPECTION
 - **ComponentType**: TRACTION_MOTOR, BRAKE_ASSEMBLY, DOOR_OPERATOR, STEEL_ROPES, GUIDE_SHOES, CONTROLLER_BOARD, COUNTERWEIGHT, CABIN, HYDRAULIC_UNIT, SAFETY_GEAR, BUFFER, OTHER
 - **IncidentStatus**: ESCALATED, TECHNICIAN_ASSIGNED, IN_PROGRESS, CLOSED, RESOLVED_BY_CLIENT
+- **ContractStatus**: DRAFT, ACTIVE, SUSPENDED, TERMINATED, EXPIRED
+- **ContractRenewalMode**: AUTO (tacit renewal), MANUAL, NONE
+- **ContractRevisionKind**: CREATED, TIER_CHANGED, DATES_CHANGED, RENEWAL_CHANGED, STATUS_CHANGED, BUILDINGS_CHANGED, COMMITMENT_CHANGED, TACIT_RENEWAL
+- **AccessRequestStatus**: PENDING, APPROVED, REJECTED
+- **SLATier**: BASIC, STANDARD, PREMIUM, ENTERPRISE
 - **InspectionCheckResult**: PASS, FAIL, NEEDS_ATTENTION, NOT_APPLICABLE
 - **TechnicianStatus**: AVAILABLE, ON_JOB, OFF_DUTY, ON_LEAVE — carried by
   `User.status`, defaulting to `AVAILABLE`
@@ -829,6 +968,8 @@ orders assigned to them.
 | `npm run db:studio` | Open Prisma Studio |
 | `npm run simulate-iot` | Start the IoT telemetry simulator |
 | `npm run typecheck` | Run `tsc --noEmit` |
+| `npm run contracts:check` | Exercise every pure contract rule (179 cases; non-zero exit on failure) |
+| `npm run contracts:rollover` | Materialise tacit renewals and emit expiry alerts (`-- --dry-run` to preview) |
 | `npm run diagnose-auth` | Check accounts; `--fix` **resets demo passwords to `password123`** |
 | `npm run db:rotate-demo-passwords` | Replace every password still equal to `password123` (dry run by default; `--apply` to write) |
 | `npm run db:backfill-positions` | Backfill incident positions |
@@ -860,17 +1001,26 @@ production-ready in places where it is not yet:
   incident board. There is no WebSocket or SSE layer; an in-memory pub/sub stub
   that could never work across multiple instances has been deleted rather than
   left to imply otherwise.
-- **No automated tests and no CI.** There is no test runner configured. The
-  verification in this revision was `npm run typecheck`, `npm run lint`,
-  `npm run build`, and `scripts/pdf-golden.ts` for the invoice PDF. The pure
-  functions — `computeQuoteTotals`, `amountInWords`, `transitionRefusal`,
-  `boundsViolation`, `transmissionRefusal`, `buildStockSignature` — are exercised
-  by hand only, and several defects in this project were found that way rather
-  than by a suite.
-- **Contracts & SLA do not exist.** `SLATier` is a label on the building and
-  `ClientType` splits two portals; neither is a contract. There are no dates, no
-  renewal, no termination, no promised lead time and no penalty. The proposed
-  model and the decisions it needs are in `CONTRATS-SLA-CADRAGE.md`.
+- **No test runner and no CI.** There is still no jest/vitest/playwright. The
+  pure contract rules now have an executable harness —
+  `npm run contracts:check`, 179 cases covering the full transition matrix,
+  dates, renewals, alerts, the decision window, the revision journal and the
+  coverage selection — and it exits non-zero on the first divergence. It is a
+  script, not a framework: nothing runs it automatically, and the rest of the
+  pure functions (`computeQuoteTotals`, `amountInWords`, `boundsViolation`,
+  `transmissionRefusal`, `buildStockSignature`) remain exercised by hand only.
+- **The contract batch is code, not a schedule.** `POST
+  /api/cron/contracts-rollover` and `scripts/contracts-rollover.ts` materialise
+  tacit renewals and emit 60/30-day notifications, but nothing calls them until
+  a cron, PM2 job or HTTP scheduler is configured. The alert thresholds are the
+  fixed `EXPIRY_NOTICE_DAYS`/`EXPIRY_URGENT_DAYS` constants, not each
+  contract's `noticeDays`. The WhatsApp digest only covers alerts new to the
+  current pass, so a transport outage is not retried for an already-notified
+  term.
+- **Contract creation still needs ADMIN in the UI.** The form loads the client
+  list from `GET /api/clients`, which is ADMIN-only; a maintenance manager can
+  read the registry, the detail and the decision queue, but the create button
+  explains the refusal rather than opening an empty selector.
 - **The storekeeper link is unproven.** `/administration/magasinier` signs and
   sends a request to the stock application, but it has never exchanged a message
   with it: that application was not running, and `STOCK_API_*` is unset. A wrong

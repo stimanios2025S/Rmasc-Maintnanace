@@ -4,7 +4,9 @@
 > dépôt et de la production au dernier commit, ce qui reste à faire, les pièges
 > qui ont coûté du temps, et ce qui n'a pas pu être vérifié.
 
-*Dernière mise à jour : commit `11f2b6d`.*
+*Dernière mise à jour : après la livraison Contrats & SLA (Livraisons 1 à 6),
+QR d'embarquement client et reprise d'appareils tiers. Voir `git log -1` pour le
+commit exact.*
 
 ## État du dépôt
 
@@ -12,14 +14,17 @@
 |---|---|
 | Dépôt | `C:\Users\HP\Documents\Rmasc-Maintnanace-main\Rmasc-Maintnanace-main` |
 | Branche | `main`, synchronisée avec `origin/main` |
-| Dernier commit local | `11f2b6d` — cadrage Contrats & SLA |
-| Build déployé en production | **`9ed71d9`** — l'écran magasinier |
-| Tests | **aucun** (ni jest, ni vitest, ni playwright, ni cypress) |
+| Dernier commit local | `git log -1` — voir la ligne du haut |
+| Build déployé en production | **`9ed71d9`** — l'écran magasinier (aucune des livraisons ci-dessous n'est déployée) |
+| Tests | harnais de règles pures `npm run contracts:check` (179 cas) ; **aucun runner** (ni jest, ni vitest, ni playwright, ni cypress) |
 | Base de données locale | **aucune** (ni PostgreSQL, ni Docker, ni `psql`) |
 | Migrations Prisma | **aucune** — le projet vit par `db push` |
 
-`da99ff7` (raccordement du PDF de facture à la charte) et `11f2b6d` (cadrage)
-sont **locaux, non déployés**.
+Depuis `9ed71d9`, **tout ce qui suit est local et non déployé** : le PDF de
+facture raccordé à la charte, les contrats & SLA, le QR d'embarquement et la
+reprise d'appareils tiers. Le serveur de production n'a reçu aucun de ces
+commits, et **aucune commande base de données n'a été exécutée** pour eux : le
+schéma local n'est même pas poussé.
 
 ### Deux commandes gouvernent tout
 
@@ -35,7 +40,18 @@ Les deux gardes sont écrites dans `src/lib/auth/open-access.ts:76` et
 
 ---
 
-## Ce que cette session a livré
+## Ce que les sessions récentes ont livré
+
+| Commit | Objet |
+|---|---|
+| `6175086` | Navigation : cinq groupes repliables au lieu de dix-neuf entrées |
+| `769f59c` | QR : embarquement client, reprise d'appareils tiers, QR sur les fiches |
+| `4cfbfa3` | Contrats & SLA : registre, fiche, formulaire de création |
+| `4d796a1` | Contrats : reconduction tacite matérialisée et alertes d'échéance |
+| `6c171ae` | Contrats : badge dynamique et portail client |
+| ce commit | Harnais de règles pures (179 cas), documentation, URL locales |
+
+Les livraisons antérieures restent valables :
 
 | Commit | Objet |
 |---|---|
@@ -63,6 +79,80 @@ Correctifs appliqués :
 **Reste ouvert :** `scripts/diagnose-auth.ts --fix` remet `password123` sur les
 comptes de démonstration. C'est probablement l'origine de l'état constaté.
 Ce script n'est **pas** gardé. Ne le lancez pas en production.
+
+---
+
+## Les trois modules livrés depuis
+
+### 1. Embarquement client par QR
+
+- **`/scan/[elevatorId]`** est publique. Elle affiche l'état de l'appareil
+  (code, marque/modèle, statut, immeuble, dernière visite) et un bouton
+  « Demander un accès client » qui ouvre un formulaire léger (prénom, nom,
+  téléphone, e-mail, rôle : Syndic / Promoteur / Propriétaire).
+- Le POST public est `POST /api/access-requests` : il écrit une ligne `PENDING`
+  et **n'ouvre rien**. Un doublon (même appareil, même adresse, encore en
+  attente) est refusé.
+- Le bureau lit la file dans **`/administration/clients/demandes`**.
+  « Approuver & créer le compte » crée un `BUILDING_OWNER` avec mot de passe
+  engendré, rattache l'immeuble scanné **si personne ne le possède déjà**, écrit
+  la décision et prépare l'invitation.
+- L'invitation part sur WhatsApp via Evolution si `EVOLUTION_*` est configuré.
+  Il n'existe **aucun transport SMTP** : le courriel est un lien `mailto:`
+  préparé, pas un envoi. Le compte existe dans tous les cas.
+- Le QR est généré par `src/lib/documents/qr.ts`, écrit dans le dépôt (pur
+  TypeScript + `node:zlib`) pour fonctionner hors ligne. Il est imprimé sur le
+  devis (`APP/DA/04/14`) et la fiche d'entretien (`APP/DA/04/13`).
+- Middleware : `/scan/:path*` et `POST /api/access-requests` sont publics ;
+  `GET /api/access-requests` et l'approbation restent ADMIN.
+
+### 2. Reprise d'appareils tiers
+
+- **`/administration/ascenseurs`** enregistre un appareil qui n'est pas encore
+  du parc. Le champ `originBrand` garde le constructeur d'origine (Otis, KONE,
+  Schindler…), que l'énumération fermée `ElevatorBrand` ne sait pas dire.
+- `POST /api/elevators` avec `takeover: true` crée automatiquement un bon
+  `INSPECTION` « état des lieux », ouvert. Une erreur de création du bon ne
+  défait pas la fiche — elle est signalée.
+- `POST /api/elevators/[id]/takeover` valide la reprise : matricule
+  `ASC-AAAA-NNNN` (suite annuelle, réessai sur collision) et QR. Refusé tant
+  qu'un bon d'inspection est ouvert, avec son numéro dans le message.
+
+### 3. Contrats & SLA
+
+- Modèle : `Contract`, `ContractBuilding` (sélection du parc du client),
+  `ContractRevision`. L'état **stocké** n'est pas l'état réel :
+  `effectiveStatus` et `effectiveEndsAt` sont calculés à la lecture
+  (reconduction tacite comprise). Toutes les règles pures sont dans
+  `src/lib/contracts/status.ts`, lues par la route **et** les écrans.
+- **`/administration/contrats`** : registre filtrable (statut calculé, palier,
+  client), recherche par référence/client, badges d'échéance 60/30 j et mention
+  de reconduction tacite, onglet **Décision requise**. Création d'un brouillon
+  (client, immeubles filtrés sur son parc, dates, palier, reconduction, montant).
+- **`/administration/contrats/[id]`** : statut calculé, date de fin effective,
+  palier et délais, renouvellement, immeubles, journal des révisions. Les actions
+  (activer, reprendre, renouveler, suspendre, résilier) ne sont offertes que si
+  `transitionRefusal` les autorise ; un renouvellement exige une date
+  postérieure, une résiliation un motif.
+- **`GET /api/contracts/coverage`** : lecture dédiée aux badges et au portail
+  client — palier, délais, dates, immeubles, **sans montant ni coordonnées**.
+  Un `BUILDING_OWNER` est cloisonné sur son `clientId` lu dans la session.
+- Badge `ContractSlaBadge` sur `/ascenseurs`, `/ascenseurs/[id]` et la barre de
+  `/rapports-inspection/[id]` (masqué à l'impression). Le portail client
+  `/client` affiche **Mes contrats & SLA** pour les comptes contractualisés.
+- Batch : `scripts/contracts-rollover.ts` et
+  `POST /api/cron/contracts-rollover` partagent `runContractsRollover`.
+  Reconduction tacite matérialisée avec révision `TACIT_RENEWAL` (idempotence
+  par compare-and-swap), notifications 60/30 j dédoublonnées par terme et palier,
+  résumé WhatsApp optionnel. La route accepte `CONTRACTS_CRON_TOKEN` (temps
+  constant) ou une session de gestion ; `?dryRun=1` n'écrit rien.
+- Harnais : `npm run contracts:check` exécute **179 cas** (matrice complète des
+  25 transitions, dates, reconductions, alertes, file de décision, journal,
+  sélection de couverture). Il sort en erreur au premier écart. Ce n'est **pas**
+  un runner de tests.
+- Limites connues : le batch n'est pas planifié ; les seuils sont les constantes
+  60/30, pas le `noticeDays` du contrat ; la création depuis l'UI exige ADMIN
+  (la liste des clients est ADMIN-only).
 
 ---
 
@@ -141,21 +231,26 @@ public), `STOCK_API_KEY` et `STOCK_API_SECRET` (les `EXTERNAL_API_*` du stock).
 
 1. **Neutraliser `diagnose-auth.ts --fix` en production.** Petit, urgent.
    Protège la rotation des mots de passe.
-2. **Harnais de tests.** Rien n'existe. Les fonctions pures rapporteraient le
-   plus : `computeQuoteTotals`, `amountInWords`, `quoteTransitionRefusal`,
-   `transitionRefusal`, `boundsViolation`, `transmissionRefusal`,
-   `buildStockSignature`, `stockPriorityFor`.
+2. **Runner de tests.** Le harnais `contracts:check` couvre les règles pures des
+   contrats (179 cas) mais rien d'autre n'est exécuté automatiquement. Les
+   fonctions pures qui rapporteraient le plus : `computeQuoteTotals`,
+   `amountInWords`, `quoteTransitionRefusal`, `boundsViolation`,
+   `transmissionRefusal`, `buildStockSignature`, `stockPriorityFor`. Aucune CI
+   n'existe.
 3. **Durcissement production** : téléphone d'escalade, Evolution/WhatsApp,
    jeton IoT, sauvegarde planifiée.
 4. **Exercer réellement la liaison au magasin central** (voir ci-dessus).
-5. **Contrats & SLA** — `CONTRATS-SLA-CADRAGE.md`. Le modèle, la machine à
-   états et les écrans y sont proposés ; **cinq décisions produit** attendent une
-   validation avant le code (barème SLA, granularité, renouvellement par défaut,
-   périmètre des pénalités, emplacement de `SLATier`).
-6. **Adopter `prisma migrate`** avant la prochaine évolution de schéma.
-7. **`GET /api/telemetry`** : le supprimer ou l'exposer.
-8. **README** — mis à jour au commit `11f2b6d` avec les modules livrés. À tenir
-   à jour à chaque module.
+5. **Planifier le batch contrats.** Le code existe
+   (`npm run contracts:rollover`, `POST /api/cron/contracts-rollover`) mais rien
+   ne l'appelle. Poser un cron ou un appel HTTP avec `CONTRACTS_CRON_TOKEN`, et
+   vérifier d'abord par `--dry-run` / `?dryRun=1`.
+6. **Décider du seuil d'alerte par contrat.** Les alertes utilisent les
+   constantes 60/30 jours, pas le `noticeDays` du contrat ; la cadrage prévoyait
+   ce dernier. Changer la règle touche `expiryAlert`, les fiches et les tests.
+7. **Adopter `prisma migrate`** avant la prochaine évolution de schéma.
+8. **`GET /api/telemetry`** : le supprimer ou l'exposer.
+9. **README / PASSATION** — à tenir à jour à chaque module. Les deux décrivent
+   désormais le QR, les reprises et les contrats.
 
 ---
 
@@ -204,12 +299,44 @@ produit est vide et l'erreur ne mentionne pas la cause.
 cd C:\Users\HP\Documents\Rmasc-Maintnanace-main\Rmasc-Maintnanace-main
 npm.cmd run typecheck
 npx.cmd next lint --dir src
+npm.cmd run contracts:check
 npm.cmd run build
 ```
 
 Sans base de données, `npm.cmd run dev` ouvre l'application en administrateur
 (`OPEN_ACCESS="true"`) — **la page de connexion est un cul-de-sac** : le provider
-credentials interroge PostgreSQL, absent.
+credentials interroge PostgreSQL, absent. Les écrans qui lisent des données
+réelles (contrats, demandes d'accès, reprises) répondront alors 503 ou vide :
+c'est attendu, pas une régression du code.
+
+### Les adresses locales, écran par écran
+
+Base : `http://localhost:3000` (le port de production est 3010, le `.env` local
+utilise 3000).
+
+| Écran | Adresse |
+|---|---|
+| Connexion | `/connexion` |
+| Tableau de bord | `/tableau-de-bord` |
+| Parc d'ascenseurs (badge SLA) | `/ascenseurs` |
+| Fiche ascenseur (badge SLA) | `/ascenseurs/<id>` |
+| Carte du parc | `/carte` |
+| Bons de travail | `/bons-de-travail` |
+| Portail technicien | `/technicien` |
+| Alertes / seuils | `/alertes`, `/seuils` |
+| Entretien programmé | `/entretien` |
+| Rapports d'inspection (badge SLA dans la barre) | `/rapports-inspection`, `/rapports-inspection/<id>` |
+| Devis / factures | `/administration/devis`, `/factures` |
+| **Contrats & SLA** | `/administration/contrats`, `/administration/contrats/<id>` |
+| **Décision requise** | `/administration/contrats` → onglet « Décision requise » |
+| **Reprises d'appareils tiers** | `/administration/ascenseurs` |
+| **Demandes d'accès QR** | `/administration/clients/demandes` |
+| **Page publique du QR** | `/scan/<elevatorId>` |
+| **Portail client — Mes contrats & SLA** | `/client` (compte `BUILDING_OWNER`) |
+| Clients / personnel | `/administration/clients`, `/administration/personnel` |
+| Pièces / magasinier | `/administration/pieces`, `/administration/magasinier` |
+| Devis du client | `/client/devis` |
+| Fiche technique (prospect) | `/client/fiche-technique` |
 
 Comptes de démonstration d'un seed frais (`prisma/seed.ts`) : mot de passe
 commun `password123`, comptes `admin@`, `manager@`, `tech1@`, `tech2@`,
