@@ -309,34 +309,76 @@ credentials interroge PostgreSQL, absent. Les écrans qui lisent des données
 réelles (contrats, demandes d'accès, reprises) répondront alors 503 ou vide :
 c'est attendu, pas une régression du code.
 
-### Les adresses locales, écran par écran
+### Les adresses locales, par rubrique
 
 Base : `http://localhost:3000` (le port de production est 3010, le `.env` local
-utilise 3000).
+utilise 3000). Les `<id>` s'obtiennent en cliquant une ligne depuis le registre
+correspondant ; `<elevatorId>` depuis `/ascenseurs` ou depuis le QR imprimé.
 
-| Écran | Adresse |
+#### Accès
+
+| Adresse | Ce qu'on y vérifie |
 |---|---|
-| Connexion | `/connexion` |
-| Tableau de bord | `/tableau-de-bord` |
-| Parc d'ascenseurs (badge SLA) | `/ascenseurs` |
-| Fiche ascenseur (badge SLA) | `/ascenseurs/<id>` |
-| Carte du parc | `/carte` |
-| Bons de travail | `/bons-de-travail` |
-| Portail technicien | `/technicien` |
-| Alertes / seuils | `/alertes`, `/seuils` |
-| Entretien programmé | `/entretien` |
-| Rapports d'inspection (badge SLA dans la barre) | `/rapports-inspection`, `/rapports-inspection/<id>` |
-| Devis / factures | `/administration/devis`, `/factures` |
-| **Contrats & SLA** | `/administration/contrats`, `/administration/contrats/<id>` |
-| **Décision requise** | `/administration/contrats` → onglet « Décision requise » |
-| **Reprises d'appareils tiers** | `/administration/ascenseurs` |
-| **Demandes d'accès QR** | `/administration/clients/demandes` |
-| **Page publique du QR** | `/scan/<elevatorId>` |
-| **Portail client — Mes contrats & SLA** | `/client` (compte `BUILDING_OWNER`) |
-| Clients / personnel | `/administration/clients`, `/administration/personnel` |
-| Pièces / magasinier | `/administration/pieces`, `/administration/magasinier` |
-| Devis du client | `/client/devis` |
-| Fiche technique (prospect) | `/client/fiche-technique` |
+| `http://localhost:3000/` | Redirige vers le tableau de bord |
+| `http://localhost:3000/connexion` | Page de connexion (cul-de-sac sans base, voir ci-dessus) |
+
+#### Supervision
+
+| Adresse | Ce qu'on y vérifie |
+|---|---|
+| `http://localhost:3000/tableau-de-bord` | KPI du parc, santé, liste d'attention, alertes |
+| `http://localhost:3000/carte` | Carte géolocalisée, cinq niveaux d'attention |
+| `http://localhost:3000/alertes` | File de triage, acquittement et résolution en masse |
+| `http://localhost:3000/seuils` | Règles d'alerte par métrique |
+| `http://localhost:3000/ascenseurs` | Parc et **badge SLA dynamique** par appareil |
+| `http://localhost:3000/ascenseurs/<id>` | Fiche appareil et **badge SLA** dans l'en-tête |
+| `http://localhost:3000/fiches-techniques` | Fiches techniques du parc |
+
+#### Interventions
+
+| Adresse | Ce qu'on y vérifie |
+|---|---|
+| `http://localhost:3000/bons-de-travail` | Registre des bons, dispatch |
+| `http://localhost:3000/bons-de-travail/<id>` | Détail, révisions, validation de fin d'intervention |
+| `http://localhost:3000/entretien` | Programme préventif, échéances, planification |
+| `http://localhost:3000/rapports-inspection` | Registre des inspections |
+| `http://localhost:3000/rapports-inspection/<id>` | Fiche `APP/DA/04/13` ; **badge SLA** dans la barre, absent à l'impression |
+| `http://localhost:3000/technicien` | Portail terrain : file, pointage géolocalisé, rapport, signature |
+| `http://localhost:3000/administration/incidents` | Incidents signalés par les clients, escalade |
+
+#### Administration
+
+| Adresse | Ce qu'on y vérifie |
+|---|---|
+| `http://localhost:3000/administration/contrats` | Registre des contrats, filtres, badges 60/30 j, onglet **Décision requise** |
+| `http://localhost:3000/administration/contrats/<id>` | Fiche contrat : statut calculé, date effective, palier, délais, immeubles, journal des révisions |
+| `http://localhost:3000/administration/ascenseurs` | **Reprise d'appareils tiers**, bon d'état des lieux, matricule `ASC-AAAA-NNNN` + QR |
+| `http://localhost:3000/administration/clients` | Comptes clients et immeubles |
+| `http://localhost:3000/administration/clients/<id>` | Fiche client, parc rattaché, accès générés |
+| `http://localhost:3000/administration/clients/demandes` | **Demandes d'accès QR** : approuver, créer le compte, invitation |
+| `http://localhost:3000/administration/devis` | Registre des devis |
+| `http://localhost:3000/administration/devis/<id>` | Édition des lignes, TVA 19 %, PDF `APP/DA/04/14` |
+| `http://localhost:3000/administration/personnel` | Comptes du personnel et identifiants |
+| `http://localhost:3000/administration/pieces` | Demandes de pièces : valider → commander → poser |
+| `http://localhost:3000/administration/magasinier` | Réception magasin (module non modifié) |
+| `http://localhost:3000/factures` | Factures figées, état de règlement, PDF |
+
+#### Portail Client
+
+| Adresse | Ce qu'on y vérifie |
+|---|---|
+| `http://localhost:3000/client` | Portail contractuel : **Mes contrats & SLA**, urgences, incidents, factures |
+| `http://localhost:3000/client/devis` | Devis du client |
+| `http://localhost:3000/client/fiche-technique` | Fiche technique du prospect |
+
+#### Scan QR
+
+| Adresse | Ce qu'on y vérifie |
+|---|---|
+| `http://localhost:3000/scan/<elevatorId>` | Page **publique** : état de l'appareil et formulaire de demande d'accès (`PENDING`) |
+
+Le traitement bureau de ces demandes se fait dans
+`http://localhost:3000/administration/clients/demandes` (rubrique Administration).
 
 Comptes de démonstration d'un seed frais (`prisma/seed.ts`) : mot de passe
 commun `password123`, comptes `admin@`, `manager@`, `tech1@`, `tech2@`,
