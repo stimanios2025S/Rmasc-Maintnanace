@@ -1,13 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Check, Loader2, PackageSearch, Printer, RefreshCw } from "lucide-react";
+import {
+  Check,
+  FileText,
+  Loader2,
+  PackageSearch,
+  Plus,
+  Printer,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { enumLabel } from "@/lib/ui/enum-labels";
+import { formatDzd } from "@/lib/ui/money";
 import { awaitsDecision, transitionRefusal } from "@/lib/parts/status";
 import type { PartRequirementStatus } from "@/types";
 
@@ -51,6 +67,11 @@ interface PartRow {
   fulfilledAt: string | null;
   workOrderId: string;
   requestedBy: { id: string; name: string } | null;
+  /** La réserve locale, quand la pièce y figure. `null` = inconnue. */
+  stockAvailable: number | null;
+  stockLocation: string | null;
+  /** Le motif d'un refus, saisi par le magasinier. */
+  decisionNote: string | null;
   workOrder: {
     orderNumber: string;
     title: string;
@@ -63,6 +84,24 @@ interface PartRow {
 }
 
 /**
+ * Un article de la réserve physique.
+ *
+ * Distinct d'une demande : il n'a ni bon de travail ni demandeur, seulement
+ * une quantité et un emplacement.
+ */
+interface StockRow {
+  id: string;
+  reference: string;
+  name: string;
+  category: string | null;
+  quantity: number;
+  reorderThreshold: number;
+  unitPrice: string | number | null;
+  location: string | null;
+  updatedAt: string;
+}
+
+/**
  * Les onglets, dans l'ordre du travail.
  *
  * « En attente » et « validées » d'abord : ce sont les deux états qui appellent
@@ -71,7 +110,10 @@ interface PartRow {
  */
 const STATUS_FILTERS: { key: string; label: string }[] = [
   { key: "", label: "Toutes" },
+  { key: "PENDING_STOCK_CHECK", label: "À vérifier" },
   { key: "PENDING", label: "À décider" },
+  { key: "RESERVED", label: "Réservées" },
+  { key: "ORDER_REQUIRED", label: "Ruptures" },
   { key: "APPROVED", label: "À commander" },
   { key: "ORDERED", label: "Commandées" },
   { key: "FULFILLED", label: "Posées" },
@@ -81,7 +123,13 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
 const STATUS_BADGE: Record<PartRequirementStatus, string> = {
   PENDING:
     "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  PENDING_STOCK_CHECK:
+    "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   APPROVED: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
+  RESERVED:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  ORDER_REQUIRED:
+    "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
   ORDERED:
     "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300",
   FULFILLED:
@@ -97,6 +145,32 @@ const SECONDARY = `${ACTION} border border-gray-300 text-gray-700 hover:bg-gray-
 const QUIET = `${ACTION} text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800`;
 
 export default function PiecesAFournirPage() {
+  /**
+   * Les deux onglets de la console.
+   *
+   * « Demandes de pièces » est le circuit quotidien ; « Réception & réserve
+   * physique » montre ce que le magasin a réellement en rayon. Les deux se
+   * lisent ensemble — une demande ne se réserve que contre une quantité — mais
+   * ce sont deux questions, donc deux onglets.
+   */
+  const [tab, setTab] = useState<"requests" | "stock">("requests");
+  const [stockItems, setStockItems] = useState<StockRow[]>([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockError, setStockError] = useState("");
+  const [showStockForm, setShowStockForm] = useState(false);
+  const [stockSaving, setStockSaving] = useState(false);
+  const [stockFormError, setStockFormError] = useState("");
+  const [stockNotice, setStockNotice] = useState("");
+  const [stockForm, setStockForm] = useState({
+    name: "",
+    reference: "",
+    category: "",
+    quantity: "0",
+    reorderThreshold: "0",
+    unitPrice: "",
+    location: "",
+  });
+
   const [status, setStatus] = useState("");
   const [rows, setRows] = useState<PartRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,6 +178,14 @@ export default function PiecesAFournirPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** demande de pièce → devis créé, pour remplacer le bouton par un lien. */
+  const [quoteResults, setQuoteResults] = useState<
+    Record<string, { id: string | null; number: string }>
+  >({});
+  const [quotingId, setQuotingId] = useState<string | null>(null);
+  /** La demande dont on saisit le motif de refus, et le motif en cours. */
+  const [rejectTarget, setRejectTarget] = useState<PartRow | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const load = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -131,6 +213,33 @@ export default function PiecesAFournirPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // La réserve n'est chargée qu'à l'ouverture de son onglet : la console
+  // quotidienne ne doit pas payer une requête qu'elle n'affiche pas.
+  useEffect(() => {
+    if (tab !== "stock" || stockItems.length > 0) return;
+
+    let cancelled = false;
+    setStockLoading(true);
+    setStockError("");
+
+    fetch("/api/stock")
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((payload) => {
+        if (cancelled) return;
+        setStockItems(Array.isArray(payload?.data) ? payload.data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setStockError("Impossible de charger la réserve.");
+      })
+      .finally(() => {
+        if (!cancelled) setStockLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, stockItems.length]);
 
   async function decide(
     row: PartRow,
@@ -175,6 +284,102 @@ export default function PiecesAFournirPage() {
   }
 
   /**
+   * Le geste du magasinier : réserver, constater la rupture, refuser.
+   *
+   * Le refus passe par une saisie de motif — un refus muet oblige le technicien
+   * à rappeler pour savoir quoi corriger, ce qui est exactement ce que ce
+   * circuit existe pour éviter.
+   */
+  async function act(
+    row: PartRow,
+    action: "reserve" | "order" | "reject",
+    reason?: string
+  ) {
+    setBusyId(row.id);
+    setActionError(null);
+    setNotice(null);
+
+    try {
+      const res = await fetch("/api/parts-replacement", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: row.id,
+          action,
+          ...(reason ? { reason } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          body?.error ?? body?.message ?? "L'action a été refusée."
+        );
+      }
+
+      const verb =
+        action === "reserve"
+          ? "pièce réservée, le technicien est prévenu"
+          : action === "order"
+            ? "passée en commande fournisseur"
+            : "demande refusée";
+      setNotice(`${row.number} — ${verb}.`);
+      setRejectTarget(null);
+      setRejectReason("");
+      await load({ silent: true });
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "L'action a échoué.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /**
+   * Transforme une demande validée en devis.
+   *
+   * La route écrit le devis, l'immeuble, l'appareil et le besoin à partir de la
+   * demande : rien n'est ressaisi, donc rien ne peut diverger. Elle est
+   * idempotente — un double clic renvoie l'offre déjà créée plutôt que d'en
+   * ouvrir une seconde.
+   */
+  async function createQuoteForPart(row: PartRow) {
+    setQuotingId(row.id);
+    setActionError(null);
+    setNotice(null);
+
+    try {
+      const res = await fetch(`/api/part-requirements/${row.id}/quote`, {
+        method: "POST",
+      });
+      const body = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(
+          body?.error ?? body?.message ?? "Le devis n'a pas pu être créé."
+        );
+      }
+
+      const data = body?.data;
+      setQuoteResults((current) => ({
+        ...current,
+        [row.id]: { id: data.quoteId ?? null, number: data.number },
+      }));
+      setNotice(
+        `${data.number} — devis ${
+          data.alreadyExists ? "déjà créé" : "créé"
+        } pour ${row.number}.${
+          body?.demo ? " Mode démonstration : le devis n'a pas été enregistré en base." : " L'équipe technique est prévenue."
+        }`
+      );
+    } catch (e) {
+      setActionError(
+        e instanceof Error ? e.message : "Le devis n'a pas pu être créé."
+      );
+    } finally {
+      setQuotingId(null);
+    }
+  }
+
+  /**
    * Le nombre de demandes qui attendent une décision, dans la vue courante.
    *
    * Le test passe par `awaitsDecision` et non par `status === "PENDING"` : c'est
@@ -187,6 +392,468 @@ export default function PiecesAFournirPage() {
     () => rows.filter((row) => awaitsDecision(row.status)).length,
     [rows]
   );
+
+  const tabsBar = (
+    <div
+      role="tablist"
+      aria-label="Console magasin"
+      className="flex gap-1 border-b border-gray-200 dark:border-gray-800"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "requests"}
+        onClick={() => setTab("requests")}
+        className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold transition-colors ${
+          tab === "requests"
+            ? "border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-400"
+            : "border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+        }`}
+      >
+        Demandes de pièces
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "stock"}
+        onClick={() => setTab("stock")}
+        className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold transition-colors ${
+          tab === "stock"
+            ? "border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-400"
+            : "border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+        }`}
+      >
+        Réception &amp; Réserve physique
+      </button>
+    </div>
+  );
+
+  async function createStockItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setStockFormError("");
+    setStockNotice("");
+
+    const quantity = Number.parseInt(stockForm.quantity, 10);
+    const reorderThreshold = Number.parseInt(stockForm.reorderThreshold, 10);
+    const unitPrice = stockForm.unitPrice.trim()
+      ? Number(stockForm.unitPrice.replace(",", "."))
+      : undefined;
+
+    if (!stockForm.name.trim() || !stockForm.reference.trim()) {
+      setStockFormError("Le nom et la référence sont obligatoires.");
+      return;
+    }
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      setStockFormError("La quantité doit être un entier positif ou nul.");
+      return;
+    }
+    if (!Number.isInteger(reorderThreshold) || reorderThreshold < 0) {
+      setStockFormError("Le seuil critique doit être un entier positif ou nul.");
+      return;
+    }
+    if (unitPrice !== undefined && (!Number.isFinite(unitPrice) || unitPrice < 0)) {
+      setStockFormError("Le prix unitaire doit être un montant positif.");
+      return;
+    }
+
+    setStockSaving(true);
+    try {
+      const res = await fetch("/api/stock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: stockForm.name.trim(),
+          reference: stockForm.reference.trim(),
+          category: stockForm.category.trim() || undefined,
+          quantity,
+          reorderThreshold,
+          unitPrice,
+          location: stockForm.location.trim() || undefined,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message =
+          typeof payload?.error === "string"
+            ? payload.error
+            : payload?.error?.message;
+        throw new Error(message ?? `La création a échoué (${res.status}).`);
+      }
+
+      const created = payload?.data as StockRow | undefined;
+      if (created) {
+        setStockItems((current) =>
+          [...current, created].sort((a, b) => a.name.localeCompare(b.name, "fr"))
+        );
+      }
+      setShowStockForm(false);
+      setStockForm({
+        name: "",
+        reference: "",
+        category: "",
+        quantity: "0",
+        reorderThreshold: "0",
+        unitPrice: "",
+        location: "",
+      });
+      setStockNotice(
+        payload?.demo === true
+          ? "Référence créée en mode démonstration — non enregistrée en base."
+          : `Référence ${created?.reference ?? ""} ajoutée à la réserve.`
+      );
+    } catch (err) {
+      setStockFormError(
+        err instanceof Error ? err.message : "La création a échoué."
+      );
+    } finally {
+      setStockSaving(false);
+    }
+  }
+
+  if (tab === "stock") {
+    return (
+      <div className="space-y-6">
+        {tabsBar}
+
+        <Card className="p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Réserve physique du magasin
+              </h2>
+              <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                Ce que le magasinier a sous la main. Une réservation décrémente
+                cette quantité.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStockForm(true);
+                  setStockFormError("");
+                  setStockNotice("");
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Nouvelle référence
+              </button>
+              <Link
+                href="/administration/magasinier"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                Réception magasin central
+              </Link>
+            </div>
+          </div>
+
+          {stockNotice && (
+            <p
+              role="status"
+              className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+            >
+              {stockNotice}
+            </p>
+          )}
+
+          {showStockForm && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="nouvelle-reference-titre"
+              onClick={() => setShowStockForm(false)}
+            >
+              <div
+                className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-800 dark:bg-gray-900"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2
+                      id="nouvelle-reference-titre"
+                      className="text-lg font-semibold text-gray-900 dark:text-white"
+                    >
+                      Nouvelle référence
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      Un article reçu au magasin et suivi dans la réserve
+                      physique.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowStockForm(false)}
+                    aria-label="Fermer"
+                    className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <form onSubmit={createStockItem} className="space-y-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block sm:col-span-2">
+                      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Nom de l&apos;article <span className="text-red-500">*</span>
+                      </span>
+                      <input
+                        value={stockForm.name}
+                        onChange={(event) =>
+                          setStockForm((current) => ({
+                            ...current,
+                            name: event.target.value,
+                          }))
+                        }
+                        required
+                        placeholder="ex. : Variateur Fuji 15 kW"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Référence <span className="text-red-500">*</span>
+                      </span>
+                      <input
+                        value={stockForm.reference}
+                        onChange={(event) =>
+                          setStockForm((current) => ({
+                            ...current,
+                            reference: event.target.value,
+                          }))
+                        }
+                        required
+                        placeholder="FUJI-VVVF-15"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Catégorie
+                      </span>
+                      <input
+                        value={stockForm.category}
+                        onChange={(event) =>
+                          setStockForm((current) => ({
+                            ...current,
+                            category: event.target.value,
+                          }))
+                        }
+                        placeholder="Électronique, portes, câbles…"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Quantité
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={stockForm.quantity}
+                        onChange={(event) =>
+                          setStockForm((current) => ({
+                            ...current,
+                            quantity: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Seuil critique
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={stockForm.reorderThreshold}
+                        onChange={(event) =>
+                          setStockForm((current) => ({
+                            ...current,
+                            reorderThreshold: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Prix unitaire (DZD)
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={stockForm.unitPrice}
+                        onChange={(event) =>
+                          setStockForm((current) => ({
+                            ...current,
+                            unitPrice: event.target.value,
+                          }))
+                        }
+                        placeholder="145000"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                      />
+                    </label>
+                    <label className="block sm:col-span-2">
+                      <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Emplacement casier
+                      </span>
+                      <input
+                        value={stockForm.location}
+                        onChange={(event) =>
+                          setStockForm((current) => ({
+                            ...current,
+                            location: event.target.value,
+                          }))
+                        }
+                        placeholder="Allée B · radeau 1"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                      />
+                    </label>
+                  </div>
+
+                  {stockFormError && (
+                    <p
+                      role="alert"
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                    >
+                      {stockFormError}
+                    </p>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowStockForm(false)}
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={stockSaving}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {stockSaving ? (
+                        <Loader2
+                          className="h-4 w-4 animate-spin"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Plus className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      Ajouter la référence
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {stockLoading ? (
+            <p className="mt-4 text-sm text-gray-500">Chargement de la réserve…</p>
+          ) : stockError ? (
+            <p role="alert" className="mt-4 text-sm font-medium text-red-700 dark:text-red-400">
+              {stockError}
+            </p>
+          ) : stockItems.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+              Aucun article en réserve. Lancez{" "}
+              <code className="rounded bg-gray-100 px-1 py-0.5 text-xs dark:bg-gray-800">
+                npx tsx scripts/seed-stock.ts
+              </code>{" "}
+              pour amorcer un catalogue de démonstration.
+            </p>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-800">
+                    {[
+                      "Référence",
+                      "Désignation",
+                      "Catégorie",
+                      "En réserve",
+                      "Seuil",
+                      "Prix unitaire",
+                      "Emplacement",
+                      "État",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {stockItems.map((item) => {
+                    const out = item.quantity === 0;
+                    const critical =
+                      !out && item.quantity < item.reorderThreshold;
+                    const low = !out && item.quantity <= item.reorderThreshold;
+                    return (
+                      <tr key={item.id}>
+                        <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-300">
+                          {item.reference}
+                        </td>
+                        <td className="px-3 py-2 text-sm font-medium text-gray-900 dark:text-white">
+                          {item.name}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-gray-500">
+                          {item.category ?? "—"}
+                        </td>
+                        <td className="px-3 py-2 text-sm font-bold text-gray-900 dark:text-white">
+                          {item.quantity}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-gray-500">
+                          {item.reorderThreshold}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {formatDzd(item.unitPrice) ?? "—"}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-gray-500">
+                          {item.location ?? "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                              out
+                                ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                                : critical
+                                  ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                                  : low
+                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                                    : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                            }`}
+                          >
+                            {out
+                              ? "Rupture"
+                              : critical
+                                ? "Stock critique"
+                                : low
+                                  ? "Stock bas"
+                                  : "En réserve"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+    );
+  }
 
   if (loading && rows.length === 0) {
     return (
@@ -202,6 +869,8 @@ export default function PiecesAFournirPage() {
 
   return (
     <div className="space-y-6">
+      {tabsBar}
+
       <Card className="p-5">
         <div className="flex flex-wrap items-center gap-3">
           <span className="w-20 flex-none text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
@@ -271,8 +940,14 @@ export default function PiecesAFournirPage() {
 
       {rows.length === 0 ? (
         <EmptyState
-          title="Aucune demande dans ce filtre"
-          hint="Une demande de pièce s'ouvre depuis un bon de travail, sur le terrain."
+          icon={PackageSearch}
+          title="Aucune demande de pièce"
+          description="Une demande s'ouvre depuis une intervention, sur le terrain : le technicien signale la pièce manquante, le bureau la valide puis la commande."
+          action={{
+            label: "Voir les interventions",
+            href: "/bons-de-travail",
+            variant: "secondary",
+          }}
         />
       ) : (
         <ul className="space-y-3">
@@ -355,6 +1030,36 @@ export default function PiecesAFournirPage() {
                     {row.requestedBy?.name ?? "un compte supprimé"}
                   </p>
 
+                  {/*
+                    La réserve réelle, telle que le magasinier la vérifie.
+                    `null` veut dire « pièce inconnue du magasin », et non
+                    « zéro » : les deux mènent au même refus de réservation,
+                    mais seul le second est une information.
+                  */}
+                  <p
+                    className={`mt-2 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold ${
+                      row.stockAvailable === null
+                        ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                        : row.stockAvailable >= row.quantity
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                          : "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                    }`}
+                  >
+                    📦{" "}
+                    {row.stockAvailable === null
+                      ? "Stock non suivi"
+                      : `Stock en réserve : ${row.stockAvailable} unité${
+                          row.stockAvailable > 1 ? "s" : ""
+                        }`}
+                    {row.stockLocation ? ` · ${row.stockLocation}` : ""}
+                  </p>
+
+                  {row.decisionNote && (
+                    <p className="mt-1.5 text-xs font-medium text-red-700 dark:text-red-300">
+                      Motif : {row.decisionNote}
+                    </p>
+                  )}
+
                   {row.notes && (
                     <p className="mt-1.5 whitespace-pre-line text-xs text-gray-600 dark:text-gray-400">
                       {row.notes}
@@ -385,30 +1090,81 @@ export default function PiecesAFournirPage() {
                       et `transitionRefusal` refuse ce qui n'aurait pas de sens,
                       ici comme sur la route.
                     */}
-                    {row.status === "PENDING" && (
+                    {/*
+                      Le circuit du magasin : vérifier la réserve, réserver,
+                      constater la rupture, ou refuser avec un motif.
+
+                      « Approuver & réserver » est désactivé quand la réserve
+                      ne suffit pas — le bouton dit pourquoi au survol, plutôt
+                      que d'échouer après le clic.
+                    */}
+                    {(row.status === "PENDING" ||
+                      row.status === "PENDING_STOCK_CHECK" ||
+                      row.status === "ORDER_REQUIRED") && (
                       <>
                         <button
                           type="button"
-                          disabled={isBusy}
-                          onClick={() => void decide(row, "APPROVED", "demande validée")}
+                          disabled={
+                            isBusy ||
+                            row.stockAvailable === null ||
+                            row.stockAvailable < row.quantity
+                          }
+                          title={
+                            row.stockAvailable === null
+                              ? "Pièce inconnue du magasin : passez la demande en commande."
+                              : row.stockAvailable < row.quantity
+                                ? `Stock insuffisant : ${row.stockAvailable} en réserve pour ${row.quantity} demandée(s).`
+                                : undefined
+                          }
+                          onClick={() => void act(row, "reserve")}
                           className={PRIMARY}
                         >
                           {isBusy ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                            <Loader2
+                              className="h-3.5 w-3.5 animate-spin"
+                              aria-hidden="true"
+                            />
                           ) : (
                             <Check className="h-3.5 w-3.5" aria-hidden="true" />
                           )}
-                          Valider
+                          Approuver &amp; réserver
                         </button>
+                        {row.status !== "ORDER_REQUIRED" && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void act(row, "order")}
+                            className={SECONDARY}
+                          >
+                            🛒 Rupture — passer en commande
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={isBusy}
-                          onClick={() => void decide(row, "REJECTED", "demande refusée")}
+                          onClick={() => {
+                            setRejectTarget(row);
+                            setRejectReason("");
+                          }}
                           className={QUIET}
                         >
-                          Refuser
+                          ❌ Refuser
                         </button>
                       </>
+                    )}
+
+                    {row.status === "RESERVED" && (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() =>
+                          void decide(row, "FULFILLED", "pièce posée")
+                        }
+                        className={PRIMARY}
+                      >
+                        <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                        Marquer la pièce posée
+                      </button>
                     )}
 
                     {row.status === "APPROVED" && (
@@ -483,6 +1239,59 @@ export default function PiecesAFournirPage() {
                       </button>
                     )}
 
+                    {/*
+                      Le passage à l'offre n'existe qu'une fois la demande
+                      validée : on ne chiffre pas une pièce que le bureau n'a
+                      pas encore acceptée. Une fois le devis créé, le bouton
+                      devient le lien vers la fiche à chiffrer.
+                    */}
+                    {(row.status === "PENDING" ||
+                      row.status === "APPROVED" ||
+                      row.status === "ORDERED") &&
+                      (quoteResults[row.id] ? (
+                        quoteResults[row.id].id ? (
+                          <Link
+                            href={`/administration/devis/${quoteResults[row.id].id}`}
+                            className={SECONDARY}
+                          >
+                            <FileText
+                              className="h-3.5 w-3.5"
+                              aria-hidden="true"
+                            />
+                            Devis {quoteResults[row.id].number}
+                          </Link>
+                        ) : (
+                          // Démonstration : le devis n'a pas de fiche à ouvrir.
+                          <span className={`${SECONDARY} opacity-70`}>
+                            <FileText
+                              className="h-3.5 w-3.5"
+                              aria-hidden="true"
+                            />
+                            Devis {quoteResults[row.id].number} (démo)
+                          </span>
+                        )
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={quotingId === row.id}
+                          onClick={() => void createQuoteForPart(row)}
+                          className={SECONDARY}
+                        >
+                          {quotingId === row.id ? (
+                            <Loader2
+                              className="h-3.5 w-3.5 animate-spin"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <FileText
+                              className="h-3.5 w-3.5"
+                              aria-hidden="true"
+                            />
+                          )}
+                          Créer le devis
+                        </button>
+                      ))}
+
                     <a
                       href={`/api/parts-replacement/${row.id}/pdf`}
                       className={`${SECONDARY} ml-auto`}
@@ -496,6 +1305,75 @@ export default function PiecesAFournirPage() {
             );
           })}
         </ul>
+      )}
+
+      {/*
+        Le motif de refus est obligatoire, et il est saisi ici plutôt que dans
+        un `prompt()` du navigateur : le message doit rester lisible, modifiable
+        et annulable, et un refus muet renvoie le technicien au téléphone.
+      */}
+      {rejectTarget && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reject-heading"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRejectTarget(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-gray-900">
+            <h2
+              id="reject-heading"
+              className="text-lg font-bold text-gray-900 dark:text-white"
+            >
+              Refuser la demande
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {rejectTarget.replacementPartName} ×{rejectTarget.quantity} ·{" "}
+              {rejectTarget.number}
+            </p>
+
+            <label className="mt-4 block">
+              <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                Motif du refus (obligatoire)
+              </span>
+              <textarea
+                rows={3}
+                maxLength={2000}
+                value={rejectReason}
+                onChange={(event) => setRejectReason(event.target.value)}
+                placeholder="Réf. obsolète, incompatible avec l'appareil…"
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+              />
+            </label>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRejectTarget(null)}
+                className={SECONDARY}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={
+                  busyId === rejectTarget.id || rejectReason.trim().length === 0
+                }
+                onClick={() =>
+                  void act(rejectTarget, "reject", rejectReason.trim())
+                }
+                className={`${ACTION} bg-red-600 font-semibold text-white hover:bg-red-700`}
+              >
+                {busyId === rejectTarget.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : null}
+                Refuser la demande
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

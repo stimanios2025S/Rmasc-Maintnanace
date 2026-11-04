@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1 -p 3000",
+    "dev:mem": "node scripts/dev.mjs",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1 -p 3000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "diagnose-auth": "tsx scripts/diagnose-auth.ts",

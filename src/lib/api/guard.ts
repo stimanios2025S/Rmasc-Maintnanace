@@ -47,7 +47,13 @@ export async function getSession(): Promise<Session | null> {
 /** Requires any authenticated user. */
 export async function requireSession(): Promise<Session> {
   const session = await getSession();
-  if (!session?.user) throw unauthorized();
+  /**
+   * `id` et `role` vides sont l'état d'un jeton invalidé : le callback
+   * `session` les efface quand le compte a été désactivé ou supprimé. Sans ce
+   * test, `session.user` resterait truthy et une session révoquée passerait
+   * les routes qui n'exigent qu'une authentification.
+   */
+  if (!session?.user?.id || !session.user.role) throw unauthorized();
   return session;
 }
 

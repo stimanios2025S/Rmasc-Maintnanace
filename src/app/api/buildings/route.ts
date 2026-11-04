@@ -20,6 +20,8 @@ import {
   requireRole,
 } from "@/lib/api/guard";
 import { OWNER_ELIGIBLE_ROLES, SLA_TIERS } from "@/types";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoBuildingRows } from "@/lib/demo/registers";
 
 const CreateBuildingSchema = z
   .object({
@@ -50,14 +52,41 @@ export async function GET() {
     // `elevatorCount` and `statusBreakdown` describe the same set of units.
     // The scope also keeps a BUILDING_OWNER from listing other customers,
     // whose site contact name, email and phone are all in this payload.
+    /**
+     * Le portefeuille d'un technicien, ce sont les immeubles où il a un bon.
+     *
+     * La route porte le nom, l'adresse et les coordonnées du contact de chaque
+     * site : ce n'est pas une lecture de terrain. Sans ce filtre, la palette de
+     * recherche — qui ne la charge plus pour lui — restait contournable par un
+     * appel direct.
+     */
+    const where =
+      session.user.role === "FIELD_TECHNICIAN"
+        ? {
+            ...buildingScopeFor(session),
+            elevators: {
+              some: {
+                workOrders: { some: { assignedToId: session.user.id } },
+              },
+            },
+          }
+        : buildingScopeFor(session);
+
     const buildings = await prisma.building.findMany({
-      where: buildingScopeFor(session),
+      where,
       include: {
         _count: { select: { elevators: { where: { isActive: true } } } },
         elevators: {
           where: { isActive: true },
           select: { status: true, overallHealth: true },
         },
+        /**
+         * Le titulaire du site, pour les sélecteurs qui doivent dire à qui un
+         * document sera adressé — le formulaire de devis, notamment. Sans lui,
+         * un immeuble sans compte produisait un devis invisible dans tous les
+         * portails sans que rien ne l'annonce.
+         */
+        owner: { select: { id: true, name: true } },
       },
       orderBy: { name: "asc" },
     });
@@ -74,6 +103,7 @@ export async function GET() {
       contactPhone: building.contactPhone,
       latitude: building.latitude,
       longitude: building.longitude,
+      owner: building.owner,
       elevatorCount: building._count.elevators,
       avgHealth:
         building.elevators.length > 0
@@ -93,6 +123,17 @@ export async function GET() {
 
     return NextResponse.json({ data });
   } catch (error) {
+    /**
+     * Sans base, la liste des immeubles sert le jeu de démonstration.
+     *
+     * C'est elle qui alimente le sélecteur « Choisir un immeuble » de la
+     * reprise d'appareil. La laisser répondre 503 vidait le sélecteur et
+     * faisait passer l'absence de PostgreSQL pour une panne de l'écran.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("GET /api/buildings");
+      return NextResponse.json({ data: demoBuildingRows() });
+    }
     return handleRouteError(error);
   }
 }

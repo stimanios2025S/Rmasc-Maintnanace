@@ -21,10 +21,11 @@
  * suivant. C'est le même choix que pour les numéros de bon.
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import {
   conflict,
+  forbidden,
   handleRouteError,
   jsonOk,
   notFound,
@@ -32,6 +33,7 @@ import {
 import { MANAGEMENT_ROLES, requireRole } from "@/lib/api/guard";
 import { OPEN_WORK_ORDER_STATUSES } from "@/lib/work-orders/service";
 import { scanUrlFor } from "@/lib/documents/qr";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 
 const ATTEMPTS = 5;
 
@@ -58,11 +60,19 @@ async function nextRmascCode(year: number): Promise<string> {
 }
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    await requireRole(...MANAGEMENT_ROLES);
+    const session = await requireRole(...MANAGEMENT_ROLES);
+
+    const body = await request.json().catch(() => ({}));
+    const force = body?.force === true;
+    if (force && session.user.role !== "ADMIN") {
+      throw forbidden(
+        "Le contournement d'audit est réservé à l'administrateur."
+      );
+    }
 
     const elevator = await prisma.elevator.findFirst({
       where: { id: params.id, isActive: true },
@@ -91,6 +101,11 @@ export async function POST(
      * L'audit doit être terminé. Un bon seulement annulé ne compte pas comme un
      * audit : il n'a rien constaté. C'est la raison du filtre sur les états
      * ouverts plutôt que sur « au moins un bon existe ».
+     *
+     * Le contournement administrateur ne supprime pas cette règle : il la
+     * franchit explicitement, et les bons qu'il franchit sont refermés dans la
+     * même transaction. Un appareil intégré avec un audit encore ouvert serait
+     * exactement l'état que la règle existe pour empêcher.
      */
     const openAudit = await prisma.workOrder.findFirst({
       where: {
@@ -100,12 +115,23 @@ export async function POST(
       },
       select: { orderNumber: true },
     });
-    if (openAudit) {
+    if (openAudit && !force) {
       throw conflict(
         `Le bon d'inspection ${openAudit.orderNumber} n'est pas terminé. ` +
           "Le matricule ne peut être attribué qu'une fois l'état des lieux constaté."
       );
     }
+
+    const auditsToClose = force
+      ? await prisma.workOrder.findMany({
+          where: {
+            elevatorId: elevator.id,
+            type: "INSPECTION",
+            status: { in: [...OPEN_WORK_ORDER_STATUSES] },
+          },
+          select: { id: true, orderNumber: true },
+        })
+      : [];
 
     const year = new Date().getFullYear();
     let updated: { id: string; rmascCode: string | null } | null = null;
@@ -113,10 +139,27 @@ export async function POST(
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
       const code = await nextRmascCode(year);
       try {
-        updated = await prisma.elevator.update({
-          where: { id: elevator.id },
-          data: { rmascCode: code },
-          select: { id: true, rmascCode: true },
+        updated = await prisma.$transaction(async (tx) => {
+          const result = await tx.elevator.update({
+            where: { id: elevator.id },
+            data: { rmascCode: code },
+            select: { id: true, rmascCode: true },
+          });
+
+          if (auditsToClose.length > 0) {
+            await tx.workOrder.updateMany({
+              where: {
+                id: { in: auditsToClose.map((order) => order.id) },
+                status: { in: [...OPEN_WORK_ORDER_STATUSES] },
+              },
+              data: {
+                status: "COMPLETED",
+                completedAt: new Date(),
+              },
+            });
+          }
+
+          return result;
         });
         break;
       } catch (error) {
@@ -137,8 +180,22 @@ export async function POST(
       rmascCode: updated.rmascCode,
       scanUrl: scanUrlFor(updated.id),
       qrUrl: `/api/elevators/${updated.id}/qr`,
+      forced: force,
+      closedWorkOrders: auditsToClose.map((order) => order.orderNumber),
     });
   } catch (error) {
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("POST /api/elevators/[id]/takeover");
+      return NextResponse.json({
+        data: {
+          id: params.id,
+          rmascCode: "ASC-2026-0099",
+          scanUrl: `/scan/${params.id}`,
+          qrUrl: `/api/elevators/${params.id}/qr`,
+        },
+        demo: true,
+      });
+    }
     return handleRouteError(error);
   }
 }

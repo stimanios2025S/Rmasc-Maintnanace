@@ -233,6 +233,143 @@ const ELEVATOR_BLUEPRINTS: readonly ElevatorBlueprint[] = [
     // and a deliberate exercise of the null-metric paths in the charts.
     profile: { vibration: 0, temperature: 0, load: 0, stalenessMinutes: 2880, reporting: false },
   },
+  /**
+   * Le parc du « Syndic Les Pins » : deux appareils à la Tour El Hana, un à la
+   * Résidence Les Pins. Assez pour que la fiche client montre plusieurs
+   * immeubles et plusieurs ascenseurs — c'est ce que l'écran doit prouver.
+   *
+   * Les codes diffèrent volontairement de ceux des reprises (`PINS-01`,
+   * `HANA-02`) : une reprise décrit un appareil tiers qui n'est pas encore au
+   * parc, et le même matricule des deux côtés ferait croire qu'il y est déjà.
+   */
+  {
+    id: "elv_demo_pins_1",
+    code: "PINS-02",
+    buildingId: "bld_demo_pins",
+    brand: "OTHER",
+    model: "Gen2",
+    motorType: "AC_GEARDLESS",
+    controllerType: "FULLY_DIGITAL",
+    status: "SERVICE_REQUIRED",
+    health: 72.5,
+    floors: 9,
+    payload: 630,
+    commissionedYearsAgo: 7,
+    profile: { vibration: 3.9, temperature: 76, load: 220, stalenessMinutes: 3, reporting: true },
+  },
+  {
+    id: "elv_demo_hana_1",
+    code: "HANA-01",
+    buildingId: "bld_demo_hana",
+    brand: "KONE",
+    model: "MonoSpace 300",
+    motorType: "HYDRAULIC",
+    controllerType: "MICROPROCESSOR",
+    status: "OPERATIONAL",
+    health: 90.4,
+    floors: 12,
+    payload: 1000,
+    commissionedYearsAgo: 5,
+    profile: { vibration: 2.4, temperature: 66, load: 350, stalenessMinutes: 2, reporting: true },
+  },
+  {
+    id: "elv_demo_hana_2",
+    code: "HANA-03",
+    buildingId: "bld_demo_hana",
+    brand: "SCHINDLER",
+    model: "3300",
+    motorType: "AC_GEARED",
+    controllerType: "MICROPROCESSOR",
+    status: "SERVICE_REQUIRED",
+    health: 68.2,
+    floors: 12,
+    payload: 900,
+    commissionedYearsAgo: 10,
+    profile: { vibration: 4.6, temperature: 80, load: 260, stalenessMinutes: 5, reporting: true },
+  },
+  /**
+   * Les cinq appareils qui complètent le parc du syndic à huit unités.
+   *
+   * Trois statuts différents sont représentés — `OPERATIONAL`,
+   * `SERVICE_REQUIRED` et `CRITICAL_SHUTDOWN` — parce que la fiche colore
+   * chaque appareil selon son état : une fixture où tout va bien ne
+   * démontrerait pas la pastille.
+   */
+  {
+    id: "elv_demo_pins_3",
+    code: "PINS-03",
+    buildingId: "bld_demo_pins",
+    brand: "OTIS",
+    model: "Gen3 Nova",
+    motorType: "AC_GEARDLESS",
+    controllerType: "FULLY_DIGITAL",
+    status: "OPERATIONAL",
+    health: 93.1,
+    floors: 9,
+    payload: 630,
+    commissionedYearsAgo: 3,
+    profile: { vibration: 2.0, temperature: 63, load: 180, stalenessMinutes: 2, reporting: true },
+  },
+  {
+    id: "elv_demo_pins_4",
+    code: "PINS-04",
+    buildingId: "bld_demo_pins",
+    brand: "KONE",
+    model: "MonoSpace 300",
+    motorType: "HYDRAULIC",
+    controllerType: "MICROPROCESSOR",
+    status: "ANOMALY_DETECTED",
+    health: 61.8,
+    floors: 9,
+    payload: 800,
+    commissionedYearsAgo: 11,
+    profile: { vibration: 6.1, temperature: 82, load: 240, stalenessMinutes: 4, reporting: true },
+  },
+  {
+    id: "elv_demo_hana_3",
+    code: "HANA-04",
+    buildingId: "bld_demo_hana",
+    brand: "MITSUBISHI",
+    model: "NEXIEZ-MRL",
+    motorType: "AC_GEARDLESS",
+    controllerType: "MICROPROCESSOR",
+    status: "OPERATIONAL",
+    health: 88.7,
+    floors: 12,
+    payload: 1050,
+    commissionedYearsAgo: 6,
+    profile: { vibration: 2.7, temperature: 68, load: 310, stalenessMinutes: 6, reporting: true },
+  },
+  {
+    id: "elv_demo_palmier_1",
+    code: "PALM-01",
+    buildingId: "bld_demo_palmier",
+    brand: "THYSSENKRUPP",
+    model: "evolution 200",
+    motorType: "AC_GEARDLESS",
+    controllerType: "FULLY_DIGITAL",
+    status: "CRITICAL_SHUTDOWN",
+    health: 32.4,
+    floors: 6,
+    payload: 630,
+    commissionedYearsAgo: 16,
+    profile: { vibration: 8.8, temperature: 94, load: 150, stalenessMinutes: 8, reporting: true },
+  },
+  {
+    id: "elv_demo_palmier_2",
+    code: "PALM-02",
+    buildingId: "bld_demo_palmier",
+    brand: "HITACHI",
+    model: "UR",
+    motorType: "AC_GEARED",
+    controllerType: "PLC",
+    status: "OPERATIONAL",
+    health: 79.5,
+    floors: 6,
+    payload: 450,
+    commissionedYearsAgo: 9,
+    profile: { vibration: 3.2, temperature: 71, load: 190, stalenessMinutes: 5, reporting: true },
+  },
 ];
 
 const COMPONENT_BLUEPRINTS: ReadonlyArray<{
@@ -357,6 +494,7 @@ function build(): DemoWorld {
   const CLIENT_ADDRESSES: Record<string, string> = {
     usr_owner1: "1 Ferry Building, bureau 300, San Francisco",
     usr_owner2: "2201 Broadway, Oakland",
+    usr_demo_syndic_pins: "12 rue Didouche Mourad, Alger",
   };
 
   const userSeed: Array<
@@ -395,6 +533,15 @@ function build(): DemoWorld {
     { id: "usr_tech3", email: "tech3@elevatorpulse.com", name: "Ilse Fontaine", passwordHash: DEMO_HASH, role: "FIELD_TECHNICIAN", clientType: null, phone: "+1 415 555 0107", avatarUrl: null, isActive: true, status: "ON_LEAVE" },
     { id: "usr_owner1", email: "owner@metroplaza.com", name: "Helena Voss", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", clientType: "CONTRACTED", phone: "+1 415 555 0105", avatarUrl: null, isActive: true, status: "AVAILABLE" },
     { id: "usr_owner2", email: "owner@riverside.com", name: "Tomas Bergman", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", clientType: "CONTRACTED", phone: "+1 415 555 0106", avatarUrl: null, isActive: true, status: "AVAILABLE" },
+    /**
+     * Le client des sites algériens de la démonstration.
+     *
+     * « Résidence Les Pins » et « Tour El Hana » figurent déjà dans les
+     * reprises d'appareils (`registers.ts`) : sans compte pour les porter, la
+     * fiche client qui les affiche n'existait pas, et l'écran « Gérer le parc
+     * et l'accès » s'ouvrait sur un 503 dès que PostgreSQL était absent.
+     */
+    { id: "usr_demo_syndic_pins", email: "syndic.lespins@email.dz", name: "Syndic Les Pins", passwordHash: DEMO_HASH, role: "BUILDING_OWNER", clientType: "CONTRACTED", phone: "+213 661 22 33 44", avatarUrl: null, isActive: true, status: "AVAILABLE" },
   ];
 
   /**
@@ -485,25 +632,67 @@ function build(): DemoWorld {
     {
       id: "bld_1", name: "Metro Plaza Tower", address: "410 Market Street", city: "San Francisco",
       state: "CA", zipCode: "94105", country: "US", contactPerson: "Helena Voss",
-      contactEmail: "owner@metroplaza.com", contactPhone: "+1 415 555 0105", slaTier: "PREMIUM",
+      contactEmail: "owner@metroplaza.com", contactPhone: "+1 415 555 0105",
+      // Aucun code d'accès dans les fixtures : ils ne modélisent pas de secret
+      // de site, et en inventer un ferait croire que le champ est renseigné.
+      accessCode: null, slaTier: "PREMIUM",
       latitude: 37.7908, longitude: -122.4014, geofenceRadiusM: 60, isActive: true, ownerId: "usr_owner1",
     },
     {
       id: "bld_2", name: "Riverside Business Center", address: "88 Embarcadero", city: "Oakland",
       state: "CA", zipCode: "94607", country: "US", contactPerson: "Tomas Bergman",
-      contactEmail: "owner@riverside.com", contactPhone: "+1 415 555 0106", slaTier: "STANDARD",
+      contactEmail: "owner@riverside.com", contactPhone: "+1 415 555 0106",
+      accessCode: null, slaTier: "STANDARD",
       latitude: 37.7955, longitude: -122.2793, geofenceRadiusM: 150, isActive: true, ownerId: "usr_owner2",
     },
     {
       id: "bld_3", name: "Northgate Medical Center", address: "1200 Northgate Drive", city: "Berkeley",
       state: "CA", zipCode: "94702", country: "US", contactPerson: "Dr. Amara Idowu",
       contactEmail: "facilities@northgate.example.org", contactPhone: "+1 415 555 0110",
+      accessCode: null,
       slaTier: "ENTERPRISE", latitude: 37.8715, longitude: -122.2730,
       // Left unset on purpose: this is what a site nobody has configured looks
       // like, and the application has to keep working for it. See
       // `effectiveRadiusM` in src/lib/geo/geofence.ts.
       geofenceRadiusM: null,
       isActive: true, ownerId: null,
+    },
+    /**
+     * Les deux sites du « Syndic Les Pins ».
+     *
+     * Leurs identifiants sont ceux que `demoTakeovers()` cite déjà : une
+     * reprise d'appareil parle d'un immeuble, et cet immeuble doit exister dans
+     * le monde de démonstration, sinon la fiche client et l'écran de reprise
+     * décrivent deux parcs différents.
+     */
+    {
+      id: "bld_demo_pins", name: "Résidence Les Pins", address: "14 chemin des Pins", city: "Constantine",
+      state: "Constantine", zipCode: "25000", country: "DZ", contactPerson: "Syndic Les Pins",
+      contactEmail: "syndic.lespins@email.dz", contactPhone: "+213 661 22 33 44",
+      accessCode: null, slaTier: "PREMIUM",
+      latitude: 36.3650, longitude: 6.6147, geofenceRadiusM: 80, isActive: true,
+      ownerId: "usr_demo_syndic_pins",
+    },
+    {
+      id: "bld_demo_hana", name: "Tour El Hana", address: "3 boulevard Mohamed V", city: "Alger",
+      state: "Alger", zipCode: "16000", country: "DZ", contactPerson: "Syndic Les Pins",
+      contactEmail: "syndic.lespins@email.dz", contactPhone: "+213 661 22 33 44",
+      accessCode: null, slaTier: "STANDARD",
+      latitude: 36.7538, longitude: 3.0588, geofenceRadiusM: 100, isActive: true,
+      ownerId: "usr_demo_syndic_pins",
+    },
+    /**
+     * Le troisième site du syndic — la fiche de démonstration doit montrer un
+     * parc de plusieurs immeubles, et trois est le minimum qui fasse lire la
+     * tabulation « Parc » comme un portefeuille plutôt que comme une adresse.
+     */
+    {
+      id: "bld_demo_palmier", name: "Résidence Les Palmiers", address: "7 rue des Palmiers", city: "Blida",
+      state: "Blida", zipCode: "09000", country: "DZ", contactPerson: "Syndic Les Pins",
+      contactEmail: "syndic.lespins@email.dz", contactPhone: "+213 661 22 33 44",
+      accessCode: null, slaTier: "BASIC",
+      latitude: 36.4703, longitude: 2.8277, geofenceRadiusM: 70, isActive: true,
+      ownerId: "usr_demo_syndic_pins",
     },
   ];
 
@@ -514,7 +703,7 @@ function build(): DemoWorld {
   }));
 
   // ── Elevators ─────────────────────────────────────────────
-  const elevators: Elevator[] = ELEVATOR_BLUEPRINTS.map((bp) => {
+  const elevators: Elevator[] = ELEVATOR_BLUEPRINTS.map((bp, index) => {
     const ageMs = bp.commissionedYearsAgo * 365 * 24 * 60 * MINUTE;
     const operatingHours = round1(bp.commissionedYearsAgo * 2600 + rng() * 400);
     return {
@@ -527,6 +716,14 @@ function build(): DemoWorld {
       originBrand: null,
       rmascCode: null,
       model: bp.model,
+      /**
+       * Un emplacement lisible, pour que la fiche client et le portail terrain
+       * exercent la nouvelle colonne sans base. La valeur alterne entre deux
+       * cages : c'est exactement le cas où l'adresse de l'immeuble seule ne
+       * suffit pas à trouver la machine.
+       */
+      installationLocation:
+        index % 2 === 0 ? "Bâtiment A, cage 1" : "Bâtiment B, cage 2",
       serialNumber: `SN-${bp.code}-${1000 + Math.floor(rng() * 8999)}`,
       installationDate: iso(ageMs),
       motorType: bp.motorType,
@@ -758,6 +955,23 @@ function build(): DemoWorld {
      */
     { elevatorId: "elv_3", title: "Remplacement du contacteur de porte", description: "La porte ne se réouvrait plus en position fermée ; le contacteur de fin de course est suspecté. Contrôler le circuit de commande de porte.", reportNotes: "Contacteur de fin de course remplacé : la porte ne se réouvrait plus en position fermée. Réglage du ralentissement vérifié sur dix cycles complets.", type: "CORRECTIVE", priority: "HIGH", status: "PENDING_APPROVAL", assignedToId: "usr_tech1", componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: 1.5, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 3, billable: true, amount: 18500, parts: [{ name: "Contacteur de fin de course", partNumber: "CFC-24V", qty: 1 }], revisions: [{ field: "invoiceAmount", oldValue: "185000", newValue: "18500", note: "Montant corrigé : le technicien avait saisi un zéro de trop.", authorId: "usr_mgr", hoursAgo: 2 }] },
     { elevatorId: "elv_8", title: "Contrôle du niveau d'huile du groupe hydraulique", description: "Niveau d'huile du groupe hydraulique à contrôler ; aucune fuite signalée par l'exploitant.", reportNotes: "Niveau complété et absence de fuite confirmée sous le groupe. Aucune pièce remplacée ; intervention couverte par le contrat.", type: "PREVENTIVE", priority: "MEDIUM", status: "PENDING_APPROVAL", assignedToId: "usr_tech2", componentType: "HYDRAULIC_UNIT", estimatedHours: 1.5, actualHours: 1, scheduledInDays: null, completedHoursAgo: null, reportSubmittedHoursAgo: 26, billable: false },
+    /**
+     * Les trois interventions du « Syndic Les Pins ».
+     *
+     * Deux sont ouvertes — elles donnent au compteur « Pannes en cours » de la
+     * fiche une valeur réelle, et à l'historique d'un appareil au moins une
+     * ligne à montrer. La troisième est terminée et facturable, sans quoi
+     * l'onglet « Contrats, devis & factures » n'aurait aucune facture à
+     * rattacher au client : les factures de la fixture dérivent des bons
+     * terminés, jamais d'une ligne écrite à la main.
+     *
+     * Les incidents qui pointent vers les deux premières sont déclarés plus
+     * bas et nomment `wo_17` / `wo_18` — les identifiants sont l'index dans ce
+     * tableau, comme pour les bons déjà cités.
+     */
+    { elevatorId: "elv_demo_pins_1", title: "URGENCE : portes bloquées au niveau 3", description: "La cabine est immobilisée portes fermées au troisième étage, occupants dégagés par le gardien. Contrôler l'opérateur de porte et le circuit de sécurité.", type: "EMERGENCY", priority: "EMERGENCY", status: "IN_PROGRESS", assignedToId: "usr_tech1", componentType: "DOOR_OPERATOR", estimatedHours: 4, actualHours: null, scheduledInDays: null, completedHoursAgo: null },
+    { elevatorId: "elv_demo_hana_2", title: "Remplacer le contacteur de porte palière", description: "Défaut intermittent de verrouillage signalé par deux résidents. Remplacer le contacteur et vérifier l'alignement des portes palières.", type: "CORRECTIVE", priority: "HIGH", status: "ASSIGNED", assignedToId: "usr_tech2", componentType: "DOOR_OPERATOR", estimatedHours: 2, actualHours: null, scheduledInDays: 1, completedHoursAgo: null },
+    { elevatorId: "elv_demo_palmier_2", title: "Entretien semestriel et remplacement des patins", description: "Visite semestrielle : contrôle du jeu de frein, lubrification des guides et remplacement des patins de guidage usés.", reportNotes: "Visite effectuée. Patins remplacés, jeu de frein dans la tolérance. Aucune anomalie sur les câbles.", type: "PREVENTIVE", priority: "MEDIUM", status: "COMPLETED", assignedToId: "usr_tech1", componentType: "GUIDE_SHOES", estimatedHours: 3, actualHours: 2.75, scheduledInDays: null, completedHoursAgo: 120, billable: true, amount: 32000 },
   ];
 
   /**
@@ -892,11 +1106,24 @@ function build(): DemoWorld {
           (c) => c.elevatorId === w.elevatorId && c.componentType === w.componentType
         )
       : undefined;
+    const unit = elevators.find((e) => e.id === w.elevatorId);
+    const site = unit
+      ? buildings.find((building) => building.id === unit.buildingId)
+      : undefined;
     return {
       id: `wo_${i + 1}`,
       orderNumber: `WO-${new Date(now).getUTCFullYear()}-${String(1041 + i).padStart(4, "0")}`,
       title: w.title,
       description: w.description,
+      /**
+       * Le lieu exact de la démonstration, dérivé du site et de l'appareil —
+       * exactement ce que le formulaire de création pré-remplit.
+       */
+      interventionAddress: site
+        ? [site.address, site.city, unit?.installationLocation]
+            .filter(Boolean)
+            .join(", ")
+        : null,
       type: w.type,
       priority: w.priority,
       status: w.status,
@@ -1135,6 +1362,28 @@ function build(): DemoWorld {
       notes: null,
       minutesAgo: 2 * 24 * 60, resolvedMinutesAgo: null,
     },
+    /**
+     * Les deux pannes ouvertes du « Syndic Les Pins ».
+     *
+     * Elles alimentent le compteur « Pannes en cours » de l'en-tête et
+     * donnent à l'historique de PINS-02 / HANA-03 une ligne réelle. Chacune
+     * pointe vers le bon qu'elle a ouvert — `wo_17` et `wo_18` — parce que
+     * c'est la règle de la route de signalement : une escalade crée le bon.
+     */
+    {
+      id: "inc_7", elevatorId: "elv_demo_pins_1", clientId: "usr_demo_syndic_pins",
+      code: "E-101", status: "IN_PROGRESS", isDirectTransfer: false,
+      workOrderId: "wo_17", technicianId: "usr_tech1",
+      notes: "Cabine immobilisée portes fermées au 3e étage. Le gardien a dégagé les occupants ; le technicien est sur site.",
+      minutesAgo: 3 * 60, resolvedMinutesAgo: null,
+    },
+    {
+      id: "inc_8", elevatorId: "elv_demo_hana_2", clientId: "usr_demo_syndic_pins",
+      code: "E-102", status: "TECHNICIAN_ASSIGNED", isDirectTransfer: false,
+      workOrderId: "wo_18", technicianId: "usr_tech2",
+      notes: "Le verrou de porte palière ne se ferme pas par intermittence. Un intervenant est affecté.",
+      minutesAgo: 26 * 60, resolvedMinutesAgo: null,
+    },
   ];
 
   const incidents: IncidentReport[] = incidentSeed.map((s) => ({
@@ -1232,6 +1481,7 @@ function build(): DemoWorld {
     type: n.type,
     isRead: n.isRead,
     linkUrl: n.linkUrl,
+    workOrderId: null,
     createdAt: iso(n.minutesAgo * MINUTE),
   }));
 

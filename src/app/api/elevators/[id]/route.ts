@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
-import { handleRouteError, notFound } from "@/lib/api/http";
+import { forbidden, handleRouteError, notFound } from "@/lib/api/http";
 import { elevatorScopeFor, OPS_ROLES, requireRole } from "@/lib/api/guard";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoElevatorDetail } from "@/lib/demo/responses";
@@ -56,7 +56,78 @@ export async function GET(
 
     if (!elevator) throw notFound(`Ascenseur introuvable : ${params.id}`);
 
-    return NextResponse.json({ data: elevator });
+    /**
+     * Ce que la fiche d'un appareil peut montrer, et à qui.
+     *
+     * Un code d'accès d'immeuble ou de local technique n'est pas une donnée de
+     * catalogue : il ouvre une porte. Il n'est donc jamais renvoyé à un compte
+     * client — même propriétaire de l'immeuble — et un technicien ne le reçoit
+     * que s'il a un bon de travail sur cet appareil. C'est la traduction
+     * serveur de « le technicien ne voit que ce qui le concerne » : masquer la
+     * carte dans l'interface ne protégerait rien, la réponse JSON resterait
+     * lisible dans l'onglet réseau.
+     */
+    const role = session.user.role;
+    const isOwner = role === "BUILDING_OWNER";
+    const isTechnician = role === "FIELD_TECHNICIAN";
+
+    let hasJobOnSite = true;
+    if (isTechnician) {
+      hasJobOnSite =
+        (await prisma.workOrder.count({
+          where: { elevatorId: elevator.id, assignedToId: session.user.id },
+        })) > 0;
+
+      /**
+       * Un technicien n'ouvre pas la fiche d'un appareil qui ne lui est pas
+       * affecté — même en tapant l'URL à la main. La réponse est un 403, pas
+       * une fiche vidée de ses données sensibles : une page qui existe à
+       * moitié laisse croire que l'accès est ouvert.
+       */
+      if (!hasJobOnSite) {
+        throw forbidden(
+          "Cet appareil ne fait pas partie de vos interventions."
+        );
+      }
+    }
+
+    const canSeeSiteDetails = !isOwner;
+
+    /**
+     * Les trois derniers signalements de l'appareil, pour le technicien qui
+     * intervient dessus. Lus sans le cloisonnement `incidentScopeFor` : la
+     * condition est ici le bon de travail sur *cet* appareil, vérifiée
+     * ci-dessus, et non l'historique d'affectation de chaque incident.
+     */
+    const recentIncidents = canSeeSiteDetails
+      ? await prisma.incidentReport.findMany({
+          where: { elevatorId: elevator.id },
+          orderBy: { createdAt: "desc" },
+          take: 3,
+          select: {
+            id: true,
+            incidentNumber: true,
+            status: true,
+            notes: true,
+            createdAt: true,
+            resolvedAt: true,
+            errorCode: { select: { code: true, title: true } },
+          },
+        })
+      : [];
+
+    return NextResponse.json({
+      data: {
+        ...elevator,
+        building: elevator.building
+          ? {
+              ...elevator.building,
+              accessCode: canSeeSiteDetails ? elevator.building.accessCode : null,
+            }
+          : elevator.building,
+        recentIncidents,
+      },
+    });
   } catch (error) {
     if (shouldServeDemoData(error)) {
       warnDemoFallbackOnce("GET /api/elevators/[id]");
@@ -64,7 +135,10 @@ export async function GET(
       // A real 404 for an id that is not in the fixture either, so the demo
       // data does not invent units the caller asked for by name.
       if (!detail) return handleRouteError(notFound(`Ascenseur introuvable : ${params.id}`));
-      return NextResponse.json({ data: detail });
+      // Le jeu de démonstration n'a pas d'historique de signalements : la clé
+      // existe quand même, pour que l'écran n'ait pas à distinguer les deux
+      // modes.
+      return NextResponse.json({ data: { ...detail, recentIncidents: [] } });
     }
     return handleRouteError(error);
   }

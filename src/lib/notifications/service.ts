@@ -37,7 +37,15 @@ export type NotificationType =
   | "work_order"
   | "incident"
   | "inspection"
-  | "system";
+  | "system"
+  /// Affectation d'un bon à un technicien (auto ou manuelle).
+  | "ASSIGNMENT"
+  /// Appel à l'aide urgent depuis le terrain.
+  | "URGENCY"
+  /// Message du canal dispatch ↔ terrain.
+  | "DISPATCH"
+  /// Réponse du magasin à une demande de pièce (réservée, commandée, refusée).
+  | "part_requirement";
 
 export interface NotifyInput {
   userId: string;
@@ -46,6 +54,8 @@ export interface NotifyInput {
   type: NotificationType;
   /** In-app path the notification should open, e.g. `/administration/incidents`. */
   linkUrl?: string;
+  /** Le bon désigné par la notification, quand il y en a un. */
+  workOrderId?: string;
 }
 
 /**
@@ -67,6 +77,7 @@ export async function notify(
         message: input.message,
         type: input.type,
         ...(input.linkUrl ? { linkUrl: input.linkUrl } : {}),
+        ...(input.workOrderId ? { workOrderId: input.workOrderId } : {}),
       },
     });
   } catch (error) {
@@ -93,6 +104,7 @@ export async function notifyMany(
         message: input.message,
         type: input.type,
         linkUrl: input.linkUrl ?? null,
+        workOrderId: input.workOrderId ?? null,
       })),
     });
   } catch (error) {

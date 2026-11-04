@@ -115,6 +115,8 @@ export const INCIDENT_DISPATCH_SELECT = {
       name: true,
       email: true,
       phone: true,
+      /** Même projection que la liste : la carte du tableau lit ce statut. */
+      status: true,
       lastLatitude: true,
       lastLongitude: true,
       lastPositionAt: true,
@@ -404,7 +406,11 @@ export async function syncTechnicianStatus(
     });
 
     if (!technician || technician.role !== "FIELD_TECHNICIAN") return;
-    if (technician.status === "OFF_DUTY" || technician.status === "ON_LEAVE") {
+    if (
+      technician.status === "OFF_DUTY" ||
+      technician.status === "ON_LEAVE" ||
+      technician.status === "ON_BREAK"
+    ) {
       return;
     }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -16,13 +17,13 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/states";
-import { ProgressTrack } from "@/components/ui/progress-track";
 import { ValidationBadge } from "@/components/ui/validation-badge";
 import { DispatchModal } from "@/components/admin/dispatch-modal";
 import { ContractBadge } from "@/components/admin/contract-badge";
 import { allowedTransitions } from "@/lib/incidents/progress";
 import { formatDistance } from "@/lib/geo/geofence";
 import { enumLabel } from "@/lib/ui/enum-labels";
+import { TRAFFIC_LEVELS, priorityTrafficLevel } from "@/lib/ui/traffic";
 import type { IncidentStatus } from "@/types";
 
 /**
@@ -51,9 +52,25 @@ interface IncidentRow {
   elevator: {
     id: string;
     elevatorCode: string;
-    building: { id: string; name: string; address: string };
+    building: {
+      id: string;
+      name: string;
+      address: string;
+      /** La ville, affichée à côté de l'immeuble dans la colonne Accès. */
+      city: string;
+      /** Code d'accès immeuble / local technique, s'il est renseigné. */
+      accessCode: string | null;
+    };
   };
   errorCode: { id: string; code: string; title: string } | null;
+  /**
+   * L'auteur du signalement, quand il a un compte.
+   *
+   * Nul pour un visiteur qui a scanné le QR d'un appareil : la panne est réelle
+   * et doit apparaître au tableau, mais il n'y a personne à rappeler. Le type
+   * le dit, au lieu de laisser le rendu découvrir un `null` sous une promesse
+   * d'objet et de le traiter par accident.
+   */
   client: {
     id: string;
     name: string | null;
@@ -61,8 +78,14 @@ interface IncidentRow {
     phone: string | null;
     /** NULL reads as CONTRACTED — see `ContractBadge`. */
     clientType: "CONTRACTED" | "NON_CONTRACTED" | null;
-  };
-  technician: { id: string; name: string | null; email: string } | null;
+  } | null;
+  technician: {
+    id: string;
+    name: string | null;
+    email: string;
+    /** Le statut temps réel du technicien, pour la colonne Affectation. */
+    status: string;
+  } | null;
   /**
    * How far the assignee is from the site, as the server worked it out.
    *
@@ -106,21 +129,116 @@ const TRANSITION_ICONS: Record<IncidentStatus, typeof PlayCircle> = {
   RESOLVED_BY_CLIENT: CheckCircle2,
 };
 
-const FILTERS: { key: "open" | IncidentStatus | "all"; label: string }[] = [
-  { key: "open", label: "À traiter" },
-  { key: "ESCALATED", label: "En attente d'affectation" },
-  { key: "TECHNICIAN_ASSIGNED", label: "Affecté" },
-  { key: "IN_PROGRESS", label: "En cours" },
-  { key: "CLOSED", label: "Clôturé" },
-  { key: "RESOLVED_BY_CLIENT", label: "Résolu par le client" },
+type IncidentFilter =
+  | "all"
+  | "urgent_unassigned"
+  | "IN_PROGRESS"
+  | "resolved";
+
+const FILTERS: { key: IncidentFilter; label: string }[] = [
   { key: "all", label: "Tous" },
+  { key: "urgent_unassigned", label: "🔴 Urgences non attribuées" },
+  { key: "IN_PROGRESS", label: "⚡ En cours" },
+  { key: "resolved", label: "✅ Résolus" },
 ];
 
-const OPEN_STATUSES: readonly IncidentStatus[] = [
-  "ESCALATED",
-  "TECHNICIAN_ASSIGNED",
-  "IN_PROGRESS",
-];
+/**
+ * Le statut du technicien, tel qu'il se lit dans la colonne Affectation.
+ *
+ * « En mission » est précisé du site quand la panne est en cours : c'est la
+ * différence entre « il est occupé ailleurs » et « il est sur place ». Sans le
+ * site, le dispatcheur ouvre la fiche pour savoir s'il peut le déplacer.
+ */
+function technicianStatusMeta(
+  status: string,
+  place: string,
+  incidentStatus: string
+): string {
+  switch (status) {
+    case "AVAILABLE":
+      return "🟢 Disponible";
+    case "ON_JOB":
+      return incidentStatus === "IN_PROGRESS"
+        ? `⚡ En mission sur ${place}`
+        : "⚡ En mission";
+    case "ON_BREAK":
+      return "☕ En pause";
+    case "ON_LEAVE":
+      return "🔴 En congé";
+    case "OFF_DUTY":
+      return "🔴 Hors service";
+    default:
+      return "—";
+  }
+}
+
+/**
+ * Les quatre étapes d'une panne, en une ligne.
+ *
+ * Remplace la barre de progression épaisse : quatre points et leurs libellés
+ * disent la même chose sans occuper une bande de hauteur dans chaque carte.
+ */
+const INCIDENT_STEPS = [
+  { key: "ESCALATED", label: "Signalé" },
+  { key: "TECHNICIAN_ASSIGNED", label: "Assigné" },
+  { key: "IN_PROGRESS", label: "En cours" },
+  { key: "CLOSED", label: "Résolu" },
+] as const;
+
+function incidentStepIndex(status: IncidentStatus): number {
+  // 4 = toutes les étapes franchies : une panne close ou résolue par le
+  // client affiche ses quatre coches, pas une quatrième étape encore active.
+  if (status === "CLOSED" || status === "RESOLVED_BY_CLIENT") return 4;
+  if (status === "IN_PROGRESS") return 2;
+  if (status === "TECHNICIAN_ASSIGNED") return 1;
+  return 0;
+}
+
+function IncidentStepper({ status }: { status: IncidentStatus }) {
+  const current = incidentStepIndex(status);
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t border-slate-100 pt-2 text-[10px] font-medium dark:border-slate-800">
+      {INCIDENT_STEPS.map((step, index) => {
+        const done = index < current;
+        const active = index === current;
+
+        return (
+          <span key={step.key} className="inline-flex items-center gap-1.5">
+            {index > 0 && (
+              <span
+                className="h-px w-3 bg-slate-300 dark:bg-slate-700"
+                aria-hidden="true"
+              />
+            )}
+            <span
+              className={
+                done
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : active
+                    ? "font-bold text-blue-600 dark:text-blue-400"
+                    : "text-slate-400 dark:text-slate-500"
+              }
+            >
+              <span
+                className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${
+                  done
+                    ? "bg-emerald-500"
+                    : active
+                      ? "animate-pulse bg-blue-500"
+                      : "bg-slate-300 dark:bg-slate-600"
+                }`}
+                aria-hidden="true"
+              />
+              {index + 1}. {step.label}{" "}
+              {done ? "✓" : active && step.key === "IN_PROGRESS" ? "⚡" : !active ? "⚪" : ""}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * The télémètre, as a dispatcher reads it.
@@ -159,9 +277,22 @@ function TechnicianDistance({
 
   return (
     <p className={`mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs ${tone}`}>
-      <Ruler className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
+      {distanceM !== null && (
+        <Ruler className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
+      )}
       {distanceM === null ? (
-        <span>Distance au chantier : position de {name} inconnue.</span>
+        /*
+         * Une localisation absente n'est pas une erreur du technicien : son
+         * téléphone n'a simplement rien partagé. Le message précédent
+         * (« position inconnue ») ressemblait à un échec et invitait à ouvrir
+         * une fiche pour rien. Le badge dit l'état réel sans accuser personne.
+         */
+        <span
+          title={`${name} — position non partagée`}
+          className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900"
+        >
+          🟠 En mission · localisation non partagée
+        </span>
       ) : (
         <span>
           Distance au chantier :{" "}
@@ -190,7 +321,7 @@ export default function AdminIncidentsPage() {
   const canDispatch = role === "ADMIN" || role === "MAINTENANCE_MANAGER";
 
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("open");
+  const [filter, setFilter] = useState<IncidentFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -230,10 +361,22 @@ export default function AdminIncidentsPage() {
 
   const visible = useMemo(() => {
     if (filter === "all") return incidents;
-    if (filter === "open") {
-      return incidents.filter((i) => OPEN_STATUSES.includes(i.status));
+    if (filter === "urgent_unassigned") {
+      // « Urgence non attribuée » = une panne escaladée que personne n'a
+      // encore prise. Le filtre porte sur l'affectation, pas sur la gravité :
+      // une urgence déjà confiée à quelqu'un n'attend plus un dispatcheur.
+      return incidents.filter(
+        (incident) => incident.status === "ESCALATED" && !incident.technician
+      );
     }
-    return incidents.filter((i) => i.status === filter);
+    if (filter === "resolved") {
+      return incidents.filter(
+        (incident) =>
+          incident.status === "CLOSED" ||
+          incident.status === "RESOLVED_BY_CLIENT"
+      );
+    }
+    return incidents.filter((incident) => incident.status === filter);
   }, [incidents, filter]);
 
   const counts = useMemo(
@@ -415,111 +558,197 @@ export default function AdminIncidentsPage() {
                 canDispatch && incident.status === "ESCALATED";
               const isBusy = busyId === incident.id;
 
+              const priority =
+                incident.workOrder?.priority ??
+                (incident.isDirectTransfer ? "CRITICAL" : "MEDIUM");
+              const priorityLevel = priorityTrafficLevel(priority);
+              const priorityStyle = TRAFFIC_LEVELS[priorityLevel];
+              const priorityLabel =
+                priorityLevel === "danger"
+                  ? { emoji: "🔴", label: "CRITIQUE" }
+                  : priorityLevel === "warning"
+                    ? { emoji: "🟠", label: "MOYEN" }
+                    : priorityLevel === "ok"
+                      ? { emoji: "🟢", label: "ROUTINE" }
+                      : { emoji: "⚪", label: "INCONNU" };
+
+              const canClose = nextStatuses.includes("CLOSED");
+              const otherTransitions = nextStatuses.filter(
+                (next) => next !== "CLOSED"
+              );
+
               return (
                 <li
                   key={incident.id}
-                  className={`rounded-xl border p-4 ${
+                  className={`rounded-xl border bg-white p-4 dark:bg-slate-900 ${
                     incident.isDirectTransfer && incident.status === "ESCALATED"
-                      ? "border-red-300 bg-red-50/50 dark:border-red-900 dark:bg-red-950/20"
-                      : "border-gray-200 dark:border-gray-800"
+                      ? "border-red-300 dark:border-red-900"
+                      : "border-slate-200 dark:border-slate-800"
                   }`}
                 >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs text-gray-500 dark:text-gray-400">
-                      {incident.incidentNumber}
-                    </span>
-                    <span className="font-semibold text-gray-900 dark:text-white">
-                      {incident.elevator.elevatorCode}
-                    </span>
-                    <span className="text-sm text-gray-500 dark:text-gray-400">
-                      {incident.elevator.building.name}
-                    </span>
-
-                    {incident.isDirectTransfer && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                        <AlertOctagon className="h-3 w-3" aria-hidden="true" />
-                        Urgence
+                  {/*
+                    Trois colonnes, une question par colonne : l'appareil et
+                    son urgence, ce qui est signalé, puis qui y va et ce qu'on
+                    fait. Le stepper remplace la barre de progression : quatre
+                    points suffisent à dire où en est la panne, sans occuper
+                    une bande entière.
+                  */}
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.5fr)_minmax(0,1fr)] lg:items-start">
+                    {/* 1 — Appareil & urgence */}
+                    <div className="min-w-0">
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide ${priorityStyle.bg} ${priorityStyle.text} ${priorityStyle.border}`}
+                      >
+                        {priorityLabel.emoji} {priorityLabel.label}
                       </span>
-                    )}
+                      <p className="mt-1.5 font-mono text-sm font-bold text-slate-900 dark:text-white">
+                        {incident.elevator.elevatorCode}
+                      </p>
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                        {incident.elevator.building.name}
+                        {incident.elevator.building.city &&
+                          ` · ${incident.elevator.building.city}`}
+                      </p>
+                      <p className="mt-1.5 inline-flex items-center rounded-lg bg-slate-900 px-2.5 py-1 font-mono text-[11px] font-bold text-white dark:bg-black">
+                        🔑{" "}
+                        {incident.elevator.building.accessCode ??
+                          "non renseigné"}
+                      </p>
+                      <p className="mt-1.5 text-[10px] uppercase tracking-wide text-slate-400">
+                        {formatDistanceToNow(new Date(incident.createdAt), {
+                          addSuffix: true,
+                          locale: fr,
+                        })}
+                      </p>
+                      {incident.isDirectTransfer &&
+                        incident.status === "ESCALATED" && (
+                          <span className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                            <AlertOctagon
+                              className="h-3 w-3"
+                              aria-hidden="true"
+                            />
+                            Urgence
+                          </span>
+                        )}
+                    </div>
 
-                    <ValidationBadge status={incident.status} />
+                    {/* 2 — Incident & signalement */}
+                    <div className="min-w-0 lg:border-l lg:border-slate-200 lg:pl-4 dark:lg:border-slate-800">
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">
+                        {incident.errorCode
+                          ? `${incident.errorCode.code} — ${incident.errorCode.title}`
+                          : incident.isDirectTransfer
+                            ? "Assistance d'urgence demandée"
+                            : "Panne signalée"}
+                      </p>
+                      <p className="mt-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                        {incident.notes ??
+                          "Aucune description fournie par le déclarant."}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                        Signalé par{" "}
+                        {incident.client
+                          ? (incident.client.name ?? incident.client.email)
+                          : "un visiteur via le QR public"}
+                        {incident.client?.phone
+                          ? ` (${incident.client.phone})`
+                          : ""}
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {incident.client ? (
+                          <ContractBadge
+                            clientId={incident.client.id}
+                            clientType={incident.client.clientType}
+                            clientName={
+                              incident.client.name ?? incident.client.email
+                            }
+                          />
+                        ) : (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                            Signalement public
+                          </span>
+                        )}
+                        <ValidationBadge status={incident.status} />
+                      </div>
+                    </div>
 
-                    {/*
-                      Whether the reporter is a contracted customer, with the
-                      technical file a tap away. Placed with the status badges
-                      because a dispatcher reads all of them together before
-                      deciding who to send.
-                    */}
-                    <ContractBadge
-                      clientId={incident.client.id}
-                      clientType={incident.client.clientType}
-                      clientName={incident.client.name ?? incident.client.email}
-                    />
-
-                    <span className="ml-auto text-xs text-gray-400">
-                      {formatDistanceToNow(new Date(incident.createdAt), {
-                        addSuffix: true,
-                        locale: fr,
-                      })}
-                    </span>
-                  </div>
-
-                  <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
-                    {incident.errorCode && (
-                      <>
-                        <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">
-                          {incident.errorCode.code}
-                        </span>{" "}
-                        — {incident.errorCode.title}.{" "}
-                      </>
-                    )}
-                    {incident.notes ??
-                      (incident.isDirectTransfer
-                        ? "Assistance d'urgence demandée — aucune description de la panne fournie."
-                        : "Aucune description fournie.")}
-                  </p>
-
-                  <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                    Signalé par{" "}
-                    {incident.client.name ?? incident.client.email}
-                    {incident.client.phone ? ` · ${incident.client.phone}` : ""}
-                    {incident.technician
-                      ? ` · Sur place : ${
-                          incident.technician.name ?? incident.technician.email
-                        }`
-                      : ""}
-                    {incident.workOrder
-                      ? ` · BT ${incident.workOrder.orderNumber} (${enumLabel(
-                          incident.workOrder.priority
-                        )})`
-                      : ""}
-                  </p>
-
-                  {incident.technician && incident.technicianProximity && (
-                    <TechnicianDistance
-                      name={
-                        incident.technician.name ?? incident.technician.email
-                      }
-                      proximity={incident.technicianProximity}
-                    />
-                  )}
-
-                  <ProgressTrack status={incident.status} className="mt-3" />
-
-                  {(canAssign || nextStatuses.length > 0) && (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {canAssign && (
-                        <button
-                          type="button"
-                          onClick={() => setDispatchTarget(incident)}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-                        >
-                          <UserPlus className="h-4 w-4" aria-hidden="true" />
-                          Affecter un technicien
-                        </button>
+                    {/* 3 — Technicien & actions */}
+                    <div className="min-w-0 lg:border-l lg:border-slate-200 lg:pl-4 dark:lg:border-slate-800">
+                      {incident.technician ? (
+                        <>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                            👤{" "}
+                            {incident.technician.name ??
+                              incident.technician.email}
+                          </p>
+                          <p className="mt-0.5 text-[11px] font-medium text-slate-600 dark:text-slate-400">
+                            {technicianStatusMeta(
+                              incident.technician.status,
+                              incident.elevator.building.name,
+                              incident.status
+                            )}
+                          </p>
+                          {incident.technicianProximity && (
+                            <TechnicianDistance
+                              name={
+                                incident.technician.name ??
+                                incident.technician.email
+                              }
+                              proximity={incident.technicianProximity}
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-xs italic text-slate-400">
+                          Non affecté
+                        </p>
                       )}
 
-                      {nextStatuses.map((next) => {
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Link
+                          href={`/ascenseurs/${incident.elevator.id}`}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          📄 Fiche tech
+                        </Link>
+                        <Link
+                          href={
+                            incident.workOrder
+                              ? `/bons-de-travail/${incident.workOrder.id}`
+                              : `/ascenseurs/${incident.elevator.id}`
+                          }
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          👁️ Consulter
+                        </Link>
+                        {canClose && (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void advance(incident, "CLOSED")}
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+                          >
+                            ✅ Clôturer
+                          </button>
+                        )}
+                        {canAssign && (
+                          <button
+                            type="button"
+                            onClick={() => setDispatchTarget(incident)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-red-700"
+                          >
+                            ⚡ Dispatcher
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <IncidentStepper status={incident.status} />
+
+                  {otherTransitions.length > 0 && (
+                    <div className="mt-2 flex flex-wrap justify-end gap-1.5 border-t border-slate-100 pt-2 dark:border-slate-800">
+                      {otherTransitions.map((next) => {
                         const Icon = TRANSITION_ICONS[next];
                         return (
                           <button
@@ -527,15 +756,15 @@ export default function AdminIncidentsPage() {
                             type="button"
                             disabled={isBusy}
                             onClick={() => void advance(incident, next)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800"
+                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800"
                           >
                             {isBusy ? (
                               <Loader2
-                                className="h-4 w-4 animate-spin"
+                                className="h-3 w-3 animate-spin"
                                 aria-hidden="true"
                               />
                             ) : (
-                              <Icon className="h-4 w-4" aria-hidden="true" />
+                              <Icon className="h-3 w-3" aria-hidden="true" />
                             )}
                             {TRANSITION_LABELS[next]}
                           </button>

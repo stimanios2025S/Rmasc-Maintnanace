@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { InfoHint } from "@/components/ui/info-hint";
 import { parseDecimalInput } from "@/lib/ui/numbers";
 import {
   OVERLOAD_POLICY,
@@ -250,8 +251,9 @@ export default function SeuilsPage() {
           <div className="flex items-start gap-3">
             <Gauge className="mt-0.5 h-5 w-5 flex-none text-blue-600 dark:text-blue-400" aria-hidden="true" />
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
                 Seuils d&apos;alerte
+                <InfoHint term="threshold" />
               </h2>
               <p className="mt-0.5 max-w-3xl text-sm text-gray-500 dark:text-gray-400">
                 Les bornes à partir desquelles une mesure déclenche une alerte.

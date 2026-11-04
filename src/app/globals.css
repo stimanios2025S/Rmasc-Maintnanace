@@ -49,8 +49,18 @@
   * {
     @apply border-border;
   }
+  html {
+    background-color: transparent;
+  }
+  /*
+   * Le fond n'est plus peint par `body` : les layouts de travail injectent le
+   * GIF fixe, et une couleur opaque ici masquerait la couche `z-0`. Les pages
+   * qui ne passent pas par ces layouts — connexion, scan public, rapport
+   * imprimé — portent leur propre fond.
+   */
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background-color: transparent;
   }
 }
 

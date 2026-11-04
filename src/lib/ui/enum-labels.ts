@@ -60,7 +60,10 @@ export const ENUM_LABELS: Record<string, string> = {
   // le dit pas — voir `PART_URGENCY_LABELS`.
   IMMEDIATE: "Arrêt immédiat",
   PENDING: "En attente",
+  PENDING_STOCK_CHECK: "En vérification de stock",
   APPROVED: "Validée",
+  RESERVED: "En réserve",
+  ORDER_REQUIRED: "Rupture — commande requise",
   ORDERED: "Commandée",
   REJECTED: "Refusée",
   FULFILLED: "Posée",
@@ -138,6 +141,7 @@ export const ENUM_LABELS: Record<string, string> = {
   ON_JOB: "En intervention",
   OFF_DUTY: "Hors service",
   ON_LEAVE: "En congé",
+  ON_BREAK: "En pause",
 
   // ─── Compétences des techniciens ──────────────────────────
   // `HYDRAULIC` n'est pas repris ici : la clé est déjà définie plus bas pour le

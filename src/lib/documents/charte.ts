@@ -135,6 +135,115 @@ export function resolveStampPath(): string | null {
   return existsSync(candidate) ? candidate : null;
 }
 
+// ─── Identité complète (en-tête et pied de page) ────────────
+
+/** Un identifiant légal imprimé sur le document. */
+export interface CompanyLegalId {
+  label: string;
+  value: string;
+}
+
+/**
+ * Le profil de l'entreprise, tel que l'en-tête et le pied de page le lisent.
+ *
+ * TOUT VIENT DE L'ENVIRONNEMENT, RIEN N'EST INVENTÉ
+ * Un champ non renseigné disparaît de l'en-tête plutôt que d'imprimer un
+ * « RC : — » qui laisserait croire à un document incomplet. C'est le même choix
+ * que pour `companyMentions`, étendu aux identifiants légaux et aux coordonnées
+ * bancaires.
+ *
+ * `INVOICE_COMPANY_TAX_ID` reste lu comme article d'imposition quand
+ * `INVOICE_COMPANY_AI` n'est pas fourni : c'est le nom que ce champ portait
+ * avant que le formulaire ne distingue RC, NIF, NIS et AI, et une entreprise qui
+ * ne met à jour qu'une variable ne doit pas perdre son numéro fiscal.
+ */
+export interface CompanyProfile {
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  legalIds: CompanyLegalId[];
+  bank: string | null;
+  rib: string | null;
+  footerMentions: string[];
+  /** Le logo vu du navigateur (`/brand/…`), ou `null` s'il n'est pas servi. */
+  logoUrl: string | null;
+}
+
+function envText(name: string): string | null {
+  const value = process.env[name]?.trim();
+  return value ? printable(value) : null;
+}
+
+export function companyProfile(): CompanyProfile {
+  const legalIds: CompanyLegalId[] = [];
+  const addId = (label: string, value: string | null) => {
+    if (value) legalIds.push({ label, value });
+  };
+
+  addId("RC", envText("INVOICE_COMPANY_RC"));
+  addId("NIF", envText("INVOICE_COMPANY_NIF"));
+  addId("NIS", envText("INVOICE_COMPANY_NIS"));
+  addId(
+    "AI",
+    envText("INVOICE_COMPANY_AI") ?? envText("INVOICE_COMPANY_TAX_ID")
+  );
+
+  return {
+    name: printable(companyName()),
+    address: envText("INVOICE_COMPANY_ADDRESS"),
+    phone: envText("INVOICE_COMPANY_PHONE"),
+    email: envText("INVOICE_COMPANY_EMAIL"),
+    legalIds,
+    bank: envText("INVOICE_COMPANY_BANK"),
+    rib: envText("INVOICE_COMPANY_RIB"),
+    footerMentions: companyFooterMentions(),
+    logoUrl: logoPublicUrl(),
+  };
+}
+
+/**
+ * Les mentions de pied de page, une par entrée.
+ *
+ * Une seule variable, découpée sur `|` : un fichier d'environnement n'a pas de
+ * tableau, et multiplier les variables numérotées (`_1`, `_2`) revient à
+ * oublier la troisième.
+ */
+export function companyFooterMentions(): string[] {
+  const raw = process.env.INVOICE_COMPANY_MENTIONS;
+  if (!raw) return [];
+  return raw
+    .split("|")
+    .map((line) => printable(line.trim()))
+    .filter(Boolean);
+}
+
+/**
+ * Le logo, côté système de fichiers, pour le PDF.
+ *
+ * `INVOICE_LOGO_PATH` accepte deux formes : un chemin public (`/brand/x.png`,
+ * résolu sous `public/`) ou un chemin absolu. Le défaut est le fichier déposé
+ * avec le produit ; s'il n'existe pas, le document s'imprime sans logo plutôt
+ * que d'échouer.
+ */
+export function resolveLogoPath(): string | null {
+  const configured = process.env.INVOICE_LOGO_PATH?.trim();
+  const candidate = configured
+    ? configured.startsWith("/")
+      ? path.join(process.cwd(), "public", configured.replace(/^\/+/, ""))
+      : path.resolve(configured)
+    : path.join(process.cwd(), "public", "brand", "rmasc-logo.png");
+
+  return existsSync(candidate) ? candidate : null;
+}
+
+/** Le logo vu du navigateur — `null` si le chemin configuré n'est pas public. */
+function logoPublicUrl(): string | null {
+  const configured = process.env.INVOICE_LOGO_PATH?.trim();
+  if (!configured) return "/brand/rmasc-logo.png";
+  return configured.startsWith("/") ? configured : null;
+}
+
 // ─── Composition ────────────────────────────────────────────
 
 /** Les deux bords utiles de la page, et la largeur entre eux. */
@@ -237,16 +346,61 @@ export function drawDocumentHeader(
   header: DocumentHeader
 ): number {
   const { left, width } = frame(doc);
+  const profile = companyProfile();
 
-  doc.fillColor(INK).font("Helvetica-Bold").fontSize(18);
-  doc.text(printable(companyName()), left, PAGE_MARGIN);
+  /**
+   * Le logo décale le bloc société vers la droite.
+   *
+   * Sa hauteur n'est pas supposée carrée : elle est lue dans l'image, sinon un
+   * logo horizontal ferait remonter le trait de séparation dans le texte. Un
+   * fichier illisible laisse simplement l'en-tête sans logo — un document qui
+   * refuse de s'imprimer pour une image manquante serait pire que le document
+   * sans image.
+   */
+  let textLeft = left;
+  let logoBottom = PAGE_MARGIN;
 
-  doc.font("Helvetica").fontSize(9).fillColor(MUTED);
-  const mentions = companyMentions();
-  if (mentions.length > 0) {
-    doc.text(mentions.join("  ·  "), left, PAGE_MARGIN + 24, {
-      width: width * 0.55,
-    });
+  const logoPath = resolveLogoPath();
+  if (logoPath) {
+    const logoWidth = 74;
+    try {
+      /**
+       * `openImage` existe à l'exécution mais n'est pas déclaré par les types
+       * de pdfkit : on lit les dimensions réelles pour ne pas supposer un logo
+       * carré.
+       */
+      const image = (
+        doc as unknown as {
+          openImage(path: string): { width: number; height: number };
+        }
+      ).openImage(logoPath);
+      const logoHeight = (image.height / image.width) * logoWidth;
+      doc.image(logoPath, left, PAGE_MARGIN - 4, { width: logoWidth });
+      textLeft = left + logoWidth + 14;
+      logoBottom = PAGE_MARGIN - 4 + logoHeight;
+    } catch {
+      console.error(`[documents] logo illisible : ${logoPath}`);
+    }
+  }
+
+  const textWidth = Math.max(150, width * 0.6 - (textLeft - left));
+
+  doc.fillColor(INK).font("Helvetica-Bold").fontSize(16);
+  doc.text(printable(profile.name), textLeft, PAGE_MARGIN, { width: textWidth });
+
+  doc.font("Helvetica").fontSize(8.5).fillColor(MUTED);
+  const contact = [profile.address, profile.phone, profile.email]
+    .filter((line): line is string => Boolean(line))
+    .join("  ·  ");
+  if (contact) {
+    doc.text(contact, textLeft, PAGE_MARGIN + 21, { width: textWidth });
+  }
+
+  const legal = profile.legalIds
+    .map((id) => `${id.label} : ${id.value}`)
+    .join("  ·  ");
+  if (legal) {
+    doc.text(legal, textLeft, PAGE_MARGIN + 33, { width: textWidth });
   }
 
   // Le bloc titre est aligné à droite, sur la même ligne de base que le nom. Il
@@ -266,7 +420,7 @@ export function drawDocumentHeader(
     doc.text(printable(line), { width, align: "right" });
   }
 
-  const baseline = headerBaseline(doc);
+  const baseline = Math.max(headerBaseline(doc), logoBottom + 8);
   drawRule(doc, baseline);
   return baseline;
 }
@@ -296,6 +450,98 @@ export function drawStamp(doc: PDFKit.PDFDocument, y: number): void {
   } catch {
     console.error(`[documents] tampon illisible : ${stampPath}`);
   }
+}
+
+/**
+ * Le même tampon, à une position imposée.
+ *
+ * La facture réserve un cadre « Cachet et signature » à gauche et y pose le
+ * tampon ; `drawStamp`, qui colle à droite, recouvrirait les conditions de
+ * règlement. Un fichier illisible laisse le cadre vide, jamais un document en
+ * échec.
+ */
+export function drawStampIn(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  stampWidth: number
+): void {
+  const stampPath = resolveStampPath();
+  if (!stampPath) return;
+
+  try {
+    doc.image(stampPath, x, y, { width: stampWidth });
+  } catch {
+    console.error(`[documents] tampon illisible : ${stampPath}`);
+  }
+}
+
+// ─── Pied de page ───────────────────────────────────────────
+
+/**
+ * Le pied de page commun : coordonnées bancaires, mentions, pagination.
+ *
+ * APPELÉ APRÈS LE CONTENU, PAGE PAR PAGE
+ * Le générateur garde les pages en mémoire (`bufferPages: true`) et revient sur
+ * chacune pour écrire ce bloc. C'est le seul moyen d'avoir un pied de page sur
+ * la première *et* sur la dernière quand le tableau déborde : l'écrire au fil
+ * de l'eau laisserait la page finale sans mentions.
+ *
+ * Il se place sous la zone de contenu (`height - PAGE_MARGIN`), dans la marge
+ * basse, donc jamais par-dessus une ligne du tableau.
+ */
+export function drawDocumentFooter(
+  doc: PDFKit.PDFDocument,
+  pageNumber: number,
+  pageCount: number
+): void {
+  const profile = companyProfile();
+  const { left, right } = frame(doc);
+  const y = doc.page.height - 34;
+
+  /**
+   * Le pied de page s'écrit dans la marge basse, sous la zone de contenu.
+   *
+   * pdfkit pagine tout seul dès qu'un texte dépasse la marge inférieure : sans
+   * cette neutralisation, écrire les mentions à `height - 17` ajoutait une page
+   * blanche à la fin de chaque facture. On annule la marge le temps du bloc, et
+   * on la rétablit — le document suivant sur le même `doc` en dépend.
+   */
+  const bottomMargin = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
+
+  doc
+    .moveTo(left, y)
+    .lineTo(right, y)
+    .strokeColor(RULE)
+    .lineWidth(0.5)
+    .stroke();
+
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7);
+
+  const bank = [
+    profile.bank ? `Banque : ${profile.bank}` : null,
+    profile.rib ? `RIB : ${profile.rib}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("  ·  ");
+
+  if (bank) {
+    doc.text(printable(bank), left, y + 6, { width: (right - left) * 0.75 });
+  }
+  doc.text(`Page ${pageNumber}/${pageCount}`, left, y + 6, {
+    width: right - left,
+    align: "right",
+  });
+
+  const mentions = profile.footerMentions.join("  ·  ");
+  if (mentions) {
+    doc.fontSize(6.5).text(printable(mentions), left, y + 17, {
+      width: right - left,
+    });
+  }
+
+  doc.page.margins.bottom = bottomMargin;
 }
 
 // ─── Nom du fichier ─────────────────────────────────────────

@@ -8,7 +8,8 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: elevator_pulse
     ports:
-      - "5432:5432"
+      # Loopback only: Postgres must not be reachable from the Wi-Fi network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +23,8 @@ services:
     container_name: elevator-pulse-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      # Loopback only, same reason as Postgres above.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
 

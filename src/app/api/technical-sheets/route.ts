@@ -25,7 +25,7 @@
  * schema below is generated from that catalogue, so the two cannot drift.
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
@@ -46,6 +46,8 @@ import {
   REQUIRED_FIELD_NAMES,
   labelForField,
 } from "@/lib/technical-sheets/fields";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoTechnicalSheets } from "@/lib/demo/registers";
 
 // ─── Schemas ────────────────────────────────────────────────
 
@@ -169,6 +171,25 @@ export async function GET(request: NextRequest) {
 
     return jsonOk({ sheets, total, page, limit });
   } catch (error) {
+    /**
+     * Sans base, le tableau se lit dans la fixture : trois fiches de prospects,
+     * à des degrés d'avancement différents. Le repli respecte la forme
+     * `{ data: { sheets, total, page, limit } }` que l'écran lit déjà.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("GET /api/technical-sheets");
+      const { page, limit } = parsePagination(request.nextUrl.searchParams);
+      const sheets = demoTechnicalSheets();
+      return NextResponse.json({
+        data: {
+          sheets,
+          total: sheets.length,
+          page,
+          limit,
+        },
+        demo: true,
+      });
+    }
     return handleRouteError(error);
   }
 }
@@ -176,6 +197,9 @@ export async function GET(request: NextRequest) {
 // ─── POST ───────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  /** Le corps validé, gardé pour l'acquittement de démonstration. */
+  let submitted: Record<string, string | undefined> | null = null;
+
   try {
     const session = await requireSession();
 
@@ -196,6 +220,7 @@ export async function POST(request: NextRequest) {
 
     const body = await readJson(request);
     const parsed = CreateTechnicalSheetSchema.parse(body);
+    submitted = parsed as Record<string, string | undefined>;
 
     const { elevatorId, ...fieldValues } = parsed;
 
@@ -247,6 +272,30 @@ export async function POST(request: NextRequest) {
 
     return jsonOk(sheet, 201);
   } catch (error) {
+    if (submitted && shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("POST /api/technical-sheets");
+      const now = new Date().toISOString();
+      return NextResponse.json(
+        {
+          data: {
+            id: `demo-sheet-${Date.now()}`,
+            ...submitted,
+            clientId: "demo-prospect",
+            client: {
+              id: "demo-prospect",
+              name: submitted.clientName ?? null,
+              email: "prospect@demonstration.local",
+              phone: null,
+            },
+            elevator: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+          demo: true,
+        },
+        { status: 201 }
+      );
+    }
     return handleRouteError(error);
   }
 }

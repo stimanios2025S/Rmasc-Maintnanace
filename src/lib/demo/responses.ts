@@ -11,6 +11,7 @@
  */
 
 import { demoWorld } from "./dataset";
+import { demoCoverage } from "./registers";
 import { presentErrorCode } from "@/lib/incidents/error-codes";
 import { readCoordinates } from "@/lib/geo/geofence";
 import {
@@ -20,6 +21,11 @@ import {
 import { DISPATCHABLE_TECHNICIAN_STATUSES, USER_ROLES } from "@/types";
 import { ENTRETIEN_CHECK_NAMES } from "@/lib/maintenance/entretien-checklist";
 import { computeQuoteTotals } from "@/lib/quotes/totals";
+import {
+  DEFAULT_THRESHOLDS,
+  evaluateThreshold,
+  payloadThresholds,
+} from "@/lib/iot/thresholds";
 import {
   DERIVED_METRIC,
   TELEMETRY_METRICS,
@@ -87,11 +93,24 @@ function buildingById(id: string): Building {
 // ─── GET /api/dashboard ─────────────────────────────────────
 
 export function demoDashboard() {
-  const { buildings, elevators, alerts, workOrders, telemetry } = demoWorld();
+  const { buildings, elevators, alerts, workOrders, telemetry, snapshots } =
+    demoWorld();
   const now = Date.now();
 
   const countByStatus = (status: string) =>
     elevators.filter((e) => e.status === status).length;
+
+  /**
+   * Les immeubles couverts par un contrat en vigueur, comptés comme la route
+   * vivante les compte : sur l'état effectif, pas sur le statut enregistré.
+   * `demoCoverage` applique déjà cette règle, donc la fixture ne peut pas
+   * annoncer une couverture que le badge des contrats contredirait.
+   */
+  const buildingsUnderContract = new Set(
+    demoCoverage(null)
+      .filter((contract) => contract.effectiveStatus === "ACTIVE")
+      .flatMap((contract) => contract.buildings.map((building) => building.id))
+  ).size;
 
   const avgHealth =
     elevators.length > 0
@@ -207,10 +226,77 @@ export function demoDashboard() {
       completedAt: w.completedAt,
     }));
 
+  /**
+   * L'état courant des capteurs, une ligne par appareil — la forme exacte de
+   * `sensorSnapshot` dans la route vivante.
+   *
+   * Les niveaux sont calculés avec les mêmes fonctions que l'ingestion, sur
+   * les seuils par défaut : une fixture qui peindrait en vert une valeur que
+   * l'application alerterait serait un écran qui rassure à tort.
+   */
+  const sensorSnapshot = snapshots
+    .flatMap((snapshot) => {
+      const unit = elevators.find((e) => e.id === snapshot.elevatorId);
+      if (!unit) return [];
+      const building = buildingById(unit.buildingId);
+
+      const candidates = [
+        {
+          definition:
+            DEFAULT_THRESHOLDS.find(
+              (rule) => rule.metricName === "motor_temperature_c"
+            ) ?? null,
+          value: snapshot.motorTemperatureC,
+        },
+        {
+          definition:
+            DEFAULT_THRESHOLDS.find(
+              (rule) => rule.metricName === "motor_vibration_mm_s"
+            ) ?? null,
+          value: snapshot.motorVibrationMmS,
+        },
+        {
+          definition: payloadThresholds(unit.maxPayloadKg),
+          value: snapshot.cabinLoadKg,
+        },
+      ];
+
+      const readings = candidates.flatMap(({ definition, value }) => {
+        if (!definition || value === null) return [];
+        const breach = evaluateThreshold(definition, value);
+        return [
+          {
+            metricName: definition.metricName,
+            title: definition.title,
+            unit: definition.unit,
+            value,
+            level:
+              breach === null
+                ? "ok"
+                : breach.severity === "CRITICAL"
+                  ? "critical"
+                  : "warning",
+          },
+        ];
+      });
+
+      return {
+        elevatorId: snapshot.elevatorId,
+        elevatorCode: unit.elevatorCode,
+        buildingName: building?.name ?? "—",
+        status: unit.status,
+        lastUpdated: snapshot.lastUpdated,
+        readings,
+      };
+    })
+    .sort((a, b) => a.elevatorCode.localeCompare(b.elevatorCode));
+
   return {
     telemetryFeed,
+    sensorSnapshot,
     stats: {
       totalBuildings: buildings.length,
+      buildingsUnderContract,
       totalElevators: elevators.length,
       operationalCount: countByStatus("OPERATIONAL"),
       serviceRequiredCount: countByStatus("SERVICE_REQUIRED"),
@@ -219,6 +305,11 @@ export function demoDashboard() {
       offlineCount: countByStatus("OFFLINE"),
       openWorkOrders,
       emergencyWorkOrders,
+      /**
+       * La fixture ne modélise pas de demande de pièce rattachée à un bon :
+       * zéro est la réponse honnête, pas une valeur inventée.
+       */
+      blockedCriticalParts: 0,
       avgHealth,
     },
     // Same labels and colours as the live branch in /api/dashboard, so the
@@ -248,7 +339,13 @@ export function demoElevatorList(): ElevatorWithRelations[] {
       const b = buildingById(e.buildingId);
       return {
         ...e,
-        building: { id: b.id, name: b.name, address: b.address },
+        building: {
+          id: b.id,
+          name: b.name,
+          address: b.address,
+          city: b.city,
+          accessCode: b.accessCode,
+        },
         latestTelemetry:
           snapshots.find((s) => s.elevatorId === e.id) ?? null,
         _count: {
@@ -409,7 +506,11 @@ const WORK_ORDER_INCLUDE = (wo: WorkOrder) => {
     elevator: {
       id: wo.elevatorId,
       elevatorCode: unit?.elevatorCode ?? "—",
-      building: { name: unit ? buildingById(unit.buildingId).name : "—" },
+      building: {
+        name: unit ? buildingById(unit.buildingId).name : "—",
+        address: unit ? buildingById(unit.buildingId).address : "—",
+        accessCode: unit ? buildingById(unit.buildingId).accessCode : null,
+      },
     },
     assignedTo: assignee
       ? { id: assignee.id, name: assignee.name, email: assignee.email }
@@ -592,6 +693,11 @@ export function demoTechnician(requestedId: string | null) {
       elevator: unit?.elevatorCode ?? "—",
       building: building?.name ?? "—",
       address: building?.address ?? "—",
+      interventionAddress:
+        wo.interventionAddress ??
+        [building?.address, building?.city, unit?.installationLocation]
+          .filter(Boolean)
+          .join(", "),
       component: wo.componentId
         ? (components.find((c) => c.id === wo.componentId)?.name ?? null)
         : null,
@@ -728,6 +834,7 @@ export function demoMaintenanceSchedules(filters?: {
             name: building?.name ?? "—",
             address: building?.address ?? "—",
             city: building?.city ?? "—",
+            accessCode: building?.accessCode ?? null,
           },
         },
         activeWorkOrder: open
@@ -866,12 +973,23 @@ export function demoErrorCodes(query?: string | null) {
 
 // ─── GET /api/incidents ─────────────────────────────────────
 
-export function demoIncidents(filters: { status?: string | null }) {
+export function demoIncidents(filters: {
+  status?: string | null;
+  /**
+   * L'appareil demandé, quand la fiche client ouvre l'historique d'une machine.
+   *
+   * Sans ce filtre, le panneau « Historique des pannes » d'un ascenseur
+   * afficherait les pannes de tout le parc — et la fiche d'un client se
+   * lirait comme si tous les appareils étaient les siens.
+   */
+  elevatorId?: string | null;
+}) {
   const { incidents, elevators, errorCodes, users, workOrders } = demoWorld();
   const now = new Date();
 
   const rows = incidents
     .filter((i) => (filters.status ? i.status === filters.status : true))
+    .filter((i) => (filters.elevatorId ? i.elevatorId === filters.elevatorId : true))
     .sort(byDesc((i) => i.createdAt.getTime()))
     .map((incident) => {
       const unit = elevators.find((e) => e.id === incident.elevatorId);
@@ -926,6 +1044,11 @@ export function demoIncidents(filters: { status?: string | null }) {
             latitude: building?.latitude ?? null,
             longitude: building?.longitude ?? null,
             geofenceRadiusM: building?.geofenceRadiusM ?? null,
+            // Rendu même s'il est nul : la ligne du tableau des incidents est
+            // conditionnée par la valeur, pas par la présence de la clé, et un
+            // monde de démonstration qui ne modélise aucun code d'accès doit
+            // quand même livrer la forme que le rendu attend.
+            accessCode: building?.accessCode ?? null,
           },
         },
         errorCode: code ? { id: code.id, code: code.code, title: code.title } : null,
@@ -938,6 +1061,7 @@ export function demoIncidents(filters: { status?: string | null }) {
               name: technician.name,
               email: technician.email,
               phone: technician.phone,
+              status: technician.status,
               lastLatitude: technician.lastLatitude,
               lastLongitude: technician.lastLongitude,
               lastPositionAt: technician.lastPositionAt,
@@ -968,36 +1092,90 @@ export function demoIncidents(filters: { status?: string | null }) {
  * shared `DISPATCHABLE_TECHNICIAN_STATUSES` rather than repeating the pair.
  */
 export function demoTechnicianRoster() {
-  const { users, workOrders, incidents } = demoWorld();
+  const { users, workOrders, incidents, elevators, buildings } = demoWorld();
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const OPEN_STATUSES = ["ASSIGNED", "IN_PROGRESS", "ON_HOLD"] as const;
 
   return users
-    .filter(
-      (u) =>
-        u.role === "FIELD_TECHNICIAN" &&
-        u.isActive &&
-        DISPATCHABLE_TECHNICIAN_STATUSES.includes(u.status)
-    )
-    .map((user) => ({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      status: user.status,
-      openWorkOrders: workOrders.filter(
+    .filter((u) => u.role === "FIELD_TECHNICIAN" && u.isActive)
+    .map((user) => {
+      const open = workOrders
+        .filter(
+          (w) =>
+            w.assignedToId === user.id &&
+            OPEN_STATUSES.includes(
+              w.status as (typeof OPEN_STATUSES)[number]
+            )
+        )
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      const current =
+        open.find((w) => w.status === "IN_PROGRESS") ?? open[0] ?? null;
+      const unit = current
+        ? elevators.find((e) => e.id === current.elevatorId)
+        : null;
+      const building = unit
+        ? buildings.find((b) => b.id === unit.buildingId)
+        : null;
+
+      const completed = workOrders.filter(
         (w) =>
           w.assignedToId === user.id &&
-          (w.status === "ASSIGNED" ||
-            w.status === "IN_PROGRESS" ||
-            w.status === "ON_HOLD")
-      ).length,
-      openIncidents: incidents.filter(
-        (i) =>
-          i.technicianId === user.id &&
-          (i.status === "TECHNICIAN_ASSIGNED" || i.status === "IN_PROGRESS")
-      ).length,
-    }))
+          w.status === "COMPLETED" &&
+          w.completedAt !== null &&
+          w.completedAt.getTime() >= startOfDay.getTime()
+      );
+      const lastCompleted = workOrders
+        .filter(
+          (w) =>
+            w.assignedToId === user.id &&
+            w.status === "COMPLETED" &&
+            w.completedAt !== null
+        )
+        .sort((a, b) => b.completedAt!.getTime() - a.completedAt!.getTime())[0];
+      const lastUnit = lastCompleted
+        ? elevators.find((e) => e.id === lastCompleted.elevatorId)
+        : null;
+      const lastBuilding = lastUnit
+        ? buildings.find((b) => b.id === lastUnit.buildingId)
+        : null;
+
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        status: user.status,
+        openWorkOrders: open.length,
+        openIncidents: incidents.filter(
+          (i) =>
+            i.technicianId === user.id &&
+            (i.status === "TECHNICIAN_ASSIGNED" || i.status === "IN_PROGRESS")
+        ).length,
+        // Le site de l'intervention en cours, comme la route vivante le rend.
+        currentBuilding: building?.name ?? null,
+        currentMission: current
+          ? {
+              orderId: current.id,
+              status: current.status,
+              elevatorCode: unit?.elevatorCode ?? "—",
+              buildingName: building?.name ?? "—",
+              address: building?.address ?? "—",
+              accessCode: building?.accessCode ?? null,
+              startedAt: current.startedAt ?? current.arrivedAt,
+            }
+          : null,
+        completedToday: completed.length,
+        remainingToday: open.length,
+        lastAccessCode:
+          building?.accessCode ?? lastBuilding?.accessCode ?? null,
+      };
+    })
     .sort(
       (a, b) =>
+        Number(a.status === "OFF_DUTY" || a.status === "ON_LEAVE") -
+          Number(b.status === "OFF_DUTY" || b.status === "ON_LEAVE") ||
         a.openWorkOrders + a.openIncidents - (b.openWorkOrders + b.openIncidents) ||
         a.name.localeCompare(b.name)
     );
@@ -1809,6 +1987,35 @@ function buildDemoQuotes() {
       lines: [
         { reference: "R-6x19", designation: "Jeu de câbles de traction 8 mm", quantity: 4, unit: "U", unitPrice: 42000 },
         { designation: "Main-d'œuvre et mise en service", quantity: 24, unit: "h", unitPrice: 2400 },
+      ],
+    },
+    /**
+     * Deux offres de plus, pour que la fiche d'un client ne montre pas un
+     * registre à une seule ligne.
+     *
+     * `buildDemoQuotes` répartit les projets sur les immeubles du monde de
+     * démonstration dans l'ordre : ce sont donc les sites du « Syndic Les
+     * Pins » qui reçoivent ces deux-là, après le refus ci-dessus. La fiche
+     * affiche ainsi les trois états que l'onglet doit distinguer — en attente,
+     * accepté, refusé.
+     */
+    {
+      need:
+        "Remplacement du limiteur de vitesse sur l'appareil de la résidence : " +
+        "essai de déclenchement non concluant lors du dernier contrôle.",
+      notes: "Pièce disponible sous cinq jours ouvrés.",
+      status: "REQUESTED",
+      lines: [],
+    },
+    {
+      need:
+        "Mise aux normes du tableau électrique de la machinerie : " +
+        "protection différentielle et étiquetage des circuits.",
+      notes: "Intervention d'une journée, hors heures de pointe.",
+      status: "ACCEPTED",
+      lines: [
+        { reference: "TAB-DIFF", designation: "Tableau électrique avec protection différentielle", quantity: 1, unit: "U", unitPrice: 96000 },
+        { designation: "Main-d'œuvre et mise en conformité", quantity: 10, unit: "h", unitPrice: 2400 },
       ],
     },
   ];

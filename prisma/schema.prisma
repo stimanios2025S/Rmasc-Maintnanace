@@ -218,6 +218,9 @@ enum TechnicianStatus {
   ON_JOB
   OFF_DUTY
   ON_LEAVE
+  /// Pause courte et déclarée : le technicien est sur site mais indisponible
+  /// pour une nouvelle affectation pendant ce temps.
+  ON_BREAK
 }
 
 /// Les compétences qu'un technicien de maintenance peut porter.
@@ -314,7 +317,14 @@ enum PartUrgency {
 /// quelqu'un d'autre — et rien ne disait laquelle des deux avait eu lieu.
 enum PartRequirementStatus {
   PENDING
+  /// La demande est arrivée au magasin et attend la vérification de stock.
+  /// C'est l'état dans lequel le terrain la dépose désormais.
+  PENDING_STOCK_CHECK
   APPROVED
+  /// La pièce est en réserve, déduite du stock, et attend d'être posée.
+  RESERVED
+  /// Le magasin n'a pas la pièce : elle part en approvisionnement fournisseur.
+  ORDER_REQUIRED
   ORDERED
   FULFILLED
   REJECTED
@@ -404,6 +414,8 @@ model User {
   inspectionReports    InspectionReport[]
   alerts               Alert[]
   notifications        Notification[]
+  /// Messages écrits par ce compte dans le canal d'un bon de travail.
+  sentMessages         WorkOrderMessage[] @relation("MessageSender")
   sessions             Session[]
 
   /// Corrections this account made to reports awaiting approval — see
@@ -498,6 +510,12 @@ model Building {
   contactPerson String    @map("contact_person")
   contactEmail  String?   @map("contact_email")
   contactPhone  String?   @map("contact_phone")
+  /// Code d'accès de l'immeuble / du local technique.
+  ///
+  /// Donnée sensible : le détail d'un appareil ne la renvoie qu'aux rôles
+  /// internes, et à un technicien uniquement s'il a un bon de travail sur ce
+  /// site. Voir `GET /api/elevators/[id]`.
+  accessCode    String?   @map("access_code")
   slaTier       SLATier   @default(STANDARD) @map("sla_tier")
   latitude      Float?
   longitude     Float?
@@ -544,6 +562,15 @@ model Elevator {
   id               String         @id @default(cuid())
   elevatorCode     String         @unique @map("elevator_code")
   buildingId       String         @map("building_id")
+  /// Complément d'adresse propre à l'appareil : bâtiment, cage, étage.
+  ///
+  /// L'adresse de l'immeuble dit la rue ; elle ne dit pas où se trouve la
+  /// machine dans un ensemble de plusieurs cages ou de plusieurs étages. Ce
+  /// champ est le complément saisi par le bureau (« Bâtiment A, 3e étage »),
+  /// affiché avec l'adresse du site sur la fiche client et dans le portail du
+  /// technicien. Nullable : les appareils déjà en base n'en ont pas, et
+  /// l'adresse de l'immeuble reste le lieu de repli.
+  installationLocation String?     @map("installation_location")
   brand            ElevatorBrand
   /// La marque d'origine, quand l'appareil n'est pas de notre parc.
   ///
@@ -782,6 +809,14 @@ model WorkOrder {
   orderNumber     String            @unique @map("order_number")
   title           String
   description     String?
+  /// L'adresse exacte où l'intervention doit se dérouler.
+  ///
+  /// Le site porte l'adresse de l'immeuble ; un bon porte le lieu précis que
+  /// le bureau a demandé au technicien de rejoindre — une cage, un étage, une
+  /// entrée, un local technique. Ce texte est obligatoire à la création d'un
+  /// bon depuis l'écran, mais nullable en base : les bons antérieurs n'en ont
+  /// pas, et l'adresse de l'immeuble reste leur lieu de repli.
+  interventionAddress String?       @map("intervention_address")
   type            WorkOrderType
   priority        WorkOrderPriority @default(MEDIUM)
   status          WorkOrderStatus   @default(OPEN)
@@ -939,6 +974,12 @@ model WorkOrder {
   /// `PartRequirement` : une demande n'est pas un constat.
   partRequirements PartRequirement[]
 
+  /// Notifications in-app qui pointent sur ce bon (affectation, message).
+  notifications Notification[]
+
+  /// Le canal dispatch ↔ terrain, horodaté. Voir `WorkOrderMessage`.
+  messages WorkOrderMessage[]
+
   @@index([elevatorId, status])
   @@index([assignedToId, status])
   @@index([status, priority])
@@ -1034,6 +1075,18 @@ model PartRequirement {
   stockSentById  String?   @map("stock_sent_by_id")
   stockSendError String?   @map("stock_send_error")
 
+  // ─── La décision du magasin ───────────────────────────────
+  //
+  // `decisionNote` porte le motif d'un refus. Le rendre obligatoire dans le
+  // formulaire et nullable ici est voulu : une acceptation n'a pas de motif,
+  // et une colonne NOT NULL aurait forcé à écrire « — » dans chaque ligne
+  // acceptée. L'écran refuse l'envoi sans motif ; la route le vérifie aussi.
+  decisionNote String? @map("decision_note")
+  /// Quand la pièce a été mise de côté. Distinct de `statusChangedAt` : c'est
+  /// l'horloge de la réservation, celle qui dit depuis quand une pièce
+  /// immobilisée attend son poseur.
+  reservedAt   DateTime? @map("reserved_at")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1054,6 +1107,40 @@ model PartRequirement {
   /// Et celle du tableau du bureau : « ce qui attend une décision ».
   @@index([status, urgency])
   @@map("part_requirements")
+}
+
+/// La réserve locale du magasin.
+///
+/// POURQUOI UNE TABLE ICI, ALORS QUE LE STOCK VIT AILLEURS
+/// Le magasin central est une autre application, qui tient les bons de sortie
+/// et les fournisseurs. Ce que cette table-ci modélise est plus petit et plus
+/// proche : ce que le magasinier a **physiquement sous la main** au moment où
+/// une demande arrive. C'est cette quantité-là qu'il vérifie avant de réserver,
+/// et c'est elle qu'il décrémente — pas le stock comptable du magasin central.
+///
+/// La correspondance avec une demande se fait par `reference`, comparée sans
+/// tenir compte de la casse à la référence de remplacement, puis au nom. Les
+/// pièces du terrain sont du texte libre : exiger un identifiant de catalogue
+/// aurait bloqué toute demande dont la référence n'est pas encore connue.
+model StockItem {
+  id       String  @id @default(cuid())
+  /// La référence de la pièce, telle que le technicien l'écrit.
+  reference String @unique
+  name      String
+  /// Famille de pièce : guidage, électronique, portes, câbles…
+  category  String?
+  quantity  Int    @default(0)
+  /// Sous ce seuil, l'écran signale la ligne comme basse.
+  reorderThreshold Int @default(0) @map("reorder_threshold")
+  /// Prix unitaire indicatif, en dinars algériens.
+  unitPrice Decimal? @db.Decimal(12, 2) @map("unit_price")
+  location  String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([quantity])
+  @@map("stock_items")
 }
 
 /// Une facture émise pour un bon de travail clos.
@@ -1418,15 +1505,44 @@ model Notification {
   userId    String   @map("user_id")
   title     String
   message   String
-  type      String   // alert, work_order, system
+  /// Vocabulaire libre, comme `WorkOrder.whatsappFailure` : les valeurs
+  /// historiques (`alert`, `work_order`, `system`) et les types d'affectation
+  /// (`ASSIGNMENT`, `URGENCY`, `DISPATCH`) coexistent sans migration d'enum.
+  type      String
   isRead    Boolean  @default(false) @map("is_read")
   linkUrl   String?  @map("link_url")
+  /// Le bon concerné, quand la notification en désigne un. Optionnel : une
+  /// alerte système n'a pas de bon.
+  workOrderId String? @map("work_order_id")
   createdAt DateTime @default(now()) @map("created_at")
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workOrder WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
 
   @@index([userId, isRead])
+  @@index([workOrderId])
   @@map("notifications")
+}
+
+/// Un message du canal dispatch ↔ terrain, rattaché à un bon de travail.
+///
+/// POURQUOI UN MODÈLE ET PAS UN CHAMP `notes`
+/// `notes` est l'état courant du bon, réécrit à chaque correction ; un échange
+/// est une suite de faits horodatés qui ne se réécrit pas. Les confondre
+/// effacerait la question du bureau en même temps que la réponse du technicien.
+model WorkOrderMessage {
+  id          String   @id @default(cuid())
+  workOrderId String   @map("work_order_id")
+  senderId    String   @map("sender_id")
+  content     String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  sender      User      @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  /// La seule lecture : le fil d'un bon, dans l'ordre où il s'est écrit.
+  @@index([workOrderId, createdAt])
+  @@map("work_order_messages")
 }
 
 // ─── ERROR CODES (CLIENT SELF-SERVICE) ──────────────────────
@@ -1478,7 +1594,14 @@ model IncidentReport {
   id               String         @id @default(cuid())
   incidentNumber   String         @unique @map("incident_number")
   elevatorId       String         @map("elevator_id")
-  clientId         String         @map("client_id")
+  /// Nullable : un signalement déposé depuis le QR public n'a pas de compte.
+  ///
+  /// Le laisser obligatoire obligeait à refuser toute panne sur un immeuble
+  /// sans propriétaire — c'est-à-dire précisément le parc « sans contrat » que
+  /// le QR doit couvrir. Quand l'immeuble a un compte, la panne y est rattachée
+  /// et le client la voit dans son portail ; sinon elle reste un signalement
+  /// public, visible du bureau.
+  clientId         String?        @map("client_id")
   errorCodeId      String?        @map("error_code_id")
   status           IncidentStatus @default(ESCALATED)
   isDirectTransfer Boolean        @default(false) @map("is_direct_transfer")
@@ -1509,7 +1632,7 @@ model IncidentReport {
 
   // Relationships
   elevator         Elevator   @relation(fields: [elevatorId], references: [id], onDelete: Cascade)
-  client           User       @relation("ClientIncidents", fields: [clientId], references: [id], onDelete: Cascade)
+  client           User?      @relation("ClientIncidents", fields: [clientId], references: [id], onDelete: Cascade)
   errorCode        ErrorCode? @relation(fields: [errorCodeId], references: [id], onDelete: SetNull)
   workOrder        WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
   technician       User?      @relation("TechnicianIncidents", fields: [technicianId], references: [id], onDelete: SetNull)
@@ -1556,12 +1679,23 @@ model TechnicalSheet {
   weightCapacity String @map("weight_capacity")
   numberOfFloors String @map("number_of_floors")
 
+  /// Compléments saisis par le bureau lors d'une demande hors contrat.
+  ///
+  /// Le formulaire client ne demandait que le nom et l'adresse ; une demande
+  /// prise au téléphone doit aussi porter le nom de l'immeuble et un numéro
+  /// joignable. Nullables : les fiches existantes n'en ont pas.
+  buildingName String? @map("building_name")
+  contactPhone String? @map("contact_phone")
+
   // ─── Optionnels — identification ──────────────────────────
   serialNumber     String? @map("serial_number")
   installationDate String? @map("installation_date")
   technicianName   String? @map("technician_name")
 
   // ─── Optionnels — machinerie ──────────────────────────────
+  /// Marque et modèle de l'appareil, relevés à la visite ou déclarés.
+  brand           String?
+  model           String?
   machineType     String? @map("machine_type")
   mainBreaker     String? @map("main_breaker")
   plugSwitch      String? @map("plug_switch")

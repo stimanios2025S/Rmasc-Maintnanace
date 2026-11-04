@@ -128,6 +128,9 @@ const INCIDENT_SELECT = {
           latitude: true,
           longitude: true,
           geofenceRadiusM: true,
+          // Le code d'accès accompagne la panne : le dispatcheur le lit au
+          // téléphone, et il part avec l'affectation vers le cockpit terrain.
+          accessCode: true,
         },
       },
     },
@@ -160,6 +163,12 @@ const INCIDENT_SELECT = {
       name: true,
       email: true,
       phone: true,
+      /**
+       * Le statut temps réel du technicien, pour que la colonne
+       * « Statut & Affectation » du tableau puisse dire « Disponible » ou
+       * « En mission » — sans quoi elle n'afficherait qu'un nom.
+       */
+      status: true,
       lastLatitude: true,
       lastLongitude: true,
       lastPositionAt: true,
@@ -209,6 +218,7 @@ function withTechnicianProximity<
       name: string | null;
       email: string;
       phone: string | null;
+      status: string;
       lastLatitude: number | null;
       lastLongitude: number | null;
       lastPositionAt: Date | null;
@@ -279,7 +289,10 @@ export async function GET(request: NextRequest) {
       warnDemoFallbackOnce("GET /api/incidents");
       const { searchParams } = new URL(request.url);
       return NextResponse.json(
-        demoIncidents({ status: searchParams.get("status") })
+        demoIncidents({
+          status: searchParams.get("status"),
+          elevatorId: searchParams.get("elevatorId"),
+        })
       );
     }
     return handleRouteError(error);
@@ -289,9 +302,21 @@ export async function GET(request: NextRequest) {
 // ─── POST ───────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  /**
+   * Le corps validé, gardé pour le repli de démonstration.
+   *
+   * Une écriture ne peut pas être servie par une fixture : le signalement
+   * n'existe pas en base. Sans ce marqueur, le `catch` n'aurait aucun moyen de
+   * reconstruire une réponse cohérente — et une erreur de connexion resterait
+   * un « Échec d'envoi » opaque sur un écran dont toute la raison d'être est
+   * de fonctionner quand la base est absente.
+   */
+  let demoBody: CreateIncidentInput | null = null;
+
   try {
     const session = await requireRole(...OPS_ROLES, "BUILDING_OWNER");
     const body = CreateIncidentSchema.parse(await readJson(request));
+    demoBody = body;
 
     // The elevator must be inside the caller's portfolio. Scoping the lookup
     // rather than checking ownership afterwards means an out-of-portfolio id
@@ -302,10 +327,13 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         elevatorCode: true,
+        installationLocation: true,
         building: {
           select: {
+            id: true,
             name: true,
             address: true,
+            city: true,
             // Read for the fallback position only. Never written back: the
             // building's own address is the permanent record and a report must
             // not be able to move it.
@@ -359,6 +387,19 @@ export async function POST(request: NextRequest) {
               ),
               title: buildWorkOrderTitle(elevator.elevatorCode, body),
               description: buildWorkOrderDescription(elevator, body),
+              /**
+               * Le lieu exact est repris du site et du complément d'installation
+               * de l'appareil. Un signalement client ne saisit pas d'adresse :
+               * c'est l'immeuble qui la porte, et le technicien doit la
+               * retrouver telle quelle sur sa fiche.
+               */
+              interventionAddress: [
+                elevator.building.address,
+                elevator.building.city,
+                elevator.installationLocation,
+              ]
+                .filter(Boolean)
+                .join(", "),
               type: body.isDirectTransfer ? "EMERGENCY" : "CORRECTIVE",
               priority: body.isDirectTransfer ? "CRITICAL" : "HIGH",
               status: "OPEN",
@@ -422,6 +463,19 @@ export async function POST(request: NextRequest) {
      * A courtesy that fails must not roll back an escalation — see the note
      * at the top of `src/lib/notifications/service.ts`.
      */
+    /**
+     * Le lien commun aux deux issues.
+     *
+     * Une panne signalée — escaladée ou résolue par le client — doit ouvrir la
+     * carte sur l'appareil, et non le tableau des incidents : le dispatcheur
+     * voit immédiatement où se situe le problème.
+     */
+    const mapLink = `/carte?site=${encodeURIComponent(
+      elevator.building.id
+    )}&elevator=${encodeURIComponent(
+      elevator.id
+    )}&incident=${encodeURIComponent(created.id)}`;
+
     if (isEscalation) {
       const assignedTo = auto?.assigned
         ? auto.technician.name ?? auto.technician.id
@@ -430,12 +484,30 @@ export async function POST(request: NextRequest) {
       await notifyRoles([...MANAGEMENT_ROLES], {
         title: body.isDirectTransfer
           ? `Urgence – ${elevator.elevatorCode}`
-          : `Incident escaladé – ${elevator.elevatorCode}`,
+          : `Panne signalée – ${elevator.elevatorCode}`,
         message: assignedTo
           ? `${buildNotificationMessage(elevator, body)} Technicien affecté automatiquement : ${assignedTo}.`
           : `${buildNotificationMessage(elevator, body)} Aucun technicien disponible — affectation manuelle requise.`,
         type: "incident",
-        linkUrl: "/administration/incidents",
+        /**
+         * La notification ouvre la carte du parc, déjà centrée sur l'appareil
+         * signalé.
+         *
+         * `site` sélectionne l'immeuble et `elevator` désigne la machine dans
+         * sa liste ; `incident` permet à la carte de viser la position exacte
+         * du signalement quand elle a été relevée. Les trois sont lus par
+         * `/carte` — un lien vers le tableau des incidents obligerait le
+         * dispatcheur à retrouver lui-même l'immeuble sur une carte qu'il
+         * vient d'ouvrir.
+         */
+        linkUrl: mapLink,
+        /**
+         * Le bon, pour que la cloche du bureau puisse dispatcher depuis la
+         * notification. Sans lui, l'alerte la plus urgente de l'application
+         * arrive sans le bouton qui la traite et oblige à retrouver la ligne
+         * sur le tableau.
+         */
+        workOrderId: created.workOrder?.id,
       });
 
       /**
@@ -460,6 +532,21 @@ export async function POST(request: NextRequest) {
             : "Aucun technicien disponible",
         ],
       });
+    } else {
+      /**
+       * Une panne que le client a résolue lui-même reste un signalement.
+       *
+       * Elle n'appelle pas de dispatch, mais elle informe le bureau : la
+       * machine a eu un incident, et la carte doit pouvoir la montrer. Le
+       * message le dit sans urgence, et le lien ouvre la même vue.
+       */
+      await notifyRoles([...MANAGEMENT_ROLES], {
+        title: `Panne signalée – ${elevator.elevatorCode}`,
+        message: `Une panne a été signalée pour ${elevator.elevatorCode} à ${elevator.building.name}, puis résolue par le client.`,
+        type: "incident",
+        linkUrl: mapLink,
+        workOrderId: created.workOrder?.id,
+      });
     }
 
     // The response reflects the final state rather than the state at commit:
@@ -481,6 +568,45 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
+    /**
+     * Mode démonstration : le signalement est acquitté, pas enregistré.
+     *
+     * C'est une exception assumée au principe « les fixtures ne servent que
+     * des lectures ». Elle n'existe que lorsque `DEMO_DATA="true"` et qu'une
+     * base est injoignable — deux conditions que la production neutralise
+     * (`NODE_ENV=production` force le repli à `false`, voir `demo/mode.ts`).
+     * La réponse porte `demo: true` pour que le formulaire le dise à
+     * l'utilisateur au lieu de laisser croire à une écriture.
+     */
+    if (demoBody && shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("POST /api/incidents");
+      const now = new Date();
+      return NextResponse.json(
+        {
+          data: {
+            id: `demo-incident-${now.getTime()}`,
+            incidentNumber: `DEMO-${String(now.getTime()).slice(-6)}`,
+            status: demoBody.status,
+            isDirectTransfer: demoBody.isDirectTransfer,
+            notes: demoBody.notes ?? null,
+            createdAt: now.toISOString(),
+            resolvedAt:
+              demoBody.status === "RESOLVED_BY_CLIENT"
+                ? now.toISOString()
+                : null,
+            elevator: {
+              id: demoBody.elevatorId,
+              elevatorCode: "—",
+              building: { id: "", name: "" },
+            },
+            errorCode: null,
+            technician: null,
+          },
+          demo: true,
+        },
+        { status: 201 }
+      );
+    }
     return handleRouteError(error);
   }
 }

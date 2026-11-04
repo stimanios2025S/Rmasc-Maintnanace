@@ -22,11 +22,16 @@
  * appartient donc à cette route, et pas à un clic séparé : sinon les deux
  * applications diraient des choses différentes de la même pièce.
  *
- * ELLE REFUSE D'ÊTRE LE CHEMIN DE DÉMONSTRATION
- * Une écriture vers une autre application est un effet réel. Servir une fixture
- * à sa place ferait croire à une transmission qui n'a pas eu lieu, et le
- * magasinier attendrait une pièce que personne n'a commandée. Sans configuration
- * réelle, la route le dit et n'envoie rien.
+ * LE MODE DÉMONSTRATION EST EXPLICITE, ET N'ÉCRIT RIEN
+ * Une écriture vers une autre application est un effet réel. Sans identifiants
+ * Magasin — et hors production — la route répond donc une simulation : statut
+ * 200, `success: true`, `demo: true`, et un acquittement qui dit « simulée ».
+ * Elle ne touche ni à la base ni au réseau. Rien ne doit permettre de confondre
+ * ce compte rendu avec une transmission réelle : `demo: true` est le marqueur
+ * que l'écran lit pour afficher son bandeau.
+ *
+ * En production, `isStockDemoMode()` est faux quelle que soit la configuration :
+ * la route reprend son ancien comportement — elle le dit et n'envoie rien.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -54,6 +59,11 @@ import {
   stockConfigRefusal,
   transmitDemande,
 } from "@/lib/stock/client";
+import {
+  isStockDemoMode,
+  STOCK_DEMO_ACK,
+  STOCK_DEMO_NOTICE,
+} from "@/lib/stock/demo";
 import { transitionRefusal } from "@/lib/parts/status";
 
 export const dynamic = "force-dynamic";
@@ -155,8 +165,21 @@ interface Outcome {
 export async function GET() {
   try {
     await requireRole(...MANAGEMENT_ROLES);
+
+    /**
+     * L'écran a besoin des deux faits séparément : la configuration manque, et
+     * la démonstration prend le relais. Le refus reste renseigné — c'est la
+     * vérité de l'installation — mais `demo: true` dit à l'écran de le
+     * présenter comme une information souple plutôt qu'un blocage.
+     */
+    const demo = isStockDemoMode();
     const refusal = stockConfigRefusal();
-    return jsonOk({ configured: refusal === null, refusal });
+    return jsonOk({
+      configured: refusal === null,
+      demo,
+      notice: demo ? STOCK_DEMO_NOTICE : null,
+      refusal,
+    });
   } catch (error) {
     return handleRouteError(error);
   }
@@ -166,6 +189,41 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireRole(...MANAGEMENT_ROLES);
     const parsed = TransmitSchema.parse(await readJson(request));
+
+    /**
+     * La démonstration répond AVANT toute lecture en base et avant le contrôle
+     * de configuration : c'est précisément l'absence de ces clés — et souvent
+     * de base de données — qui la rend nécessaire.
+     *
+     * Aucune écriture, aucune requête sortante. Une seule entrée de résultat
+     * par demande, pour que l'écran compte exactement comme après un envoi
+     * réel. `number` porte l'identifiant : rien n'a été lu, donc le numéro de
+     * la demande n'est pas connu ici, et l'inventer serait pire que l'omettre.
+     */
+    if (isStockDemoMode()) {
+      const results: Outcome[] = parsed.items.map((item) => ({
+        id: item.id,
+        number: item.id,
+        ok: true,
+        outcome: "sent",
+        reference: null,
+      }));
+
+      /**
+       * Pas d'enveloppe `data` ici : la démonstration ne rend pas des données,
+       * elle accuse réception. `success` et `demo` sont donc à la racine, tels
+       * que le contrat de la simulation les annonce.
+       */
+      return NextResponse.json({
+        success: true,
+        demo: true,
+        message: STOCK_DEMO_ACK,
+        results,
+        sent: results.length,
+        failed: 0,
+        skipped: 0,
+      });
+    }
 
     /**
      * La configuration est vérifiée avant toute lecture : inutile de charger

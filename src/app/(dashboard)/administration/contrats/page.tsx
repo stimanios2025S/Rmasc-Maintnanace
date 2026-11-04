@@ -37,6 +37,8 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { InfoHint } from "@/components/ui/info-hint";
+import { TrafficLegend } from "@/components/ui/traffic";
 import { ContractCreateForm } from "@/components/admin/contract-create-form";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { CONTRACT_RENEWAL_MODES, CONTRACT_STATUSES, SLA_TIERS } from "@/types";
@@ -299,8 +301,9 @@ export default function ContractsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Contrats &amp; SLA
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-white">
+            Contrats de maintenance
+            <InfoHint term="sla" />
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Les engagements de maintenance : qui est couvert, sur quels
@@ -399,8 +402,9 @@ export default function ContractsPage() {
 
       {decisionOnly && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
-          <p className="font-medium">
+          <p className="flex items-center gap-1 font-medium">
             Contrats en vigueur dans la fenêtre de préavis (60 jours, puis 30).
+            <InfoHint term="tacitRenewal" />
           </p>
           <p className="mt-0.5 text-xs">
             Il faut décider avant l&apos;échéance : résilier, renégocier, ou
@@ -449,6 +453,7 @@ export default function ContractsPage() {
 
             <label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
               Palier SLA
+              <InfoHint term="tier" />
               <select
                 value={tierFilter}
                 onChange={(event) => setTierFilter(event.target.value)}
@@ -493,24 +498,39 @@ export default function ContractsPage() {
         </div>
       </Card>
 
+      <TrafficLegend
+        compact
+        className="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-800 dark:bg-gray-900"
+      />
+
       {error && <ErrorState message={error} onRetry={() => void load()} />}
       {loading && <LoadingSkeleton rows={5} />}
 
       {!loading && !error && visible.length === 0 && (
         <EmptyState
+          icon={CalendarClock}
           title={
             rows.length === 0
-              ? "Aucun contrat enregistré"
+              ? "Aucun contrat de maintenance"
               : decisionOnly && decisionCount === 0
                 ? "Aucune décision en attente"
                 : "Aucun contrat ne correspond aux filtres"
           }
-          hint={
+          description={
             rows.length === 0
-              ? "Créez le premier contrat avec le bouton « Nouveau contrat »."
+              ? "Un contrat fixe les délais promis au client, les immeubles couverts et la reconduction. Créez le premier : il reste en brouillon jusqu'à son activation."
               : decisionOnly && decisionCount === 0
                 ? "Aucun contrat en vigueur n'entre dans la fenêtre de préavis. La file est vide : c'est une bonne nouvelle."
-                : "Effacez la recherche ou changez de filtre."
+                : "Effacez la recherche ou choisissez un autre état. Orange signale un contrat à renouveler, rouge un contrat hors contrat ou résilié."
+          }
+          action={
+            rows.length === 0
+              ? {
+                  label: "Nouveau contrat",
+                  icon: Plus,
+                  onClick: () => setFormOpen(true),
+                }
+              : undefined
           }
         />
       )}

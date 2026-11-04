@@ -30,6 +30,8 @@ export interface RosterTechnician {
   status: TechnicianStatus;
   openWorkOrders: number;
   openIncidents: number;
+  /** Le site de l'intervention en cours, quand il y en a une. */
+  currentBuilding?: string | null;
 }
 
 export function DispatchModal({
@@ -208,7 +210,10 @@ export function DispatchModal({
                       <span className="flex shrink-0 flex-col items-end gap-1">
                         {technician.status === "ON_JOB" && (
                           <span className="whitespace-nowrap rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
-                            En intervention
+                            En mission
+                            {technician.currentBuilding
+                              ? ` · ${technician.currentBuilding}`
+                              : ""}
                           </span>
                         )}
                         <span

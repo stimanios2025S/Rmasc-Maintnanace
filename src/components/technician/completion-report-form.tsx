@@ -180,7 +180,6 @@ export function CompletionReportForm({
               {heading}
             </h2>
             <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-              <span className="font-mono">{job.orderNumber}</span> ·{" "}
               {enumLabel(job.type)}
             </p>
             <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">

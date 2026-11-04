@@ -176,9 +176,10 @@ export default function FacturesPage() {
 
         if (!res.ok) {
           // Le corps d'une erreur porte souvent de quoi agir : une base
-          // injoignable dit comment la démarrer. Ces factures n'ont aucun jeu de
-          // démonstration, donc c'est le seul message que l'écran aura — autant
-          // qu'il soit utile plutôt que « 503 ».
+          // injoignable dit comment la démarrer. Le repli de démonstration
+          // couvre la connexion perdue ; tout ce qui reste ici — un refus de
+          // rôle, une requête invalide — mérite son message plutôt qu'un
+          // « 503 » nu.
           setRefusal({
             message: body?.error ?? `L'API des factures a répondu ${res.status}`,
             hint: body?.details?.hint,
@@ -296,10 +297,10 @@ export default function FacturesPage() {
               </p>
             )}
             <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-              Les factures n&apos;ont pas de jeu de démonstration : une facture
-              est un document numéroté et figé, et un numéro de pièce comptable
-              inventé n&apos;apprendrait rien sur le vrai circuit. Ce registre a
-              besoin d&apos;une base réelle.
+              Le registre ne s&apos;ouvre ici que si la base répond. En
+              développement, `DEMO_DATA=&quot;true&quot;` sert un jeu de
+              démonstration dérivé des interventions terminées ; en production,
+              une base injoignable est une panne, pas un aperçu.
             </p>
             <button
               type="button"
@@ -409,11 +410,21 @@ export default function FacturesPage() {
 
       {rows.length === 0 ? (
         <EmptyState
+          icon={FileText}
           title="Aucune facture dans ce filtre"
-          hint={
+          description={
             hasFilters
-              ? "Élargissez la période ou effacez les filtres."
-              : "Une facture s'émet depuis la fiche d'un bon de travail clôturé."
+              ? "Élargissez la période ou effacez les filtres pour retrouver les factures existantes."
+              : "Une facture s'émet depuis la fiche d'une intervention terminée. Il n'y a donc rien à créer directement ici."
+          }
+          action={
+            hasFilters
+              ? undefined
+              : {
+                  label: "Voir les interventions",
+                  href: "/bons-de-travail",
+                  variant: "secondary",
+                }
           }
         />
       ) : (

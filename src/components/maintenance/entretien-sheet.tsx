@@ -221,7 +221,7 @@ export function EntretienSheet({ report }: { report: EntretienSheetReport }) {
           value={`${report.elevator.building.address}, ${report.elevator.building.city}`}
           className="col-span-2"
         />
-        <Field label="Bon de travail" value={report.workOrder.orderNumber} />
+        <Field label="Intervention" value={report.workOrder.orderNumber} />
       </dl>
 
       {/* ── Grille des points de contrôle ─────────────────────── */}

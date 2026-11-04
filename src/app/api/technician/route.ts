@@ -71,10 +71,12 @@ export async function GET(request: NextRequest) {
           elevator: {
             select: {
               elevatorCode: true,
+              installationLocation: true,
               building: {
                 select: {
                   name: true,
                   address: true,
+                  city: true,
                   // Sent to the technician's browser so the check-in button can
                   // be enabled or greyed out *before* the tap, using the same
                   // rule the server applies. Without them the interface would
@@ -82,6 +84,9 @@ export async function GET(request: NextRequest) {
                   latitude: true,
                   longitude: true,
                   geofenceRadiusM: true,
+                  // Le code d'accès du site accompagne le bon : le technicien
+                  // est affecté, il en a besoin avant d'arriver à la porte.
+                  accessCode: true,
                 },
               },
             },
@@ -206,6 +211,25 @@ export async function GET(request: NextRequest) {
           elevator: wo.elevator.elevatorCode,
           building: wo.elevator.building.name,
           address: wo.elevator.building.address,
+          /**
+           * Le lieu exact préparé pour ce bon, ou l'adresse du site à défaut.
+           *
+           * Le bon porte ce que le bureau a saisi — une cage, un étage, une
+           * entrée. Sur les bons créés avant cette colonne, l'adresse de
+           * l'immeuble reste le seul lieu connu : on la compose avec la ville
+           * et le complément d'installation de l'appareil plutôt que d'envoyer
+           * un champ vide que le terrain lirait comme « lieu inconnu ».
+           */
+          interventionAddress:
+            wo.interventionAddress ??
+            [
+              wo.elevator.building.address,
+              wo.elevator.building.city,
+              wo.elevator.installationLocation,
+            ]
+              .filter(Boolean)
+              .join(", "),
+          accessCode: wo.elevator.building.accessCode,
           /**
            * The site's position and radius, so the portal can compute the same
            * distance the server will. Null latitude/longitude means the site

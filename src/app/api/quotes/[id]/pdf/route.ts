@@ -46,7 +46,7 @@ const DOCUMENT_SELECT = {
   validityDays: true,
   need: true,
   notes: true,
-  client: { select: { name: true } },
+  client: { select: { name: true, address: true, phone: true } },
   building: { select: { name: true, address: true, city: true } },
   elevator: { select: { id: true, elevatorCode: true } },
   lines: {
@@ -107,7 +107,7 @@ function toDocument(row: {
   validityDays: number;
   need: string;
   notes: string | null;
-  client: { name: string } | null;
+  client: { name: string; address?: string | null; phone?: string | null } | null;
   building: { name: string; address: string; city: string };
   elevator: { id: string; elevatorCode: string } | null;
   lines: readonly {
@@ -139,6 +139,8 @@ function toDocument(row: {
     need: row.need,
     notes: row.notes,
     clientName: row.client?.name ?? "—",
+    clientAddress: row.client?.address ?? null,
+    clientPhone: row.client?.phone ?? null,
     buildingName: row.building.name,
     buildingAddress: row.building.address,
     buildingCity: row.building.city,

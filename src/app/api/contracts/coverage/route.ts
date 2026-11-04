@@ -35,6 +35,8 @@ import {
   expiryAlert,
 } from "@/lib/contracts/status";
 import type { ContractRenewalMode, ContractStatus } from "@/types";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoCoverage } from "@/lib/demo/registers";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +65,13 @@ type CoverageRow = Prisma.ContractGetPayload<{
 }>;
 
 export async function GET() {
+  /**
+   * Le périmètre du compte, déclaré avant le `try` pour que le repli de
+   * démonstration puisse encore cloisonner ce qu'il rend. Un client ne doit
+   * jamais recevoir la couverture des immeubles d'un autre, même en démo.
+   */
+  let ownerScope: string | null = null;
+
   try {
     const session = await requireSession();
 
@@ -83,7 +92,7 @@ export async function GET() {
     });
 
     const now = new Date();
-    const ownerScope =
+    ownerScope =
       session.user.role === "BUILDING_OWNER" ? session.user.id : null;
 
     const data = rows
@@ -105,6 +114,18 @@ export async function GET() {
 
     return NextResponse.json({ data, total: data.length });
   } catch (error) {
+    /**
+     * Sans base, la couverture se lit dans la fixture.
+     *
+     * Sans ce repli, les badges de contrat disparaissaient de tout le parc et
+     * le portail client affichait « contrats indisponibles » alors que la seule
+     * chose manquante était PostgreSQL.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("GET /api/contracts/coverage");
+      const data = demoCoverage(ownerScope);
+      return NextResponse.json({ data, total: data.length });
+    }
     return handleRouteError(error);
   }
 }

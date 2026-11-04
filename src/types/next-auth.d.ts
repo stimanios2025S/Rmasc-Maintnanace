@@ -37,5 +37,11 @@ declare module "next-auth/jwt" {
     id: string;
     role: UserRole;
     clientType: ClientType | null;
+    /**
+     * `false` quand le compte a été désactivé (ou supprimé) après l'émission
+     * du jeton. La session est alors vidée et le cookie expiré ; le middleware
+     * refuse le jeton avant même d'atteindre une page protégée.
+     */
+    isActive?: boolean;
   }
 }

@@ -50,6 +50,12 @@ import type { QuoteStatus } from "@/types";
 import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
+/**
+ * Aucun cache, ni au build ni au CDN. Le registre et le portail client lisent
+ * les mêmes lignes ; une réponse mise en cache une seconde de trop, c'est un
+ * devis créé côté bureau qui « n'apparaît pas » côté client.
+ */
+export const revalidate = 0;
 
 /**
  * Ce qu'une ligne du registre affiche.
@@ -70,7 +76,7 @@ const LIST_SELECT = {
   buildingId: true,
   elevatorId: true,
   clientId: true,
-  client: { select: { id: true, name: true } },
+  client: { select: { id: true, name: true, address: true, phone: true } },
   building: { select: { id: true, name: true, city: true } },
   elevator: { select: { id: true, elevatorCode: true } },
   lines: { select: { quantity: true, unitPrice: true } },
@@ -212,6 +218,26 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * Une ligne de devis, telle que le bureau la saisit.
+ *
+ * Les montants sont facultatifs à la lecture — une ligne à moitié tapée doit
+ * pouvoir être enregistrée — mais une quantité négative est refusée : un devis
+ * se corrige par une ligne, pas par un montant en dessous de zéro.
+ *
+ * Déclarée avant les deux schémas qui l'utilisent : la création peut en porter,
+ * la modification les remplace.
+ */
+const LineSchema = z
+  .object({
+    reference: z.string().trim().max(100).optional(),
+    designation: z.string().trim().min(1).max(300),
+    quantity: z.number().finite().nonnegative(),
+    unit: z.string().trim().max(20).optional(),
+    unitPrice: z.number().finite().nonnegative(),
+  })
+  .strict();
+
 const CreateQuoteSchema = z
   .object({
     buildingId: z.string().trim().min(1, "L'immeuble est obligatoire"),
@@ -229,6 +255,21 @@ const CreateQuoteSchema = z
       .min(10, "Décrivez le besoin en quelques mots")
       .max(4000),
     validityDays: z.number().int().min(1).max(365).optional(),
+    /**
+     * Le chiffrage, quand le bureau saisit l'offre d'un seul geste.
+     *
+     * Facultatif : une demande prise par téléphone peut n'avoir que son besoin,
+     * et se chiffrer ensuite sur la fiche. Mais un devis créé depuis le registre
+     * doit pouvoir partir complet — sinon le formulaire ne fait que déplacer le
+     * travail sur un second écran.
+     */
+    lines: z.array(LineSchema).max(50).optional(),
+    /**
+     * `SENT` remet l'offre au client dans la même écriture. Seul le bureau y a
+     * droit : un client qui crée sa demande ne se remet pas un devis à
+     * lui-même.
+     */
+    status: z.enum(["REQUESTED", "SENT"]).optional(),
   })
   .strict();
 
@@ -236,6 +277,33 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireRole(...MANAGEMENT_ROLES, "BUILDING_OWNER");
     const body = CreateQuoteSchema.parse(await readJson(request));
+
+    /**
+     * Le chiffrage et la remise sont des gestes du bureau.
+     *
+     * Un client ouvre une demande ; il ne se remet pas une offre à lui-même, et
+     * il ne fixe pas le prix qu'on lui facturera. La route est ouverte aux deux
+     * rôles, donc la distinction se fait ici, sur les deux champs qui n'ont de
+     * sens que côté entreprise.
+     */
+    if (
+      session.user.role === "BUILDING_OWNER" &&
+      (body.lines !== undefined || body.status !== undefined)
+    ) {
+      throw forbidden(
+        "Un compte client ouvre une demande ; le chiffrage et l'envoi sont faits par le bureau."
+      );
+    }
+
+    /**
+     * Une offre remise doit porter un prix — la même règle que la modification,
+     * lue sur la même fonction. Sans ce contrôle, `status: "SENT"` créerait un
+     * devis à zéro dinar que le client pourrait accepter.
+     */
+    if (body.status === "SENT") {
+      const refusal = quoteTransitionRefusal("REQUESTED", "SENT", body.lines ?? []);
+      if (refusal) throw badRequest(refusal);
+    }
 
     /**
      * L'immeuble doit être dans le périmètre du demandeur.
@@ -301,6 +369,8 @@ export async function POST(request: NextRequest) {
       elevatorId: body.elevatorId ?? null,
       need: body.need,
       validityDays: body.validityDays,
+      lines: body.lines,
+      send: body.status === "SENT",
     });
 
     return NextResponse.json({ data: created }, { status: 201 });
@@ -308,23 +378,6 @@ export async function POST(request: NextRequest) {
     return handleRouteError(error);
   }
 }
-
-/**
- * Une ligne de devis, telle que le bureau la saisit.
- *
- * Les montants sont facultatifs à la lecture — une ligne à moitié tapée doit
- * pouvoir être enregistrée — mais une quantité négative est refusée : un devis
- * se corrige par une ligne, pas par un montant en dessous de zéro.
- */
-const LineSchema = z
-  .object({
-    reference: z.string().trim().max(100).optional(),
-    designation: z.string().trim().min(1).max(300),
-    quantity: z.number().finite().nonnegative(),
-    unit: z.string().trim().max(20).optional(),
-    unitPrice: z.number().finite().nonnegative(),
-  })
-  .strict();
 
 const PatchQuoteSchema = z
   .object({

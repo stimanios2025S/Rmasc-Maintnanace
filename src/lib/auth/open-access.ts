@@ -65,6 +65,27 @@ export const OPEN_ACCESS_USER: {
 };
 
 /**
+ * Identité « client sous contrat », pour valider le portail `/client` sans
+ * base de données.
+ *
+ * Sélectionnée par `OPEN_ACCESS_AS="client"`. L'id est celui du propriétaire
+ * fictif de `src/lib/demo/dataset.ts` (`usr_owner1`), qui possède deux
+ * immeubles de démonstration : un id inventé rendrait un portail vide dès
+ * qu'une route applique le cloisonnement par propriétaire.
+ *
+ * Aucun mot de passe n'est accepté ici. Ce chemin ne fait que choisir une
+ * identité synthétique, et il reste inatteignable en production puisque
+ * `openAccessSession()` n'est appelé que si `isOpenAccessEnabled()` est vrai.
+ */
+export const OPEN_ACCESS_CLIENT: typeof OPEN_ACCESS_USER = {
+  id: "usr_owner1",
+  name: "Rachid Zerrouki",
+  email: "owner@metroplaza.com",
+  role: "BUILDING_OWNER",
+  clientType: "CONTRACTED",
+};
+
+/**
  * True when the operator has opted in *and* this is not a production process.
  *
  * `process.env.OPEN_ACCESS` is written as a literal member expression on
@@ -77,18 +98,32 @@ export function isOpenAccessEnabled(): boolean {
   return process.env.OPEN_ACCESS === "true";
 }
 
-/** The synthetic session handed to every caller while open access is on. */
+/**
+ * The synthetic session handed to every caller while open access is on.
+ *
+ * `OPEN_ACCESS_AS="client"` swaps the ADMIN stand-in for a contracted client,
+ * so `/client` can be reviewed with its real role, labels and scoping. Any
+ * other value (or none) keeps the ADMIN identity, which is unscoped.
+ */
 export function openAccessSession(): Session {
+  const identity =
+    process.env.OPEN_ACCESS_AS === "client"
+      ? OPEN_ACCESS_CLIENT
+      : OPEN_ACCESS_USER;
+
   return {
-    user: { ...OPEN_ACCESS_USER },
+    user: { ...identity },
     expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   };
 }
 
 if (isOpenAccessEnabled()) {
   console.warn(
-    "[auth] ACCÈS LIBRE ACTIVÉ — toute requête est traitée comme ADMIN et " +
-      "aucune connexion n'est requise. Développement uniquement ; mettez " +
+    "[auth] ACCÈS LIBRE ACTIVÉ — toute requête est traitée comme " +
+      (process.env.OPEN_ACCESS_AS === "client"
+        ? "BUILDING_OWNER (client sous contrat)"
+        : "ADMIN") +
+      " et aucune connexion n'est requise. Développement uniquement ; mettez " +
       'OPEN_ACCESS="false" dans .env pour rétablir l' +
       "écran de connexion."
   );

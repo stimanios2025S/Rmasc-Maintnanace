@@ -94,6 +94,21 @@ export default function ClientDevisPage() {
   const [sending, setSending] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** L'offre en cours de décision, et son retour. */
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+
+  /**
+   * Qui peut accepter ou refuser une offre remise.
+   *
+   * Le client, pour son propre devis ; l'administrateur, parce qu'il doit
+   * pouvoir constater ce que le client voit. Un technicien ou un responsable
+   * n'a rien à y faire. `!role` couvre l'accès libre local, où la session
+   * NextAuth est vide alors que le serveur agit en administrateur.
+   */
+  const role = session?.user?.role;
+  const canDecide = !role || role === "BUILDING_OWNER" || role === "ADMIN";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -215,6 +230,60 @@ export default function ClientDevisPage() {
       setFormError(e instanceof Error ? e.message : "L'envoi a échoué.");
     } finally {
       setSending(false);
+    }
+  }
+
+  /**
+   * Accepter ou refuser une offre remise.
+   *
+   * La route applique la même règle d'état que le bureau : seule une offre
+   * `SENT` se décide. En démonstration, la ligne est mise à jour localement et
+   * le message le dit — recharger ramènerait l'offre à son état d'origine.
+   */
+  async function decideQuote(row: QuoteRow, action: "ACCEPT" | "REFUSE") {
+    setDecidingId(row.id);
+    setDecisionError(null);
+    setDecisionNotice(null);
+
+    try {
+      const res = await fetch(`/api/quotes/${row.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: action }),
+      });
+      const payload = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(
+          payload?.error ?? `La décision a été refusée (${res.status}).`
+        );
+      }
+
+      const accepted = action === "ACCEPT";
+      const nextStatus: QuoteStatus = accepted ? "ACCEPTED" : "REFUSED";
+      setRows((current) =>
+        current.map((item) =>
+          item.id === row.id
+            ? {
+                ...item,
+                status: nextStatus,
+                decidedAt: new Date().toISOString(),
+              }
+            : item
+        )
+      );
+
+      setDecisionNotice(
+        payload?.demo === true
+          ? `Devis ${row.number} ${accepted ? "accepté" : "refusé"} en mode démonstration. La décision n'a pas été enregistrée en base.`
+          : `Devis ${row.number} ${accepted ? "accepté" : "refusé"}. Le bureau en est informé.`
+      );
+    } catch (e) {
+      setDecisionError(
+        e instanceof Error ? e.message : "La décision n'a pas pu être envoyée."
+      );
+    } finally {
+      setDecidingId(null);
     }
   }
 
@@ -370,10 +439,32 @@ export default function ClientDevisPage() {
         )}
       </Card>
 
+      {decisionNotice && (
+        <p
+          role="status"
+          className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 dark:border-green-900 dark:bg-green-950/40 dark:text-green-300"
+        >
+          {decisionNotice}
+        </p>
+      )}
+      {decisionError && (
+        <p
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+        >
+          {decisionError}
+        </p>
+      )}
+
       {rows.length === 0 ? (
         <EmptyState
+          icon={FileText}
           title="Aucune demande de devis"
-          hint="Vos demandes et les offres reçues apparaîtront ici."
+          description="Demandez une offre pour des travaux non couverts par votre contrat. Le bureau la chiffre, puis vous retrouvez ici la proposition et son PDF."
+          action={{
+            label: "Demander un devis",
+            onClick: () => setFormOpen(true),
+          }}
         />
       ) : (
         <ul className="space-y-3">
@@ -427,11 +518,42 @@ export default function ClientDevisPage() {
                 </div>
 
                 {row.status === "SENT" && (
-                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    Une offre vous a été remise. Pour l&apos;accepter, renvoyez
-                    l&apos;exemplaire signé — la mention « Bon pour accord » se
-                    trouve au bas du document.
-                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {canDecide && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={decidingId === row.id}
+                          onClick={() => void decideQuote(row, "ACCEPT")}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+                        >
+                          {decidingId === row.id ? (
+                            <Loader2
+                              className="h-4 w-4 animate-spin"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <Check className="h-4 w-4" aria-hidden="true" />
+                          )}
+                          Accepter le devis
+                        </button>
+                        <button
+                          type="button"
+                          disabled={decidingId === row.id}
+                          onClick={() => void decideQuote(row, "REFUSE")}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          <X className="h-4 w-4" aria-hidden="true" />
+                          Refuser
+                        </button>
+                      </>
+                    )}
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Une offre vous a été remise. Vous pouvez aussi renvoyer
+                      l&apos;exemplaire signé avec la mention « Bon pour
+                      accord ».
+                    </span>
+                  </div>
                 )}
               </Card>
             </li>

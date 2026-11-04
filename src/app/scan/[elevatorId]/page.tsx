@@ -22,6 +22,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
 import { AccessRequestForm } from "@/components/scan/access-request-form";
+import { FaultDiagnostic } from "@/components/scan/fault-diagnostic";
+import { demoWorld } from "@/lib/demo/dataset";
 
 export const dynamic = "force-dynamic";
 
@@ -107,9 +109,45 @@ export default async function ScanPage({
       },
     });
   } catch (error) {
-    // Une base indisponible ne doit pas jeter une page publique : elle rend le
-    // même écran qu'un identifiant inconnu, avec la même absence d'information.
+    /**
+     * Une base indisponible ne doit pas jeter une page publique.
+     *
+     * En développement — pas de PostgreSQL — la page se rabat sur le monde de
+     * démonstration, comme les autres écrans. Sans ce repli, le QR qui doit
+     * justement servir quand tout va mal affichait « Appareil introuvable ».
+     */
     console.error("[scan] lecture de l'appareil impossible", error);
+
+    try {
+      const world = demoWorld();
+      const demoElevator = world.elevators.find(
+        (candidate) => candidate.id === params.elevatorId && candidate.isActive
+      );
+      const demoBuilding = demoElevator
+        ? world.buildings.find(
+            (candidate) => candidate.id === demoElevator.buildingId
+          )
+        : undefined;
+
+      if (demoElevator) {
+        elevator = {
+          id: demoElevator.id,
+          elevatorCode: demoElevator.elevatorCode,
+          brand: demoElevator.brand,
+          originBrand: demoElevator.originBrand ?? null,
+          rmascCode: demoElevator.rmascCode ?? null,
+          model: demoElevator.model,
+          status: demoElevator.status,
+          building: {
+            name: demoBuilding?.name ?? "Immeuble non renseigné",
+            city: demoBuilding?.city ?? "",
+          },
+          inspectionReports: [],
+        };
+      }
+    } catch {
+      // Même le repli a échoué : la page rend l'écran « introuvable ».
+    }
   }
 
   if (!elevator) {
@@ -191,6 +229,11 @@ export default async function ScanPage({
             </div>
           </dl>
         </section>
+
+        <FaultDiagnostic
+          elevatorId={elevator.id}
+          elevatorCode={elevator.rmascCode ?? elevator.elevatorCode}
+        />
 
         <AccessRequestForm elevatorId={elevator.id} />
 

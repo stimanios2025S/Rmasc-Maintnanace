@@ -38,6 +38,36 @@ export interface NewQuoteInput {
   elevatorId: string | null;
   need: string;
   validityDays?: number;
+  /**
+   * Une note interne du bureau.
+   *
+   * Distincte de `need`, qui porte la demande du client telle qu'elle a été
+   * écrite. Ici, c'est la trace de l'origine quand le devis ne vient pas d'une
+   * demande du portail — par exemple une demande de pièce transformée en offre.
+   */
+  notes?: string | null;
+  /**
+   * Le chiffrage saisi à la création, quand le bureau prend la demande au
+   * téléphone et tarife dans la foulée.
+   *
+   * Écrites dans le même `create` que l'en-tête : un devis ne doit pas exister
+   * une seconde sans ses lignes pendant qu'une seconde requête les ajoute.
+   */
+  lines?: readonly NewQuoteLine[];
+  /**
+   * Remet l'offre au client dans la même écriture (`SENT`), au lieu de la
+   * laisser en `REQUESTED` sur le bureau. L'appelant a déjà vérifié qu'au moins
+   * une ligne porte un prix — voir `quoteTransitionRefusal`.
+   */
+  send?: boolean;
+}
+
+export interface NewQuoteLine {
+  reference?: string;
+  designation: string;
+  quantity: number;
+  unit?: string;
+  unitPrice: number;
 }
 
 /**
@@ -79,6 +109,8 @@ export async function createQuote(
     const sequence = (last?.sequence ?? 0) + 1;
 
     try {
+      const sentAt = input.send ? new Date() : null;
+
       return await prisma.quote.create({
         data: {
           number: formatQuoteNumber(year, sequence),
@@ -89,7 +121,23 @@ export async function createQuote(
           buildingId: input.buildingId,
           elevatorId: input.elevatorId,
           need: input.need,
+          notes: input.notes?.trim() ? input.notes.trim() : null,
           validityDays: input.validityDays ?? 30,
+          ...(input.send ? { status: "SENT" as const, sentAt } : {}),
+          ...(input.lines?.length
+            ? {
+                lines: {
+                  create: input.lines.map((line, index) => ({
+                    position: index + 1,
+                    reference: line.reference?.trim() || null,
+                    designation: line.designation.trim(),
+                    quantity: line.quantity,
+                    unit: line.unit?.trim() || null,
+                    unitPrice: line.unitPrice,
+                  })),
+                },
+              }
+            : {}),
         },
         select: {
           id: true,

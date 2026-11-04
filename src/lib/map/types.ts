@@ -123,6 +123,10 @@ export interface FleetMapFault {
   source: ReportedPositionSource | null;
   reportedAt: string;
   technicianName: string | null;
+  /** Le mot du client, tel qu'il l'a écrit. */
+  notes: string | null;
+  /** Le code d'erreur choisi par le client, quand il y en a un. */
+  errorCode: { code: string; title: string } | null;
   elevatorId: string;
   elevatorCode: string;
   /** The site this fault belongs to, so a click can open its detail panel. */

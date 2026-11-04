@@ -61,10 +61,41 @@ export function transitionRefusal(
    */
   if (from === to) return null;
 
-  if (to === "FULFILLED" && from !== "APPROVED" && from !== "ORDERED") {
+  /**
+   * Le circuit du magasin.
+   *
+   * Une demande déposée par le terrain arrive en `PENDING_STOCK_CHECK`. Le
+   * magasinier peut alors la réserver (stock suffisant), la passer en commande
+   * (rupture), ou la refuser. Une pièce réservée peut être posée ; une pièce
+   * commandée aussi, une fois livrée (`ORDERED → FULFILLED`).
+   *
+   * Les états antérieurs restent franchissables : une base qui contient déjà
+   * des `PENDING`/`APPROVED` ne doit pas devenir illisible parce qu'un circuit
+   * plus récent a été ajouté à côté.
+   */
+  if (
+    to === "RESERVED" &&
+    !["PENDING_STOCK_CHECK", "PENDING", "APPROVED", "ORDER_REQUIRED", "ORDERED"].includes(
+      from
+    )
+  ) {
+    return "Seule une demande en attente de stock peut être réservée.";
+  }
+
+  if (
+    to === "ORDER_REQUIRED" &&
+    !["PENDING_STOCK_CHECK", "PENDING", "APPROVED"].includes(from)
+  ) {
+    return "Seule une demande non encore servie peut partir en commande.";
+  }
+
+  if (
+    to === "FULFILLED" &&
+    !["APPROVED", "ORDERED", "RESERVED"].includes(from)
+  ) {
     return (
-      "Une pièce ne se pose qu'une fois la demande validée. Validez-la d'abord, " +
-      "puis marquez-la posée."
+      "Une pièce ne se pose qu'une fois la demande validée ou réservée. " +
+      "Validez-la d'abord, puis marquez-la posée."
     );
   }
   return null;
@@ -83,7 +114,10 @@ export function transitionRefusal(
  * elle n'aurait divergé qu'au premier état ajouté avant la décision.
  */
 export function awaitsDecision(status: PartRequirementStatus): boolean {
-  return status === "PENDING";
+  // `PENDING_STOCK_CHECK` est le même fait, vu du magasin : personne n'a encore
+  // statué. L'oublier aurait fait disparaître du compteur les demandes que le
+  // terrain dépose désormais.
+  return status === "PENDING" || status === "PENDING_STOCK_CHECK";
 }
 
 /**

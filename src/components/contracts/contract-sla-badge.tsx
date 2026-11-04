@@ -9,58 +9,24 @@
  * d'étiquette dit `PREMIUM` mais dont le contrat a été résilié doit afficher
  * « Hors contrat », pas une promesse que l'entreprise ne tient plus.
  *
- * TROIS ÉTATS, PAS DEUX
- * `ACTIVE` est le cas normal. `SUSPENDED` garde son palier mais le dit : les
- * immeubles restent couverts administrativement, le service est arrêté. Les
- * confondre avec « en vigueur » ferait lire une promesse de délai qui n'est pas
- * tenue. L'absence de contrat se lit « Hors contrat ».
+ * UNE COULEUR QUI VEUT DIRE QUELQUE CHOSE
+ * Le badge suivait la couleur du palier (gris, bleu, indigo, ambre) : un
+ * lecteur pouvait croire qu'un palier élevé était « plus vert » qu'un palier
+ * bas. La refonte UX a tranché — vert = contrat actif, orange = à surveiller
+ * (suspendu ou proche de l'échéance), rouge = hors contrat ou résilié. Le
+ * palier reste écrit, il ne décide plus de la couleur.
  *
  * Composant sans état ni effet : il s'importe indifféremment dans un écran
  * client ou serveur.
  */
 
-import type { SLATier } from "@/types";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import type { CoverageContract } from "@/lib/contracts/coverage";
-
-interface Tone {
-  badge: string;
-  dot: string;
-}
-
-/** Une couleur par palier : le palier se reconnaît avant d'être lu. */
-const TIER_TONES: Record<SLATier, Tone> = {
-  BASIC: {
-    badge:
-      "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-    dot: "bg-gray-400",
-  },
-  STANDARD: {
-    badge:
-      "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
-    dot: "bg-blue-500",
-  },
-  PREMIUM: {
-    badge:
-      "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300",
-    dot: "bg-indigo-500",
-  },
-  ENTERPRISE: {
-    badge:
-      "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
-    dot: "bg-amber-500",
-  },
-};
-
-const SUSPENDED_TONE: Tone = {
-  badge: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
-  dot: "bg-amber-500",
-};
-
-const NO_CONTRACT_TONE: Tone = {
-  badge: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
-  dot: "bg-gray-300 dark:bg-gray-600",
-};
+import {
+  TRAFFIC_LEVELS,
+  contractTrafficLabel,
+  contractTrafficLevel,
+} from "@/lib/ui/traffic";
 
 export function ContractSlaBadge({
   contract,
@@ -75,14 +41,18 @@ export function ContractSlaBadge({
   const sizing =
     size === "sm" ? "gap-1 px-2 py-0.5 text-[10px]" : "gap-1.5 px-2.5 py-1 text-xs";
 
+  const level = contractTrafficLevel(contract);
+  const tone = TRAFFIC_LEVELS[level];
+  const label = contractTrafficLabel(contract);
+
   if (!contract) {
     return (
       <span
-        className={`inline-flex items-center rounded-full font-semibold ${sizing} ${NO_CONTRACT_TONE.badge}`}
-        title="Aucun contrat actif ne couvre cet immeuble."
+        className={`inline-flex items-center rounded-full border font-semibold ${sizing} ${tone.bg} ${tone.border} ${tone.text}`}
+        title="Aucun contrat actif ne couvre cet immeuble. Contactez le bureau pour régulariser."
       >
         <span
-          className={`mr-1 h-1.5 w-1.5 rounded-full ${NO_CONTRACT_TONE.dot}`}
+          className={`mr-1 h-1.5 w-1.5 rounded-full ${tone.dot}`}
           aria-hidden="true"
         />
         Hors contrat
@@ -91,22 +61,19 @@ export function ContractSlaBadge({
   }
 
   const suspended = contract.effectiveStatus === "SUSPENDED";
-  const tone = suspended
-    ? SUSPENDED_TONE
-    : TIER_TONES[contract.slaTier] ?? NO_CONTRACT_TONE;
 
   return (
     <span
-      className={`inline-flex items-center rounded-full font-semibold ${sizing} ${tone.badge}`}
-      title={`Contrat ${contract.reference} — ${
-        suspended ? "suspendu" : "en vigueur"
-      } · palier ${enumLabel(contract.slaTier)}`}
+      className={`inline-flex items-center rounded-full border font-semibold ${sizing} ${tone.bg} ${tone.border} ${tone.text}`}
+      title={`Contrat ${contract.reference} — ${label} · palier ${enumLabel(
+        contract.slaTier
+      )} · prise en charge ${contract.responseHours} h, intervention ${contract.interventionHours} h`}
     >
       <span
         className={`mr-1 h-1.5 w-1.5 rounded-full ${tone.dot}`}
         aria-hidden="true"
       />
-      SLA {enumLabel(contract.slaTier)}
+      Contrat {enumLabel(contract.slaTier)}
       {suspended && " · suspendu"}
       {showReference && (
         <span className="ml-1 font-mono font-normal opacity-70">

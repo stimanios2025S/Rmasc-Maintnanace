@@ -233,6 +233,14 @@ const EXPORT_COLUMNS: readonly CsvColumn<ReportExportRow>[] = [
   { header: "Conformité", value: (row) => enumLabel(row.overallResult) },
 ];
 
+/**
+ * Aucun cache : la liste des techniciens du filtre et le registre changent dès
+ * qu'un rapport est déposé. Une réponse figée une minute laisserait un
+ * sélecteur vide alors que l'équipe existe.
+ */
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const workOrderId = searchParams.get("workOrderId");
@@ -437,24 +445,51 @@ export async function GET(request: NextRequest) {
         select: LIST_SELECT,
       }),
       /**
-       * Les auteurs des rapports **du périmètre**, et non ceux du filtre.
+       * Les techniciens proposés au filtre.
        *
-       * La différence n'est pas cosmétique : construite sur `where`, cette liste
-       * se réduirait au technicien qu'on vient de choisir, et le sélecteur
-       * n'offrirait plus aucun moyen d'en sortir — un filtre dont on ne peut
-       * plus revenir est un piège.
+       * POURQUOI TOUTE L'ÉQUIPE, ET PLUS SEULEMENT LES AUTEURS
+       * Construite sur les rapports existants, la liste était vide tant que
+       * personne n'avait encore déposé de fiche — le sélecteur n'offrait que
+       * « Tous les techniciens », ce qui ressemble à une panne. Un filtre doit
+       * proposer les personnes qu'on peut chercher, pas seulement celles qui
+       * ont déjà écrit.
        *
-       * Lue depuis les rapports eux-mêmes plutôt que depuis `/api/technicians` :
-       * ce dernier est réservé aux rôles de gestion, et un responsable qui a
-       * signé un rapport doit y figurer comme les autres. Ici, quiconque
-       * apparaît dans une ligne apparaît dans la liste — et personne d'autre,
-       * donc aucun nom ne fuit hors du périmètre.
+       * LE CLOISONNEMENT RESTE ICI
+       * Un technicien ne voit que lui-même : `/api/technicians` est fermé à son
+       * rôle, et lui servir l'équipe complète exposerait la charge de ses
+       * collègues. Un client garde la liste des auteurs de ses propres rapports.
+       * Le bureau reçoit toute l'équipe de terrain active, plus les auteurs du
+       * périmètre — un responsable peut avoir signé une fiche.
        */
-      prisma.user.findMany({
-        where: { inspectionReports: { some: scope } },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      }),
+      (() => {
+        if (session.user.role === "FIELD_TECHNICIAN") {
+          return Promise.resolve([
+            {
+              id: session.user.id,
+              name: session.user.name ?? session.user.email ?? "Technicien",
+            },
+          ]);
+        }
+
+        if (session.user.role === "BUILDING_OWNER") {
+          return prisma.user.findMany({
+            where: { inspectionReports: { some: scope } },
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+          });
+        }
+
+        return prisma.user.findMany({
+          where: {
+            OR: [
+              { role: "FIELD_TECHNICIAN", isActive: true },
+              { inspectionReports: { some: scope } },
+            ],
+          },
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        });
+      })(),
       /**
        * La répartition par verdict, sur `where`.
        *

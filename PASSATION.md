@@ -353,7 +353,7 @@ correspondant ; `<elevatorId>` depuis `/ascenseurs` ou depuis le QR imprimé.
 | `http://localhost:3000/administration/contrats` | Registre des contrats, filtres, badges 60/30 j, onglet **Décision requise** |
 | `http://localhost:3000/administration/contrats/<id>` | Fiche contrat : statut calculé, date effective, palier, délais, immeubles, journal des révisions |
 | `http://localhost:3000/administration/ascenseurs` | **Reprise d'appareils tiers**, bon d'état des lieux, matricule `ASC-AAAA-NNNN` + QR |
-| `http://localhost:3000/administration/clients` | Comptes clients et immeubles |
+| `http://localhost:3000/administration/clients` | Espace clients : portefeuille, parc sous contrat et archivage |
 | `http://localhost:3000/administration/clients/<id>` | Fiche client, parc rattaché, accès générés |
 | `http://localhost:3000/administration/clients/demandes` | **Demandes d'accès QR** : approuver, créer le compte, invitation |
 | `http://localhost:3000/administration/devis` | Registre des devis |
@@ -381,8 +381,9 @@ Le traitement bureau de ces demandes se fait dans
 `http://localhost:3000/administration/clients/demandes` (rubrique Administration).
 
 Comptes de démonstration d'un seed frais (`prisma/seed.ts`) : mot de passe
-commun `password123`, comptes `admin@`, `manager@`, `tech1@`, `tech2@`,
-`tech3@elevatorpulse.com`, `owner@metroplaza.com`, `prospect@elbahia.dz`.
+commun `password123`, comptes `admin@`, `manager@`, `tech1@`, `tech3@`,
+`yacine@elevatorpulse.com`, `client@elevatorpulse.com`,
+`nadia.boumediene@lesoliviers.dz`, `prospect@elbahia.dz`.
 **En production, ces mots de passe ont été révoqués.**
 
 ---

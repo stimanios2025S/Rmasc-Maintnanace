@@ -57,6 +57,18 @@ export default withAuth(
     }
 
     /**
+     * Le tableau de bord est une vue de bureau.
+     *
+     * Il ne montre que des agrégats du parc — appareils, bons ouverts,
+     * urgences, alertes récentes — et un technicien n'a pas de portefeuille à
+     * piloter. Le menu ne le lui propose plus ; cette redirection ferme l'accès
+     * par URL, qui restait le dernier écran de gestion atteignable.
+     */
+    if (pathname === "/tableau-de-bord" && token?.role === "FIELD_TECHNICIAN") {
+      return NextResponse.redirect(new URL("/bons-de-travail", req.url));
+    }
+
+    /**
      * La page ouverte par le QR collé sur un appareil est publique.
      *
      * Elle l'est aussi pour un compte client connecté : la règle du portail
@@ -206,6 +218,16 @@ export default withAuth(
       authorized: ({ token, req }) => {
         const { pathname } = req.nextUrl;
 
+        /**
+         * Un jeton marqué inactif par le callback `jwt` ne vaut plus rien.
+         *
+         * `isActive` absent signifie « jeton émis avant ce contrôle » : on le
+         * laisse passer une dernière fois, le temps que le callback `jwt` le
+         * revérifie et l'expire. `false`, lui, est explicite.
+         */
+        const hasActiveSession =
+          token != null && token.isActive !== false;
+
         // Open access admits everything, signed in or not. This is the coarse
         // gate only — the authoritative per-route role checks in
         // `src/lib/api/guard.ts` still run, and in this mode they see the
@@ -240,6 +262,18 @@ export default withAuth(
         }
 
         /**
+         * Le signalement d'une panne depuis le QR.
+         *
+         * Même raison que la page `/scan` : celui qui scanne n'a pas de compte.
+         * Seul le POST est ouvert — la lecture des signalements reste au
+         * bureau. La route porte sa propre limitation de débit et n'ouvre
+         * aucun accès.
+         */
+        if (pathname.startsWith("/api/scan/") && req.method === "POST") {
+          return true;
+        }
+
+        /**
          * Le passage planifié des contrats.
          *
          * Un planificateur n'a pas de cookie de session : exiger une connexion
@@ -252,7 +286,7 @@ export default withAuth(
          * commune.
          */
         if (pathname === "/api/cron/contracts-rollover") {
-          return req.method === "POST" ? true : !!token;
+          return req.method === "POST" ? true : hasActiveSession;
         }
 
         // IoT ingestion only — and only for POST. The handler separately
@@ -265,10 +299,10 @@ export default withAuth(
         // GET branch — telemetry history and latest snapshots — permanently
         // unreachable, even for a signed-in admin.
         if (pathname === "/api/telemetry") {
-          return req.method === "POST" ? true : !!token;
+          return req.method === "POST" ? true : hasActiveSession;
         }
 
-        return !!token;
+        return hasActiveSession;
       },
     },
     pages: { signIn: "/connexion" },

@@ -405,6 +405,33 @@ export function PartRequirementsPanel({
                     : ""}
                 </p>
 
+                {/*
+                  L'état de la demande, dit au technicien dans ses mots.
+                  Le badge au-dessus porte le vocabulaire du magasin ; cette
+                  ligne-ci dit ce qu'il peut en faire : aller chercher la pièce,
+                  attendre, ou comprendre un refus.
+                */}
+                {(row.status === "RESERVED" ||
+                  row.status === "ORDER_REQUIRED" ||
+                  row.status === "ORDERED" ||
+                  row.status === "REJECTED") && (
+                  <p
+                    className={`mt-1.5 text-xs font-semibold ${
+                      row.status === "RESERVED"
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : row.status === "REJECTED"
+                          ? "text-red-700 dark:text-red-300"
+                          : "text-amber-700 dark:text-amber-300"
+                    }`}
+                  >
+                    {row.status === "RESERVED"
+                      ? "📦 Disponible en réserve — à retirer au magasin"
+                      : row.status === "REJECTED"
+                        ? `❌ Refusé${row.decisionNote ? ` — ${row.decisionNote}` : ""}`
+                        : "⏳ En cours d'approvisionnement"}
+                  </p>
+                )}
+
                 {canDecide && (
                   <div className="mt-2.5 flex flex-wrap gap-2">
                     {row.status === "PENDING" && (
@@ -535,6 +562,8 @@ interface PartRequirementRow {
   createdAt: string;
   statusChangedAt: string | null;
   fulfilledAt: string | null;
+  /** La réponse du magasin, quand elle porte un motif (un refus). */
+  decisionNote?: string | null;
   workOrderId: string;
   requestedBy: { id: string; name: string } | null;
   statusChangedBy: { id: string; name: string } | null;
@@ -554,7 +583,13 @@ interface Draft {
 
 const STATUS_BADGE: Record<PartRequirementStatus, string> = {
   PENDING: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  PENDING_STOCK_CHECK:
+    "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
   APPROVED: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
+  RESERVED:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  ORDER_REQUIRED:
+    "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
   ORDERED:
     "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300",
   REJECTED: "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-400",

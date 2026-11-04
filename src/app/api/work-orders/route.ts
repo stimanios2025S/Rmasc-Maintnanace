@@ -55,6 +55,19 @@ const CreateWorkOrderSchema = z
   .object({
     title: z.string().min(1).max(200),
     description: z.string().max(5000).optional(),
+    /**
+     * Le lieu exact de l'intervention.
+     *
+     * Obligatoire parce qu'un bon sans adresse ne dit pas au technicien où
+     * monter. L'adresse de l'immeuble ne suffit pas dans un ensemble de
+     * plusieurs cages ou de plusieurs étages ; le bureau la pré-remplit depuis
+     * l'appareil, puis la corrige si besoin.
+     */
+    interventionAddress: z
+      .string()
+      .trim()
+      .min(1, "Le lieu de l'intervention est obligatoire")
+      .max(500),
     type: z.enum(WORK_ORDER_TYPES),
     priority: z.enum(WORK_ORDER_PRIORITIES),
     elevatorId: z.string().min(1),
@@ -168,6 +181,30 @@ export async function GET(request: NextRequest) {
       if (value) where[key] = value;
     }
 
+    /**
+     * Le parc d'un client, pour le registre d'archivage de sa fiche.
+     *
+     * Réservé au personnel : un compte client garde son périmètre habituel
+     * (`?clientId=<autre>` ne l'élargit pas), et un technicien reçoit en plus
+     * son propre filtre d'affectation, donc l'intersection reste la sienne.
+     */
+    const clientId = searchParams.get("clientId");
+    if (clientId && session.user.role !== "BUILDING_OWNER") {
+      where.elevator = { building: { ownerId: clientId } };
+    }
+
+    /**
+     * Un technicien ne lit que ses propres interventions.
+     *
+     * Le filtre est posé **après** la lecture du query string, exprès : un
+     * `?assignedToId=<collègue>` ne doit pas élargir la portée. Et il vit ici,
+     * dans la route, pas seulement dans l'écran — masquer des lignes côté
+     * navigateur laisserait la flotte entière lisible dans l'onglet réseau.
+     */
+    if (session.user.role === "FIELD_TECHNICIAN") {
+      where.assignedToId = session.user.id;
+    }
+
     const [workOrders, total] = await Promise.all([
       prisma.workOrder.findMany({
         where,
@@ -254,6 +291,7 @@ export async function POST(request: NextRequest) {
     const workOrder = await createWorkOrderWithUniqueNumber({
       title: parsed.title,
       description: parsed.description ?? null,
+      interventionAddress: parsed.interventionAddress,
       type: parsed.type,
       priority: parsed.priority,
       elevatorId: parsed.elevatorId,

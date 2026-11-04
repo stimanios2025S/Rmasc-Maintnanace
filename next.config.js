@@ -46,14 +46,72 @@ const nextConfig = {
       ["/work-orders", "/bons-de-travail"],
       ["/technician", "/technicien"],
       ["/inspection-reports", "/rapports-inspection"],
-      ["/admin", "/administration"],
       ["/login", "/connexion"],
+      /*
+       * Les deux adresses du parcours public, telles qu'elles sont nommées
+       * dans les consignes d'exploitation. Elles n'existent pas comme pages :
+       * le tableau des pannes est `/administration/incidents`, la carte est
+       * `/carte`. Rediriger plutôt que dupliquer garde une seule définition
+       * de chaque écran.
+       */
+      ["/administration/pannes", "/administration/incidents"],
+      ["/supervision", "/carte"],
+      /*
+       * Les adresses « métier » des deux registres. Elles ne sont pas des
+       * pages : la reprise d'appareil vit dans `/administration/ascenseurs`,
+       * les fiches techniques dans `/fiches-techniques`. Rediriger évite deux
+       * écrans jumeaux à maintenir.
+       */
+      ["/administration/reprises", "/administration/ascenseurs"],
+      ["/administration/fiches-techniques", "/fiches-techniques"],
+      ["/administration/prospects", "/fiches-techniques"],
     ];
 
-    return RENAMED.flatMap(([from, to]) => [
-      { source: from, destination: to, permanent: false },
-      { source: `${from}/:path*`, destination: `${to}/:path*`, permanent: false },
-    ]);
+    return [
+      /*
+       * Le QR code apposé sur les appareils pointe vers /qr-appareil.
+       * Next ne sert pas automatiquement l'index d'un dossier de `public` ;
+       * cette redirection exacte ouvre la fiche statique sans toucher aux
+       * fichiers voisins (machine.png, manuel-ascenseur.pdf, etc.).
+       */
+      {
+        source: "/qr-appareil",
+        destination: "/qr-appareil/index.html",
+        permanent: false,
+      },
+      /*
+       * La racine de l'administration n'a pas d'écran.
+       *
+       * Ces deux règles sont *exactes* et volontairement hors de `RENAMED` :
+       * y ajouter `/administration` produirait aussi la règle
+       * `/administration/:path*` → `/tableau-de-bord/:path*`, qui enverrait
+       * `/administration/pieces` vers une page inexistante. Seule la racine
+       * redirige ; les sous-chemins gardent leur page.
+       *
+       * `/admin/:path*` conserve en revanche les anciens liens profonds
+       * (`/admin/clients`, `/admin/personnel`…) vers leurs équivalents
+       * français. Seul `/admin` nu mène au tableau de bord.
+       */
+      {
+        source: "/administration",
+        destination: "/tableau-de-bord",
+        permanent: false,
+      },
+      {
+        source: "/admin",
+        destination: "/tableau-de-bord",
+        permanent: false,
+      },
+      {
+        source: "/admin/:path*",
+        destination: "/administration/:path*",
+        permanent: false,
+      },
+      ...RENAMED.flatMap(([from, to]) => [
+        { source: from, destination: to, permanent: false },
+        { source: `${from}/:path*`, destination: `${to}/:path*`, permanent: false },
+      ]),
+    ];
   },
 
   async headers() {
@@ -67,7 +125,14 @@ const nextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
+            /*
+             * `self` et non `()` : le portail technicien a besoin de la
+             * géolocalisation pour le pointage géofencé et le suivi de
+             * position, et le scanner QR a besoin de la caméra. Une politique
+             * vide désactivait les deux sans le dire. Le microphone reste
+             * fermé : rien dans l'application ne l'utilise.
+             */
+            value: "camera=(self), microphone=(), geolocation=(self)",
           },
           {
             key: "Strict-Transport-Security",

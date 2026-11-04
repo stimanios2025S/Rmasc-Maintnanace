@@ -6,7 +6,7 @@
  * Usage: npx tsx prisma/seed.ts
  */
 
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 // Relative rather than `@/…`: this script runs under `tsx`, outside the
 // Next.js build, where the path alias is not guaranteed to resolve.
@@ -91,6 +91,26 @@ const TechnicianStatus = {
 
 const prisma = new PrismaClient();
 
+/**
+ * Upsert d'immeuble sur son identité naturelle : le nom dans la ville.
+ *
+ * `prisma.building.upsert()` exigerait une contrainte d'unicité sur
+ * `(name, city)`. On ne l'ajoute pas : la production n'a pas demandé cette
+ * règle, et une contrainte posée pour le confort d'un script se paie ensuite
+ * sur chaque import réel. La lecture préalable donne le même résultat, sans
+ * toucher au schéma.
+ */
+async function upsertBuilding(data: Prisma.BuildingUncheckedCreateInput) {
+  const existing = await prisma.building.findFirst({
+    where: { name: data.name, city: data.city },
+    select: { id: true },
+  });
+
+  return existing
+    ? prisma.building.update({ where: { id: existing.id }, data })
+    : prisma.building.create({ data });
+}
+
 async function main() {
   console.log("🌱 Peuplement de la base Maintenance RMASC...\n");
 
@@ -156,7 +176,7 @@ async function main() {
   // Mid-shift and mid-job. Still dispatchable — work can be queued behind the
   // one he is on — which is why ON_JOB is not filtered out of the roster.
   const tech2 = await prisma.user.upsert({
-    where: { email: "tech2@elevatorpulse.com" },
+    where: { email: "yacine@elevatorpulse.com" },
     update: {
       passwordHash: password,
       name: "Yacine Bouzid",
@@ -165,7 +185,7 @@ async function main() {
       status: TechnicianStatus.ON_JOB,
     },
     create: {
-      email: "tech2@elevatorpulse.com",
+      email: "yacine@elevatorpulse.com",
       name: "Yacine Bouzid",
       passwordHash: password,
       role: UserRole.FIELD_TECHNICIAN,
@@ -197,10 +217,11 @@ async function main() {
     },
   });
 
-  // A contracted customer. He owns the three buildings seeded below, which is
-  // what "contracted" means in practice: we hold his file.
+  // A contracted customer. He owns the buildings seeded below, which is what
+  // "contracted" means in practice: we hold his file. The e-mail is the demo
+  // login advertised in the README and printed at the end of this script.
   const owner = await prisma.user.upsert({
-    where: { email: "owner@metroplaza.com" },
+    where: { email: "client@elevatorpulse.com" },
     update: {
       passwordHash: password,
       name: "Rachid Zerrouki",
@@ -209,7 +230,7 @@ async function main() {
       isActive: true,
     },
     create: {
-      email: "owner@metroplaza.com",
+      email: "client@elevatorpulse.com",
       name: "Rachid Zerrouki",
       passwordHash: password,
       role: UserRole.BUILDING_OWNER,
@@ -240,71 +261,147 @@ async function main() {
     },
   });
 
+  // Le syndic de l'immeuble hors contrat. Il possède un site et un appareil,
+  // mais aucun contrat d'entretien : c'est le cas qui déclenche la
+  // facturation à l'acte. Sans ce compte, « Les Oliviers » restait un
+  // immeuble sans propriétaire, et ses factures n'étaient visibles dans
+  // aucun portail.
+  const syndic = await prisma.user.upsert({
+    where: { email: "nadia.boumediene@lesoliviers.dz" },
+    update: {
+      passwordHash: password,
+      name: "Syndic Les Oliviers",
+      role: UserRole.BUILDING_OWNER,
+      clientType: ClientType.NON_CONTRACTED,
+      isActive: true,
+    },
+    create: {
+      email: "nadia.boumediene@lesoliviers.dz",
+      name: "Syndic Les Oliviers",
+      passwordHash: password,
+      role: UserRole.BUILDING_OWNER,
+      clientType: ClientType.NON_CONTRACTED,
+      phone: "+213 41 00 00 07",
+    },
+  });
+
   console.log("  ✅ Utilisateurs créés");
 
-  // ─── Buildings (idempotent: delete-and-recreate keeps FK graph clean) ──
+  // ─── Buildings (upsert on the natural key name + city) ──
 
-  // `InspectionReport.elevator` is the one relation on this graph declared
-  // without `onDelete`, so it defaults to RESTRICT. Postgres therefore refuses
-  // to drop a building while any report still points at one of its elevators —
-  // and the cascade that would eventually remove those reports (elevator ->
-  // work order -> report) runs too late to save the delete. Clearing the
-  // reports first is what makes the wipe possible; `InspectionCheckItem`
-  // follows them by cascade.
-  await prisma.inspectionReport.deleteMany({});
+  // The previous revision wiped the table before recreating it. That wipe is
+  // what made `db seed` fail once the quote module existed: `Quote.building`
+  // is `onDelete: Restrict` on purpose (a site that carries an offer cannot be
+  // deleted), and an invoice is `Restrict` on its work order, so a cascade from
+  // `Building` reached a row Postgres refused to drop. The seed now upserts on
+  // `@@unique([name, city])` instead: re-running it repairs the fixtures and
+  // touches nothing else, and no relation has to be cleared first.
 
-  await prisma.building.deleteMany({});
+  const building1Data = {
+    name: "Immeuble Le Panorama",
+    address: "12 rue Didouche Mourad",
+    city: "Alger",
+    state: "Alger",
+    zipCode: "16000",
+    contactPerson: "Rachid Zerrouki",
+    contactEmail: "client@elevatorpulse.com",
+    contactPhone: "+213 21 00 00 06",
+    // Code d'accès immeuble / local technique, communiqué aux techniciens
+    // affectés à un appareil du site.
+    accessCode: "PANO-4821",
+    slaTier: SLATier.PREMIUM,
+    latitude: 36.7538,
+    longitude: 3.0588,
+    ownerId: owner.id,
+  };
 
-  const building1 = await prisma.building.create({
-    data: {
-      name: "Immeuble Le Panorama",
-      address: "12 rue Didouche Mourad",
-      city: "Alger",
-      state: "Alger",
-      zipCode: "16000",
-      contactPerson: "Rachid Zerrouki",
-      contactEmail: "owner@metroplaza.com",
-      contactPhone: "+213 21 00 00 06",
-      slaTier: SLATier.PREMIUM,
-      latitude: 36.7538,
-      longitude: 3.0588,
-      ownerId: owner.id,
-    },
+  const building1 = await upsertBuilding(building1Data);
+
+  const building2Data = {
+    name: "Complexe d'affaires Les Oliviers",
+    address: "45 boulevard de la Soummam",
+    city: "Oran",
+    state: "Oran",
+    zipCode: "31000",
+    contactPerson: "Nadia Boumediene",
+    contactEmail: "nadia.boumediene@lesoliviers.dz",
+    contactPhone: "+213 41 00 00 07",
+    accessCode: "OLIV-7310",
+    slaTier: SLATier.STANDARD,
+    latitude: 35.6971,
+    longitude: -0.6308,
+    // Le site a un titulaire depuis que le syndic a un compte : c'est ce qui
+    // rattache les factures d'intervention à un espace client.
+    ownerId: syndic.id,
+  };
+
+  const building2 = await upsertBuilding(building2Data);
+
+  const building3Data = {
+    name: "Résidence El Bahia",
+    address: "8 avenue Aouati Mostefa",
+    city: "Constantine",
+    state: "Constantine",
+    zipCode: "25000",
+    contactPerson: "Samir Lakhdari",
+    contactEmail: "s.lakhdari@elbahia.dz",
+    contactPhone: "+213 31 00 00 08",
+    accessCode: "BAHI-2560",
+    slaTier: SLATier.ENTERPRISE,
+    latitude: 36.365,
+    longitude: 6.6147,
+  };
+
+  const building3 = await upsertBuilding(building3Data);
+
+  console.log("  ✅ Immeubles créés ou mis à jour");
+
+  // ─── Contract (couverture du Panorama) ──────────────────
+
+  // Le badge de la carte de flotte ne lit pas `client.clientType` : il demande
+  // `/api/contracts/coverage`, qui ne renvoie que des contrats ACTIVE ou
+  // SUSPENDED. Sans ligne ici, tous les appareils s'affichaient « Hors
+  // contrat » alors que le board incidents disait « Sous contrat » pour le
+  // même site. Ce contrat est la pièce qui met les deux écrans d'accord.
+  const contractYear = 2026;
+  const contractData: Prisma.ContractUncheckedCreateInput = {
+    reference: `CT-${contractYear}-0001`,
+    year: contractYear,
+    sequence: 1,
+    clientId: owner.id,
+    slaTier: SLATier.PREMIUM,
+    status: "ACTIVE",
+    startsAt: new Date("2026-10-01T00:00:00.000Z"),
+    endsAt: new Date("2027-09-30T00:00:00.000Z"),
+    signedAt: new Date("2026-10-01T00:00:00.000Z"),
+    renewalMode: "AUTO",
+    noticeDays: 60,
+    billingCycle: "ANNUALLY",
+    amount: 240000,
+    currency: "DZD",
+    responseHours: 4,
+    interventionHours: 24,
+    notes: "Contrat de démonstration — couvre Le Panorama.",
+  };
+
+  const contract = await prisma.contract.upsert({
+    where: { reference: contractData.reference },
+    update: contractData,
+    create: contractData,
   });
 
-  const building2 = await prisma.building.create({
-    data: {
-      name: "Complexe d'affaires Les Oliviers",
-      address: "45 boulevard de la Soummam",
-      city: "Oran",
-      state: "Oran",
-      zipCode: "31000",
-      contactPerson: "Nadia Boumediene",
-      contactEmail: "n.boumediene@les-oliviers.dz",
-      contactPhone: "+213 41 00 00 07",
-      slaTier: SLATier.STANDARD,
-      latitude: 35.6971,
-      longitude: -0.6308,
+  await prisma.contractBuilding.upsert({
+    where: {
+      contractId_buildingId: {
+        contractId: contract.id,
+        buildingId: building1.id,
+      },
     },
+    update: {},
+    create: { contractId: contract.id, buildingId: building1.id },
   });
 
-  const building3 = await prisma.building.create({
-    data: {
-      name: "Résidence El Bahia",
-      address: "8 avenue Aouati Mostefa",
-      city: "Constantine",
-      state: "Constantine",
-      zipCode: "25000",
-      contactPerson: "Samir Lakhdari",
-      contactEmail: "s.lakhdari@elbahia.dz",
-      contactPhone: "+213 31 00 00 08",
-      slaTier: SLATier.ENTERPRISE,
-      latitude: 36.365,
-      longitude: 6.6147,
-    },
-  });
-
-  console.log("  ✅ Immeubles créés");
+  console.log(`  ✅ Contrat ${contract.reference} rattaché à ${building1.name}`);
 
   // ─── Elevators & Components ─────────────────────────────
 
@@ -377,21 +474,41 @@ async function main() {
   ];
 
   for (const spec of elevatorSpecs) {
-    const elevator = await prisma.elevator.create({
-      data: {
-        ...spec,
-        installationDate: new Date(
-          2018 + Math.floor(Math.random() * 5),
-          Math.floor(Math.random() * 12),
-          1
-        ),
-        lastMaintenance: new Date(
-          Date.now() - Math.random() * 90 * 24 * 60 * 60 * 1000
-        ),
-        nextMaintenance: new Date(
-          Date.now() + Math.random() * 30 * 24 * 60 * 60 * 1000
-        ),
-      },
+    // One set of dates per run, shared by the update and the create branch:
+    // computing them separately would write a different `installationDate`
+    // depending on whether the row already existed.
+    const dates = {
+      installationDate: new Date(
+        2018 + Math.floor(Math.random() * 5),
+        Math.floor(Math.random() * 12),
+        1
+      ),
+      lastMaintenance: new Date(
+        Date.now() - Math.random() * 90 * 24 * 60 * 60 * 1000
+      ),
+      nextMaintenance: new Date(
+        Date.now() + Math.random() * 30 * 24 * 60 * 60 * 1000
+      ),
+    };
+
+    // Upserted on `elevatorCode`, the fleet's natural key: re-seeding repairs
+    // the specification and reattaches the machine to its building without
+    // creating a second row.
+    const elevator = await prisma.elevator.upsert({
+      where: { elevatorCode: spec.elevatorCode },
+      update: { ...spec, ...dates },
+      create: { ...spec, ...dates },
+    });
+
+    // Components and visit programmes have no natural unique key in the
+    // schema, so they are rebuilt for the seeded machines only. Scoped to this
+    // elevator: a machine added by hand keeps its components, and a work order
+    // that named one of these loses the attribution (`SetNull`), not the row.
+    await prisma.elevatorComponent.deleteMany({
+      where: { elevatorId: elevator.id },
+    });
+    await prisma.maintenanceSchedule.deleteMany({
+      where: { elevatorId: elevator.id },
     });
 
     // Create components for each elevator
@@ -539,26 +656,40 @@ async function main() {
 
   // ─── Sample Work Orders ─────────────────────────────────
 
-  const elevators = await prisma.elevator.findMany();
+  // Resolved by code rather than by array position: `findMany()` has no
+  // guaranteed order, and a seed that silently attaches a work order to the
+  // wrong machine is worse than one that fails.
+  const elevators = await prisma.elevator.findMany({
+    where: { elevatorCode: { in: elevatorSpecs.map((spec) => spec.elevatorCode) } },
+    select: { id: true, elevatorCode: true },
+  });
+  const elevatorIdByCode = new Map(
+    elevators.map((elevator) => [elevator.elevatorCode, elevator.id])
+  );
+  const unitId = (code: string): string => {
+    const id = elevatorIdByCode.get(code);
+    if (!id) throw new Error(`Ascenseur introuvable après le seed : ${code}`);
+    return id;
+  };
 
-  await prisma.workOrder.create({
-    data: {
+  // `update: {}` on purpose: a re-seed must not pull a technician's job back
+  // to its initial status. It creates the fixtures a fresh database needs and
+  // leaves an existing workflow where the team left it.
+  const sampleOrders = [
+    {
       orderNumber: "WO-202608-0001",
       title: "Inspection de sécurité mensuelle — Immeuble Le Panorama EL01",
       description: "Inspection de sécurité mensuelle planifiée pour l'ascenseur EP-BLD01-EL01.",
       type: "PREVENTIVE",
       priority: "MEDIUM",
       status: "ASSIGNED",
-      elevatorId: elevators[0].id,
+      elevatorId: unitId("EP-BLD01-EL01"),
       assignedToId: tech1.id,
       createdById: manager.id,
       scheduledDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
       estimatedHours: 3,
     },
-  });
-
-  await prisma.workOrder.create({
-    data: {
+    {
       orderNumber: "WO-202608-0002",
       title: "Alerte vibrations élevées — Les Oliviers EL01",
       description:
@@ -566,14 +697,11 @@ async function main() {
       type: "CORRECTIVE",
       priority: "HIGH",
       status: "OPEN",
-      elevatorId: elevators[2].id,
+      elevatorId: unitId("EP-BLD02-EL01"),
       createdById: manager.id,
       estimatedHours: 4,
     },
-  });
-
-  await prisma.workOrder.create({
-    data: {
+    {
       orderNumber: "WO-202608-0003",
       title: "Urgence : surchauffe moteur — Résidence El Bahia EL01",
       description:
@@ -581,13 +709,21 @@ async function main() {
       type: "EMERGENCY",
       priority: "CRITICAL",
       status: "IN_PROGRESS",
-      elevatorId: elevators[4].id,
+      elevatorId: unitId("EP-BLD03-EL01"),
       assignedToId: tech2.id,
       createdById: manager.id,
       startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
       estimatedHours: 6,
     },
-  });
+  ] as const;
+
+  for (const order of sampleOrders) {
+    await prisma.workOrder.upsert({
+      where: { orderNumber: order.orderNumber },
+      update: {},
+      create: order,
+    });
+  }
 
   console.log("  ✅ Bons de travail d'exemple créés");
 
@@ -628,8 +764,10 @@ async function main() {
     select: { id: true },
   });
 
-  const escalationOrder = await prisma.workOrder.create({
-    data: {
+  const escalationOrder = await prisma.workOrder.upsert({
+    where: { orderNumber: "WO-202608-0004" },
+    update: {},
+    create: {
       orderNumber: "WO-202608-0004",
       title: "Signalement client – EP-BLD01-EL02",
       description:
@@ -640,7 +778,7 @@ async function main() {
       type: "CORRECTIVE",
       priority: "HIGH",
       status: "OPEN",
-      elevatorId: elevators[1].id,
+      elevatorId: unitId("EP-BLD01-EL02"),
       createdById: owner.id,
     },
   });
@@ -650,7 +788,7 @@ async function main() {
     update: {},
     create: {
       incidentNumber: "INC-202609-100001",
-      elevatorId: elevators[1].id,
+      elevatorId: unitId("EP-BLD01-EL02"),
       clientId: owner.id,
       errorCodeId: doorCode?.id ?? null,
       status: "ESCALATED",
@@ -665,7 +803,7 @@ async function main() {
     update: {},
     create: {
       incidentNumber: "INC-202609-100002",
-      elevatorId: elevators[0].id,
+      elevatorId: unitId("EP-BLD01-EL01"),
       clientId: owner.id,
       errorCodeId: doorCode?.id ?? null,
       status: "RESOLVED_BY_CLIENT",
@@ -677,23 +815,71 @@ async function main() {
 
   console.log("  ✅ Signalements client d'exemple créés");
 
+  // ─── Fiches techniques hors contrat ──────────────────────
+  //
+  // Deux demandes de prospects, pour que le tableau ne s'ouvre pas vide et
+  // que la complétion terrain soit exerçable dès le premier lancement. Elles
+  // sont rattachées aux comptes hors contrat déjà créés ; la seconde reprend
+  // l'exemple du syndic Les Oliviers.
+  const techSheet1Data = {
+    clientId: syndic.id,
+    clientName: "Nadia Boumediene",
+    buildingName: "Syndic Les Oliviers",
+    contactPhone: "+213 41 00 00 07",
+    location: "45 boulevard de la Soummam, Oran",
+    weightCapacity: "450",
+    numberOfFloors: "6",
+    brand: "KONE",
+    model: "MonoSpace",
+    speedVariator: "Oui — 4 kW",
+    serialNumber: "KN-2019-4412",
+    installationDate: "2019",
+  };
+  await prisma.technicalSheet.upsert({
+    where: { id: "ts_seed_oliviers" },
+    update: techSheet1Data,
+    create: { id: "ts_seed_oliviers", ...techSheet1Data },
+  });
+
+  const techSheet2Data = {
+    clientId: prospect.id,
+    clientName: "Sofiane Meziane",
+    buildingName: "Résidence El Bahia",
+    contactPhone: "+213 21 00 00 09",
+    location: "Cité 200 logements, Blida",
+    weightCapacity: "630",
+    numberOfFloors: "9",
+    brand: "Otis",
+    model: "Gen3",
+  };
+  await prisma.technicalSheet.upsert({
+    where: { id: "ts_seed_elbahia" },
+    update: techSheet2Data,
+    create: { id: "ts_seed_elbahia", ...techSheet2Data },
+  });
+
+  console.log("  ✅ Fiches techniques hors contrat créées");
+
   console.log("\n🎉 Peuplement terminé !\n");
-  console.log("  Identifiants de connexion (mot de passe commun : password123) :");
-  console.log("    Admin :            admin@elevatorpulse.com");
-  console.log("    Responsable :      manager@elevatorpulse.com");
+  console.log("  Comptes de démonstration (mot de passe commun : password123) :");
+  console.log(`    Admin :            ${admin.email}`);
+  console.log(`    Client :           ${owner.email}   (contrat, portail client)`);
+  console.log(`    Technicien :       ${tech2.email}   (${tech2.status})`);
   console.log(`    Technicien 1 :     ${tech1.email}   (${tech1.status})`);
-  console.log(`    Technicien 2 :     ${tech2.email}   (${tech2.status})`);
   // Listed so the ON_LEAVE row is visible without a database client: she can
   // sign in, she simply cannot be dispatched.
   console.log(
     `    Technicien 3 :     ${tech3.email}  (${tech3.status} — non affectable)`
   );
-  console.log("  Les deux portails clients :");
+  console.log("  Les portails clients :");
   console.log(
-    `    Client sous contrat :   ${owner.email}  (3 immeubles, signalement de panne)`
+    `    Client sous contrat :   ${owner.email}  (Le Panorama, ${contract.reference})`
   );
   console.log(
-    `    Client sans contrat :   ${prospect.email}  (fiche technique uniquement)`
+    `    Client hors contrat :   ${syndic.email}  (Les Oliviers, factures d'intervention)`
+  );
+  console.log(
+    `    Prospect sans site :    ${prospect.email}  (fiche technique uniquement)`
   );
 }
 

@@ -4,12 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   Activity,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  ArrowUpRight,
   ClipboardList,
-  Building2,
+  HeartPulse,
+  Network,
+  Radio,
+  ShieldAlert,
 } from "lucide-react";
 import {
   BarChart,
@@ -26,17 +25,23 @@ import {
   Line,
   Legend,
 } from "recharts";
+import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { FleetMapCard } from "@/components/map/fleet-map-card";
 import { ClientOverview } from "@/components/dashboard/client-overview";
+import { IncomingFaults } from "@/components/admin/incoming-faults";
+import { TRAFFIC_LEVELS } from "@/lib/ui/traffic";
+import type { TrafficLevel } from "@/lib/ui/traffic";
 
 // ─── Types ────────────────────────────────────────────────────
 
 interface DashboardStats {
   totalBuildings: number;
+  /** Immeubles couverts par un contrat en vigueur, pas seulement existants. */
+  buildingsUnderContract: number;
   totalElevators: number;
   operationalCount: number;
   serviceRequiredCount: number;
@@ -45,6 +50,8 @@ interface DashboardStats {
   offlineCount: number;
   openWorkOrders: number;
   emergencyWorkOrders: number;
+  /** Urgences bloquées par une pièce en vérification ou en commande. */
+  blockedCriticalParts: number;
   avgHealth: number;
 }
 
@@ -61,13 +68,27 @@ interface BuildingHealth {
   health: number;
 }
 
-interface RecentAlert {
-  id: string;
-  elevator: string;
-  message: string;
-  severity: string;
-  createdAt: string;
-  acknowledged: boolean;
+/**
+ * Une grandeur relevée par les capteurs d'un appareil.
+ *
+ * Le niveau est calculé par le serveur avec les seuils réglés dans
+ * `/seuils` — le panneau ne réinvente pas de bornes côté navigateur.
+ */
+interface SensorReading {
+  metricName: string;
+  title: string;
+  unit: string;
+  value: number;
+  level: "ok" | "warning" | "critical";
+}
+
+interface SensorRow {
+  elevatorId: string;
+  elevatorCode: string;
+  buildingName: string;
+  status: string;
+  lastUpdated: string;
+  readings: SensorReading[];
 }
 
 interface TelemetryPoint {
@@ -98,25 +119,61 @@ const formatPointTime = (timestamp: string): string =>
     minute: "2-digit",
   });
 
-const SEVERITY_COLORS: Record<string, string> = {
-  CRITICAL: "bg-red-100 text-red-800 border-red-200",
-  EMERGENCY: "bg-red-100 text-red-800 border-red-200",
-  ANOMALY: "bg-orange-100 text-orange-800 border-orange-200",
-  WARNING: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  INFO: "bg-blue-100 text-blue-800 border-blue-200",
+/**
+ * Les libellés de mesure, côté panneau.
+ *
+ * `SensorReading.title` est le titre de l'alerte (« Vibration élevée »),
+ * juste dans un message de seuil mais faux comme étiquette de mesure : un
+ * relevé normal n'est pas « élevé ». Ces libellés-ci décrivent la grandeur.
+ */
+const SENSOR_LABELS: Record<string, string> = {
+  motor_temperature_c: "Température moteur",
+  motor_vibration_mm_s: "Vibration moteur",
+  cabin_load_kg: "Charge cabine",
 };
 
 /**
- * French labels for the severity enum. The enum *value* stays as stored and as
- * the API sends it (`CRITICAL`, …) — only what the reader sees changes.
+ * Le niveau d'un relevé, dans le vocabulaire de la table de couleurs.
+ *
+ * Le serveur renvoie `ok | warning | critical` ; la table unique parle
+ * `ok | warning | danger`. Cette passerelle est la seule traduction, et elle
+ * évite qu'un panneau invente un cinquième code couleur.
  */
-const SEVERITY_LABELS: Record<string, string> = {
-  CRITICAL: "Critique",
-  EMERGENCY: "Urgence",
-  ANOMALY: "Anomalie",
-  WARNING: "Avertissement",
-  INFO: "Information",
-};
+function readingTrafficLevel(level: SensorReading["level"]): TrafficLevel {
+  if (level === "critical") return "danger";
+  if (level === "warning") return "warning";
+  return "ok";
+}
+
+/** Le niveau le plus grave d'une ligne, pour son témoin de synthèse. */
+function worstLevel(row: SensorRow): SensorReading["level"] {
+  if (row.readings.some((reading) => reading.level === "critical")) {
+    return "critical";
+  }
+  if (row.readings.some((reading) => reading.level === "warning")) {
+    return "warning";
+  }
+  return "ok";
+}
+
+/**
+ * Le témoin d'une ligne : l'état de l'appareil d'abord, les relevés ensuite.
+ *
+ * Un ascenseur à l'arrêt doit être rouge même si sa dernière mesure est
+ * ancienne ou dans les bornes, et un appareil hors ligne doit être gris plutôt
+ * que vert : la mesure ne dit plus rien de lui. Les capteurs ne complètent
+ * l'état que lorsqu'il est nominal.
+ */
+function unitTrafficLevel(row: SensorRow): TrafficLevel {
+  if (row.status === "CRITICAL_SHUTDOWN") return "danger";
+  if (row.status === "OFFLINE") return "neutral";
+  if (row.status === "SERVICE_REQUIRED" || row.status === "ANOMALY_DETECTED") {
+    return "warning";
+  }
+  // Une ligne sans mesure n'est pas « tout va bien » : elle ne dit rien.
+  if (row.readings.length === 0) return "neutral";
+  return readingTrafficLevel(worstLevel(row));
+}
 
 // ─── Dashboard Page ─────────────────────────────────────────
 
@@ -160,7 +217,7 @@ function StaffDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [statusBreakdown, setStatusBreakdown] = useState<StatusSlice[]>([]);
   const [buildingHealth, setBuildingHealth] = useState<BuildingHealth[]>([]);
-  const [alerts, setAlerts] = useState<RecentAlert[]>([]);
+  const [sensorSnapshot, setSensorSnapshot] = useState<SensorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [telemetryFeed, setTelemetryFeed] = useState<TelemetryFeed | null>(null);
@@ -177,7 +234,9 @@ function StaffDashboard() {
       setStats(json.data.stats);
       setStatusBreakdown(json.data.statusBreakdown);
       setBuildingHealth(json.data.buildingHealth);
-      setAlerts(json.data.recentAlerts);
+      setSensorSnapshot(
+        Array.isArray(json.data.sensorSnapshot) ? json.data.sensorSnapshot : []
+      );
       setTelemetryFeed(json.data.telemetryFeed ?? null);
     } catch (e) {
       setError(
@@ -244,69 +303,166 @@ function StaffDashboard() {
     );
   }
 
+  /**
+   * Les quatre indicateurs, dans l'ordre où un dispatcheur les lit.
+   *
+   * Un chiffre, son unité, une ligne de contexte. Les cartes précédentes
+   * empilaient liseré, badge et pastille : lisible une fois, bruité quatre
+   * fois de suite en haut d'un écran qu'on ouvre dix fois par jour.
+   */
   const statCards = [
     {
-      label: "Ascenseurs au total",
+      key: "fleet",
+      label: "Parc global",
       value: String(stats.totalElevators),
-      sub: `${stats.totalBuildings} ${
-        stats.totalBuildings > 1 ? "immeubles" : "immeuble"
-      }`,
-      icon: Activity,
-      color: "text-blue-600 bg-blue-100 dark:bg-blue-900/30",
+      unit: stats.totalElevators > 1 ? "Ascenseurs" : "Ascenseur",
+      sub: `${stats.buildingsUnderContract} ${
+        stats.buildingsUnderContract > 1 ? "immeubles" : "immeuble"
+      } sous contrat`,
+      icon: Network,
+      tint: "text-blue-600 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-400",
+      tone: "text-gray-900 dark:text-white",
+      subTone: "text-gray-500 dark:text-gray-400",
+      alert: false,
     },
     {
-      label: "Opérationnels",
-      value: String(stats.operationalCount),
-      sub: `${stats.avgHealth} % de santé moyenne`,
-      icon: CheckCircle2,
-      color: "text-green-600 bg-green-100 dark:bg-green-900/30",
+      key: "health",
+      label: "Santé du parc",
+      value: `${stats.avgHealth} %`,
+      unit: "Santé",
+      sub: `${stats.operationalCount} / ${stats.totalElevators} appareils opérationnels`,
+      icon: HeartPulse,
+      tint: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-400",
+      tone:
+        stats.avgHealth >= 80
+          ? "text-emerald-600 dark:text-emerald-400"
+          : stats.avgHealth >= 50
+            ? "text-amber-600 dark:text-amber-400"
+            : "text-red-600 dark:text-red-400",
+      subTone: "text-gray-500 dark:text-gray-400",
+      alert: false,
     },
     {
-      label: "Bons de travail ouverts",
+      key: "workload",
+      label: "Charge de travail",
       value: String(stats.openWorkOrders),
-      sub: `${stats.emergencyWorkOrders} ${
-        stats.emergencyWorkOrders > 1 ? "urgences" : "urgence"
-      }`,
+      unit: stats.openWorkOrders > 1 ? "Bons ouverts" : "Bon ouvert",
+      sub:
+        stats.emergencyWorkOrders > 0
+          ? `🔴 ${stats.emergencyWorkOrders} ${
+              stats.emergencyWorkOrders > 1 ? "urgences" : "urgence"
+            } en attente`
+          : "Aucune urgence en attente",
       icon: ClipboardList,
-      color: "text-yellow-600 bg-yellow-100 dark:bg-yellow-900/30",
+      tint: "text-amber-600 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400",
+      tone: "text-gray-900 dark:text-white",
+      subTone:
+        stats.emergencyWorkOrders > 0
+          ? "font-semibold text-red-600 dark:text-red-400"
+          : "text-gray-500 dark:text-gray-400",
+      alert: stats.emergencyWorkOrders > 0,
     },
     {
-      label: "Unités critiques",
+      key: "alerts",
+      label: "Alertes & arrêts",
       value: String(stats.criticalCount),
-      sub: `${stats.anomalyCount} ${
-        stats.anomalyCount > 1 ? "anomalies" : "anomalie"
-      }`,
-      icon: XCircle,
-      color: "text-red-600 bg-red-100 dark:bg-red-900/30",
+      unit: stats.criticalCount > 1 ? "Unités critiques" : "Unité critique",
+      sub:
+        (stats.criticalCount > 0
+          ? `🔴 ${stats.criticalCount} ${
+              stats.criticalCount > 1 ? "arrêts bloquants" : "arrêt bloquant"
+            }`
+          : "Aucun arrêt bloquant") +
+        (stats.blockedCriticalParts > 0
+          ? ` · ${stats.blockedCriticalParts} bloquée${
+              stats.blockedCriticalParts > 1 ? "s" : ""
+            } par pièce`
+          : ""),
+      icon: ShieldAlert,
+      tint: "text-red-600 bg-red-50 dark:bg-red-950/40 dark:text-red-400",
+      tone:
+        stats.criticalCount > 0
+          ? "text-red-600 dark:text-red-400"
+          : "text-gray-900 dark:text-white",
+      subTone: "text-gray-500 dark:text-gray-400",
+      alert: stats.criticalCount > 0,
     },
   ];
 
   return (
     <div className="space-y-6">
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((stat) => (
-          <Card key={stat.label} className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">        {statCards.map((stat) => (
+          <Card
+            key={stat.key}
+            className={`p-5 ${
+              stat.alert ? "border-red-200 dark:border-red-900/70" : ""
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                   {stat.label}
                 </p>
-                <p className="text-3xl font-bold text-gray-900 dark:text-white mt-1">
-                  {stat.value}
+                <p className="mt-1.5 flex flex-wrap items-baseline gap-x-2">
+                  <span
+                    className={`text-3xl font-extrabold tabular-nums ${stat.tone}`}
+                  >
+                    {stat.value}
+                  </span>
+                  <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">
+                    {stat.unit}
+                  </span>
                 </p>
-                <div className="flex items-center gap-1 mt-2">
-                  <ArrowUpRight className="w-3 h-3 text-gray-400" />
-                  <span className="text-xs text-gray-500">{stat.sub}</span>
-                </div>
+                <p className={`mt-2 text-xs ${stat.subTone}`}>{stat.sub}</p>
               </div>
-              <div className={`p-3 rounded-xl ${stat.color}`}>
-                <stat.icon className="w-6 h-6" />
-              </div>
+              <span
+                className={`flex h-10 w-10 flex-none items-center justify-center rounded-xl ${stat.tint}`}
+              >
+                <stat.icon className="h-5 w-5" aria-hidden="true" />
+              </span>
             </div>
           </Card>
         ))}
       </div>
+
+      {/*
+        L'alerte de blocage logistique.
+
+        Une urgence rouge avec un technicien affecté et un statut normal ne
+        signale rien : elle est bloquée par une pièce que le magasin n'a pas
+        encore servie. Sans cette ligne, personne ne sait qu'elle n'avancera
+        pas avant une commande fournisseur.
+      */}
+      {stats.blockedCriticalParts > 0 && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+        >
+          <ShieldAlert className="h-5 w-5 flex-none" aria-hidden="true" />
+          <p className="font-semibold">
+            {stats.blockedCriticalParts} intervention
+            {stats.blockedCriticalParts > 1 ? "s" : ""} prioritaire
+            {stats.blockedCriticalParts > 1 ? "s" : ""} bloquée
+            {stats.blockedCriticalParts > 1 ? "s" : ""} par un manque de pièce.
+          </p>
+          <Link
+            href="/administration/pieces"
+            className="ml-auto font-bold underline decoration-2 underline-offset-2 hover:text-red-900 dark:hover:text-red-200"
+          >
+            Ouvrir les pièces à commander
+          </Link>
+        </div>
+      )}
+
+      {/*
+        La réception du bureau, entre les compteurs et la carte.
+
+        Les compteurs disent combien ; cette bande dit *quoi*, *pour qui* et
+        *où*. C'est l'ordre dans lequel on traite une journée : le volume, puis
+        les deux files qui attendent une décision, puis la carte.
+      */}
+      <IncomingFaults />
 
       {/*
         The fleet map.
@@ -483,57 +639,120 @@ function StaffDashboard() {
           )}
         </Card>
 
-        {/* Recent Alerts */}
+        {/*
+          Centre de télémétrie & capteurs IoT.
+
+          Remplace la liste « Alertes récentes » : celle-ci doublait l'écran
+          `/alertes`, qui reste le registre des alertes levées et acquittées.
+          Ce panneau-ci répond à une autre question — « que disent les capteurs
+          en ce moment ? » —, appareil par appareil, avec le niveau calculé par
+          les seuils réglés dans `/seuils`. Les deux ne se recouvrent plus.
+        */}
         <Card className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Alertes récentes
-            </h3>
-            <span className="text-xs text-gray-500 flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" />
-              {alerts.length} {alerts.length > 1 ? "affichées" : "affichée"}
-            </span>
-          </div>
-          {alerts.length === 0 ? (
-            <p className="text-sm text-gray-500 flex items-center gap-2">
-              <Building2 className="w-4 h-4" />
-              Aucune alerte — la télémétrie du parc est nominale.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className={`p-3 rounded-lg border ${
-                    SEVERITY_COLORS[alert.severity] ?? SEVERITY_COLORS.INFO
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono opacity-70">
-                        {alert.elevator}
-                      </span>
-                      <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-black/10">
-                        {SEVERITY_LABELS[alert.severity] ?? alert.severity}
-                      </span>
-                      {alert.acknowledged && (
-                        <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-black/10">
-                          ACQUITTÉE
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs opacity-60">
-                      {formatDistanceToNow(new Date(alert.createdAt), {
-                        addSuffix: true,
-                        locale: fr,
-                      })}
-                    </span>
-                  </div>
-                  <p className="text-sm mt-1">{alert.message}</p>
-                </div>
-              ))}
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+                <Radio className="h-5 w-5 text-blue-500" aria-hidden="true" />
+                Centre de télémétrie &amp; capteurs IoT
+              </h3>
+              <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                Capteurs IoT — dernier relevé reçu pour chaque appareil.
+              </p>
             </div>
+            <Link
+              href="/seuils"
+              className="inline-flex flex-none items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
+            >
+              Seuils d&apos;alerte
+            </Link>
+          </div>
+
+          {sensorSnapshot.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <Activity className="h-8 w-8 text-gray-300 dark:text-gray-600" aria-hidden="true" />
+              <p className="text-sm font-medium text-gray-900 dark:text-white">
+                Aucun relevé de capteur
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Les appareils équipés remonteront leur état ici dès la première
+                mesure reçue.
+              </p>
+            </div>
+          ) : (
+            <ul className="space-y-2.5">
+              {sensorSnapshot.slice(0, 5).map((row) => {
+                const updated = new Date(row.lastUpdated);
+                const stale =
+                  Date.now() - updated.getTime() > LIVE_WINDOW_MS;
+                const style = stale
+                  ? TRAFFIC_LEVELS.neutral
+                  : TRAFFIC_LEVELS[unitTrafficLevel(row)];
+
+                return (
+                  <li
+                    key={row.elevatorId}
+                    className="rounded-xl border border-gray-200 p-3 dark:border-gray-800"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`h-2 w-2 flex-none rounded-full ${style.dot}`}
+                        aria-hidden="true"
+                      />
+                      <span className="font-mono text-xs font-semibold text-gray-900 dark:text-white">
+                        {row.elevatorCode}
+                      </span>
+                      <span className="truncate text-xs text-gray-500 dark:text-gray-400">
+                        {row.buildingName}
+                      </span>
+                      <span className="ml-auto whitespace-nowrap text-[10px] uppercase tracking-wide text-gray-400">
+                        {stale
+                          ? `Figé · ${formatDistanceToNow(updated, {
+                              locale: fr,
+                            })}`
+                          : "En direct"}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {row.readings.map((reading) => {
+                        const readingStyle =
+                          TRAFFIC_LEVELS[readingTrafficLevel(reading.level)];
+                        return (
+                          <span
+                            key={reading.metricName}
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${readingStyle.bg} ${readingStyle.text} ${readingStyle.border}`}
+                          >
+                            <span
+                              className={`h-1.5 w-1.5 flex-none rounded-full ${readingStyle.dot}`}
+                              aria-hidden="true"
+                            />
+                            {SENSOR_LABELS[reading.metricName] ?? reading.title}
+                            <span className="font-mono font-semibold">
+                              {reading.value.toLocaleString("fr-FR", {
+                                maximumFractionDigits: 1,
+                              })}
+                              {reading.unit ? ` ${reading.unit}` : ""}
+                            </span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
+
+          <p className="mt-3 text-[11px] text-gray-400 dark:text-gray-500">
+            Les règles de déclenchement se règlent dans{" "}
+            <Link
+              href="/seuils"
+              className="underline hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              Seuils d&apos;alerte
+            </Link>
+            .
+          </p>
         </Card>
       </div>
     </div>

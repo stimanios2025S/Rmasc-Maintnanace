@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { FileText, Loader2, RefreshCw, Search } from "lucide-react";
+import { FileText, Loader2, Plus, RefreshCw, Search, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { enumLabel } from "@/lib/ui/enum-labels";
-import { formatDa } from "@/lib/quotes/totals";
+import { computeQuoteTotals, formatDa, parseAmountInput } from "@/lib/quotes/totals";
 import { QUOTE_STATUSES } from "@/types";
 import type { QuoteStatus } from "@/types";
 
@@ -48,6 +49,43 @@ interface QuoteRow {
   totals: { totalHt: number; vatAmount: number; totalTtc: number };
   lineCount: number;
 }
+
+/** Un immeuble proposé au formulaire de création. */
+interface BuildingOption {
+  id: string;
+  name: string;
+  city: string;
+  /** Le titulaire du site : c'est lui qui recevra le devis. */
+  owner: { id: string; name: string } | null;
+}
+
+/** Un appareil du parc, filtré sur l'immeuble choisi. */
+interface UnitOption {
+  id: string;
+  elevatorCode: string;
+}
+
+/**
+ * Le formulaire de création, vide.
+ *
+ * Déclaré hors du composant : le remettre à zéro après un envoi réussi est le
+ * même objet, et une réinitialisation champ par champ finit toujours par en
+ * oublier un.
+ */
+const EMPTY_QUOTE_FORM = {
+  buildingId: "",
+  elevatorId: "",
+  need: "",
+  validityDays: "30",
+  designation: "",
+  quantity: "1",
+  unitPrice: "",
+  sendNow: true,
+};
+
+/** Le style des champs du formulaire, une fois pour toutes. */
+const INPUT_CLASS =
+  "mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100 dark:disabled:bg-gray-800";
 
 /**
  * Les onglets de filtrage, dans l'ordre du travail.
@@ -95,6 +133,15 @@ export default function DevisRegisterPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  /** Le formulaire de création : ouvert, en cours d'envoi, ou en erreur. */
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY_QUOTE_FORM);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [buildings, setBuildings] = useState<BuildingOption[]>([]);
+  const [units, setUnits] = useState<UnitOption[]>([]);
+
   useEffect(() => {
     const id = setTimeout(() => setTerm(search.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(id);
@@ -112,7 +159,9 @@ export default function DevisRegisterPage() {
       if (!silent) setLoading(true);
       setError("");
       try {
-        const res = await fetch(`/api/quotes?${params.toString()}`);
+        const res = await fetch(`/api/quotes?${params.toString()}`, {
+          cache: "no-store",
+        });
         if (!res.ok) {
           throw new Error(`L'API des devis a répondu ${res.status}`);
         }
@@ -132,6 +181,190 @@ export default function DevisRegisterPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Le chiffrage du formulaire, réduit à une ligne.
+   *
+   * Les montants se lisent avec `parseAmountInput` — virgule décimale et
+   * espaces de milliers — et non avec `Number()`, qui rendrait `NaN` sur
+   * « 12 500 ».
+   */
+  const draftQuantity = parseAmountInput(form.quantity) ?? 0;
+  const draftPrice = parseAmountInput(form.unitPrice) ?? 0;
+  const hasLine =
+    form.designation.trim().length > 0 && draftQuantity > 0 && draftPrice > 0;
+  const draftTotals = computeQuoteTotals(
+    hasLine ? [{ quantity: draftQuantity, unitPrice: draftPrice }] : []
+  );
+
+  /**
+   * Le titulaire du site choisi : le serveur adresse le devis à lui, pas au
+   * compte qui le saisit. L'afficher évite de découvrir après coup qu'une offre
+   * a été créée sur un immeuble sans propriétaire — donc visible nulle part.
+   */
+  const selectedBuilding =
+    buildings.find((building) => building.id === form.buildingId) ?? null;
+
+  // Le parc ne se charge qu'à l'ouverture du formulaire : une liste complète
+  // d'immeubles et d'appareils sur un écran de registre serait du poids pour un
+  // formulaire que la plupart des visites n'ouvrent pas.
+  useEffect(() => {
+    if (!formOpen || buildings.length > 0) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/buildings");
+        if (!res.ok) {
+          throw new Error(`L'API des immeubles a répondu ${res.status}`);
+        }
+        const json = await res.json();
+        if (cancelled) return;
+        const list = Array.isArray(json?.data) ? json.data : [];
+        setBuildings(
+          list.map((b: BuildingOption) => ({
+            id: b.id,
+            name: b.name,
+            city: b.city,
+            owner: b.owner ?? null,
+          }))
+        );
+      } catch (e) {
+        if (!cancelled) {
+          setFormError(
+            e instanceof Error ? e.message : "Immeubles indisponibles."
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [formOpen, buildings.length]);
+
+  useEffect(() => {
+    if (!form.buildingId) {
+      setUnits([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/elevators");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (cancelled) return;
+        const list = Array.isArray(json?.data) ? json.data : [];
+        setUnits(
+          list
+            .filter(
+              (unit: { building?: { id: string } }) =>
+                unit.building?.id === form.buildingId
+            )
+            .map((unit: { id: string; elevatorCode: string }) => ({
+              id: unit.id,
+              elevatorCode: unit.elevatorCode,
+            }))
+        );
+      } catch {
+        if (!cancelled) setUnits([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [form.buildingId]);
+
+  /**
+   * Crée le devis, avec sa ligne et, si demandé, sa remise au client.
+   *
+   * Une seule requête : la route écrit l'en-tête, les lignes et le statut dans
+   * le même `create`, donc un devis « envoyé » ne peut pas exister un instant
+   * sans son prix, ni l'inverse.
+   */
+  async function submitQuote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError("");
+    setNotice("");
+
+    if (!form.buildingId) {
+      setFormError("Choisissez l'immeuble concerné.");
+      return;
+    }
+    if (form.need.trim().length < 10) {
+      setFormError(
+        "Décrivez l'objet du devis en quelques mots (10 caractères minimum)."
+      );
+      return;
+    }
+    if (form.sendNow && !hasLine) {
+      setFormError(
+        "Une offre envoyée doit porter une ligne chiffrée : désignation, quantité et prix unitaire."
+      );
+      return;
+    }
+    if (!form.sendNow && form.designation.trim() && !hasLine) {
+      setFormError(
+        "Complétez la ligne : quantité et prix unitaire strictement positifs."
+      );
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload = {
+        buildingId: form.buildingId,
+        ...(form.elevatorId ? { elevatorId: form.elevatorId } : {}),
+        need: form.need.trim(),
+        validityDays: Number(form.validityDays) || 30,
+        ...(hasLine
+          ? {
+              lines: [
+                {
+                  designation: form.designation.trim(),
+                  quantity: draftQuantity,
+                  unitPrice: draftPrice,
+                },
+              ],
+            }
+          : {}),
+        ...(form.sendNow ? { status: "SENT" } : {}),
+      };
+
+      const res = await fetch("/api/quotes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          json?.error ?? `La création a été refusée (${res.status}).`
+        );
+      }
+
+      setNotice(
+        `Devis ${json?.data?.number ?? ""} créé${
+          form.sendNow ? " et envoyé au client" : " (à chiffrer)"
+        }.`
+      );
+      setFormOpen(false);
+      setForm(EMPTY_QUOTE_FORM);
+      await load();
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "La création a échoué.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Met à jour un champ du formulaire sans relire la valeur du rendu courant :
+   * deux frappes rapprochées seraient sinon fusionnées sur le même état et la
+   * première serait perdue.
+   */
+  function updateForm(patch: Partial<typeof EMPTY_QUOTE_FORM>) {
+    setForm((current) => ({ ...current, ...patch }));
+  }
 
   const hasFilters = [...params.keys()].length > 0;
 
@@ -212,15 +445,41 @@ export default function DevisRegisterPage() {
             {openTtc > 0 ? ` · ${formatDa(openTtc)} en attente` : ""}
           </span>
 
-          <button
-            type="button"
-            onClick={() => void load({ silent: true })}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            Actualiser
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void load({ silent: true })}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Actualiser
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setNotice("");
+                setFormError("");
+                // Repartir du formulaire vide à chaque ouverture : l'état
+                // précédent (case « Envoyer » décochée, ancienne ligne) ne doit
+                // pas survivre à une fermeture, sinon la création suivante
+                // part en `REQUESTED` sans que personne ne l'ait demandé.
+                setForm(EMPTY_QUOTE_FORM);
+                setFormOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Nouveau devis
+            </button>
+          </div>
         </div>
+
+        {notice && (
+          <p className="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800 dark:bg-green-950/40 dark:text-green-300">
+            {notice}
+          </p>
+        )}
       </Card>
 
       {rows.length === 0 ? (
@@ -303,6 +562,224 @@ export default function DevisRegisterPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {formOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quote-create-heading"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setFormOpen(false);
+          }}
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-xl dark:bg-gray-900">
+            <header className="flex items-start justify-between gap-4 border-b border-gray-200 p-5 dark:border-gray-800">
+              <div>
+                <h2
+                  id="quote-create-heading"
+                  className="text-lg font-bold text-gray-900 dark:text-white"
+                >
+                  Nouveau devis
+                </h2>
+                <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                  L&apos;immeuble, l&apos;objet, une ligne chiffrée. L&apos;offre
+                  peut partir au client dans le même geste.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFormOpen(false)}
+                aria-label="Fermer"
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </header>
+
+            <form onSubmit={submitQuote} className="space-y-4 p-5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Immeuble *
+                  </span>
+                  <select
+                    value={form.buildingId}
+                    onChange={(event) =>
+                      updateForm({
+                        buildingId: event.target.value,
+                        elevatorId: "",
+                      })
+                    }
+                    className={INPUT_CLASS}
+                  >
+                    <option value="">— Choisir —</option>
+                    {buildings.map((building) => (
+                      <option key={building.id} value={building.id}>
+                        {building.name} — {building.city}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedBuilding &&
+                    (selectedBuilding.owner ? (
+                      <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                        Client facturé :{" "}
+                        <span className="font-medium text-gray-700 dark:text-gray-300">
+                          {selectedBuilding.owner.name}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
+                        Aucun compte client sur ce site : le devis restera
+                        visible du bureau seulement.
+                      </span>
+                    ))}
+                </label>
+
+                <label className="block text-sm">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Appareil (facultatif)
+                  </span>
+                  <select
+                    value={form.elevatorId}
+                    disabled={!form.buildingId}
+                    onChange={(event) =>
+                      updateForm({ elevatorId: event.target.value })
+                    }
+                    className={INPUT_CLASS}
+                  >
+                    <option value="">Tout l&apos;immeuble</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.elevatorCode}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className="block text-sm">
+                <span className="font-medium text-gray-700 dark:text-gray-300">
+                  Objet / description du devis *
+                </span>
+                <textarea
+                  rows={3}
+                  value={form.need}
+                  onChange={(event) =>
+                    updateForm({ need: event.target.value })
+                  }
+                  placeholder="Remplacement du tube d'éclairage de cabine et mise en conformité de l'éclairage de secours."
+                  className={INPUT_CLASS}
+                />
+              </label>
+
+              <fieldset className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Ligne de prestation / pièce
+                </legend>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_90px_130px]">
+                  <input
+                    value={form.designation}
+                    onChange={(event) =>
+                      updateForm({ designation: event.target.value })
+                    }
+                    placeholder="Désignation (ex. tube LED 1200 mm)"
+                    aria-label="Désignation de la ligne"
+                    className={INPUT_CLASS}
+                  />
+                  <input
+                    value={form.quantity}
+                    inputMode="decimal"
+                    onChange={(event) =>
+                      updateForm({ quantity: event.target.value })
+                    }
+                    placeholder="Qté"
+                    aria-label="Quantité"
+                    className={`${INPUT_CLASS} text-right tabular-nums`}
+                  />
+                  <input
+                    value={form.unitPrice}
+                    inputMode="decimal"
+                    onChange={(event) =>
+                      updateForm({ unitPrice: event.target.value })
+                    }
+                    placeholder="Prix unitaire HT"
+                    aria-label="Prix unitaire hors taxes"
+                    className={`${INPUT_CLASS} text-right tabular-nums`}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Total HT {formatDa(draftTotals.totalHt)} · TVA 19 %{" "}
+                  {formatDa(draftTotals.vatAmount)} · TTC{" "}
+                  <span className="font-semibold text-gray-700 dark:text-gray-300">
+                    {formatDa(draftTotals.totalTtc)}
+                  </span>
+                </p>
+              </fieldset>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className="font-medium text-gray-700 dark:text-gray-300">
+                    Validité (jours)
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={form.validityDays}
+                    onChange={(event) =>
+                      updateForm({ validityDays: event.target.value })
+                    }
+                    className={INPUT_CLASS}
+                  />
+                </label>
+
+                <label className="flex items-start gap-2 rounded-xl border border-gray-200 p-3 text-sm dark:border-gray-800">
+                  <input
+                    type="checkbox"
+                    checked={form.sendNow}
+                    onChange={(event) =>
+                      updateForm({ sendNow: event.target.checked })
+                    }
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-gray-700 dark:text-gray-300">
+                    Envoyer directement au client
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                      Le devis passe au statut « Envoyé » et devient décidable
+                      dans son espace client.
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              {formError && (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 dark:bg-red-950/40 dark:text-red-300">
+                  {formError}
+                </p>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setFormOpen(false)}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {saving && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                  {form.sendNow ? "Créer et envoyer" : "Créer le devis"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

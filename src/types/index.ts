@@ -287,7 +287,10 @@ export type PartUrgency = (typeof PART_URGENCIES)[number];
  */
 export const PART_REQUIREMENT_STATUSES = [
   "PENDING",
+  "PENDING_STOCK_CHECK",
   "APPROVED",
+  "RESERVED",
+  "ORDER_REQUIRED",
   "ORDERED",
   "FULFILLED",
   "REJECTED",
@@ -365,6 +368,7 @@ export const TECHNICIAN_STATUSES = [
   "ON_JOB",
   "OFF_DUTY",
   "ON_LEAVE",
+  "ON_BREAK",
 ] as const;
 export type TechnicianStatus = (typeof TECHNICIAN_STATUSES)[number];
 
@@ -402,6 +406,7 @@ export const SETTABLE_TECHNICIAN_STATUSES = [
   "AVAILABLE",
   "OFF_DUTY",
   "ON_LEAVE",
+  "ON_BREAK",
 ] as const satisfies readonly TechnicianStatus[];
 
 /**

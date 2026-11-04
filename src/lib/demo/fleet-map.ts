@@ -45,7 +45,7 @@ const severityRank = (severity: string): number =>
   ALERT_SEVERITIES.indexOf(severity as AlertSeverity);
 
 export function demoFleetMap(): FleetMapPayload {
-  const { buildings, elevators, alerts, workOrders, incidents, users } =
+  const { buildings, elevators, alerts, workOrders, incidents, users, errorCodes } =
     demoWorld();
   const now = new Date();
 
@@ -174,6 +174,10 @@ export function demoFleetMap(): FleetMapPayload {
     const site = unit ? buildings.find((b) => b.id === unit.buildingId) : undefined;
     if (!unit || !site) continue;
 
+    const code = incident.errorCodeId
+      ? errorCodes.find((c) => c.id === incident.errorCodeId) ?? null
+      : null;
+
     faults.push({
       incidentId: incident.id,
       incidentNumber: incident.incidentNumber,
@@ -185,6 +189,8 @@ export function demoFleetMap(): FleetMapPayload {
       reportedAt: incident.createdAt.toISOString(),
       technicianName:
         users.find((u) => u.id === incident.technicianId)?.name ?? null,
+      notes: incident.notes ?? null,
+      errorCode: code ? { code: code.code, title: code.title } : null,
       elevatorId: unit.id,
       elevatorCode: unit.elevatorCode,
       buildingId: site.id,

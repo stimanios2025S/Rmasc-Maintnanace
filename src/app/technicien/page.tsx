@@ -16,9 +16,15 @@ import {
   Link2,
   ExternalLink,
   Ruler,
+  ClipboardList,
+  AlertTriangle,
+  MessageSquare,
+  Mic,
+  ArrowRight,
+  CheckCheck,
+  KeyRound,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { FleetMapCard } from "@/components/map/fleet-map-card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { SignaturePad } from "@/components/technician/signature-pad";
 import type { SignatureValue } from "@/components/technician/signature-pad";
@@ -30,6 +36,9 @@ import {
   completionActionLabel,
 } from "@/components/technician/completion-report-form";
 import type { CompletionReport } from "@/components/technician/completion-report-form";
+import { IncidentDialog } from "@/components/technician/incident-dialog";
+import { MessagesDialog } from "@/components/technician/messages-dialog";
+import { NotificationBell } from "@/components/layout/notification-bell";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { evaluateGeofence, formatDistance } from "@/lib/geo/geofence";
 import type { Coordinates } from "@/lib/geo/geofence";
@@ -84,6 +93,16 @@ interface ActiveJob {
   elevator: string;
   building: string;
   address: string;
+  /**
+   * Le lieu exact préparé pour ce bon, ou l'adresse du site à défaut.
+   *
+   * Ce que le bureau a saisi — cage, étage, entrée — et non seulement
+   * l'adresse de l'immeuble. Le serveur le compose déjà : l'écran l'affiche
+   * tel quel et n'a pas à deviner.
+   */
+  interventionAddress: string | null;
+  /** Code d'accès immeuble / local technique, communiqué avec l'affectation. */
+  accessCode: string | null;
   /**
    * Where the site is, and how close a technician must be to check in.
    *
@@ -245,12 +264,185 @@ const PRIORITY_STYLES: Record<string, string> = {
   LOW: "bg-gray-100 text-gray-600 border-gray-300",
 };
 
+/**
+ * Le repère d'une étape du parcours guidé.
+ *
+ * Quatre étapes, dans l'ordre où le travail se fait. Le numéro est dans un
+ * cercle plein plutôt qu'un simple titre : sur un téléphone, c'est ce qui dit
+ * « vous êtes ici » sans lire la phrase.
+ */
+/** Les initiales d'un nom, pour l'avatar de la bannière de profil. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "T";
+  return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase();
+}
+
+function StepHeader({
+  step,
+  title,
+  subtitle,
+  done = false,
+}: {
+  step: number;
+  title: string;
+  subtitle?: string;
+  done?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className={`grid h-8 w-8 flex-none place-items-center rounded-full text-sm font-bold ${
+          done
+            ? "bg-green-600 text-white"
+            : "bg-blue-600 text-white"
+        }`}
+        aria-hidden="true"
+      >
+        {done ? <CheckCheck className="h-4 w-4" /> : step}
+      </span>
+      <div className="min-w-0">
+        <h4 className="text-sm font-bold text-gray-900 dark:text-white">
+          {title}
+        </h4>
+        {subtitle && (
+          <p className="text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * La dictée vocale, sur le champ des notes.
+ *
+ * Web Speech API uniquement — aucun service externe, aucun enregistrement
+ * stocké. Le bouton disparaît quand le navigateur ne l'implémente pas (Firefox
+ * sur certaines versions), plutôt que d'offrir un micro qui ne fait rien.
+ */
+function DictationButton({ onText }: { onText: (text: string) => void }) {
+  const [supported, setSupported] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<{ stop: () => void } | null>(null);
+
+  useEffect(() => {
+    const w = window as unknown as {
+      SpeechRecognition?: unknown;
+      webkitSpeechRecognition?: unknown;
+    };
+    setSupported(Boolean(w.SpeechRecognition || w.webkitSpeechRecognition));
+  }, []);
+
+  function toggle() {
+    if (!supported) return;
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+
+    const w = window as unknown as {
+      SpeechRecognition?: new () => SpeechRecognitionLike;
+      webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+    };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) return;
+
+    const recognition = new Ctor();
+    recognition.lang = "fr-FR";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join(" ")
+        .trim();
+      if (transcript) onText(transcript);
+    };
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => setListening(false);
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  }
+
+  if (!supported) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={listening ? "Arrêter la dictée" : "Dicter les notes"}
+      title={listening ? "Arrêter la dictée" : "Dicter les notes"}
+      className={`absolute bottom-2 right-2 grid h-9 w-9 place-items-center rounded-full shadow-sm transition-colors ${
+        listening
+          ? "bg-red-600 text-white animate-pulse"
+          : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700"
+      }`}
+    >
+      <Mic className="h-4 w-4" aria-hidden="true" />
+    </button>
+  );
+}
+
+/** Le sous-ensemble de l'API SpeechRecognition que ce fichier utilise. */
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+}
+
+interface SpeechRecognitionEventLike {
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+}
+
 export default function TechnicianPage() {
   const [techName, setTechName] = useState("Technicien de terrain");
   const [jobs, setJobs] = useState<ActiveJob[]>([]);
   const [completed, setCompleted] = useState<CompletedJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  /** L'action terrain qui ouvre une boîte de dialogue. */
+  const [incidentOpen, setIncidentOpen] = useState(false);
+  /**
+   * La mission demandée par un lien de notification (`?mission=<id>`).
+   *
+   * La cloche peut ouvrir directement le bon concerné ; sans ce paramètre,
+   * l'écran choisit la mission en cours ou la plus prioritaire.
+   */
+  const [requestedMissionId, setRequestedMissionId] = useState<string | null>(
+    null
+  );
+
+  useEffect(() => {
+    const mission = new URLSearchParams(window.location.search).get("mission");
+    if (mission) setRequestedMissionId(mission);
+  }, []);
+
+  /**
+   * Depuis une notification, on arrive sur la bonne carte : le défilement
+   * évite de la chercher dans la page. L'effet vit ici, avant tout retour
+   * anticipé, pour que l'ordre des hooks reste stable entre le chargement et
+   * l'écran chargé.
+   */
+  useEffect(() => {
+    if (!requestedMissionId) return;
+    const target = document.getElementById(`job-${requestedMissionId}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [requestedMissionId, jobs.length]);
+  /** Le bon dont le canal de discussion est ouvert, s'il y en a un. */
+  const [messagesJob, setMessagesJob] = useState<{
+    id: string;
+    orderNumber: string;
+  } | null>(null);
   const [checklist, setChecklist] = useState<Record<string, CheckState[]>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -492,6 +684,22 @@ export default function TechnicianPage() {
     });
   };
 
+  /**
+   * Deux gestes directs, 🟢 OK / 🔴 Défaut, à côté du cycle à quatre états.
+   *
+   * Le cycle reste pour « à surveiller » et « sans objet », mais l'immense
+   * majorité des lignes se tranchent en OK ou en défaut. Deux boutons de 44 px
+   * valent mieux qu'un cycle de quatre appuis quand on est dans une gaine.
+   * Réappuyer sur le même résultat l'efface — c'est le seul retour en arrière.
+   */
+  const setCheck = (job: ActiveJob, index: number, value: CheckResult) => {
+    setChecklist((prev) => {
+      const arr = [...(prev[job.id] ?? checklistFor(job).map(() => null))];
+      arr[index] = arr[index] === value ? null : value;
+      return { ...prev, [job.id]: arr };
+    });
+  };
+
   function savePhoto(jobId: string, index: number) {
     const url = photoDraft.trim();
     setPhotos((prev) => ({
@@ -545,11 +753,20 @@ export default function TechnicianPage() {
    * machine room, and anything that adds a required step is a step that gets
    * skipped.
    */
-  const checkIn = async (jobId: string) => {
+  const checkIn = async (jobId: string, options?: { skipGps?: boolean }) => {
     setBusyId(jobId);
     setError("");
     try {
       const notes = (arrivalNotes[jobId] ?? "").trim();
+      /**
+       * « Pointer sans GPS / Sous-sol » : on omet la position.
+       *
+       * Le serveur n'applique le geofence que sur des coordonnées fournies ;
+       * une lecture GPS aberrante dans un sous-sol ne doit pas empêcher de
+       * pointer son arrivée. Le pointage sans coordonnées reste un fait
+       * enregistré, simplement non vérifié par la distance.
+       */
+      const includePosition = position !== null && !options?.skipGps;
 
       /**
        * Whether this check-in should also place the site on the map.
@@ -563,7 +780,7 @@ export default function TechnicianPage() {
        */
       const job = jobs.find((j) => j.id === jobId);
       const wantsPlacement =
-        position !== null &&
+        includePosition &&
         placeSiteOnCheckIn[jobId] !== false &&
         job !== undefined &&
         (job.siteLatitude === null || job.siteLongitude === null);
@@ -582,7 +799,7 @@ export default function TechnicianPage() {
          */
         body: JSON.stringify({
           ...(notes ? { notes } : {}),
-          ...(position
+          ...(includePosition && position
             ? { latitude: position.latitude, longitude: position.longitude }
             : {}),
           ...(wantsPlacement ? { usePositionAsSiteLocation: true } : {}),
@@ -731,29 +948,87 @@ export default function TechnicianPage() {
     );
   }
 
-  return (
-    <div className="space-y-6 max-w-2xl mx-auto">
-      {/* Header */}
-      <div className="text-center">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-          Espace technicien
-        </h2>
-        <p className="text-sm text-gray-500 mt-1">
-          {techName} — Technicien de terrain
-        </p>
-      </div>
+  /**
+   * L'intervention qui pilote la barre fixe : la première à faire, dans
+   * l'ordre où le serveur les a triées (priorité puis date).
+   */
+  /**
+   * La mission active, et une seule.
+   *
+   * Celle qui est commencée d'abord ; sinon la plus prioritaire — le serveur
+   * trie déjà par priorité puis par date. Les autres attendent en bas, en
+   * lecture seule : un technicien ne mène pas deux chantiers de front dans une
+   * cage d'ascenseur.
+   */
+  const requestedJob = requestedMissionId
+    ? jobs.find((job) => job.id === requestedMissionId)
+    : undefined;
+  const activeJob =
+    requestedJob ??
+    jobs.find((job) => job.status === "IN_PROGRESS") ??
+    jobs[0];
+  const otherJobs = activeJob
+    ? jobs.filter((job) => job.id !== activeJob.id)
+    : [];
+  const stickyJob = activeJob;
+  const stickyStarted =
+    Boolean(stickyJob?.arrivedAt) || stickyJob?.status === "IN_PROGRESS";
+  const stickyChecks = stickyJob
+    ? checklist[stickyJob.id] ?? checklistFor(stickyJob).map(() => null)
+    : [];
+  const stickyProgress =
+    stickyChecks.length > 0
+      ? stickyChecks.filter((value) => value !== null).length /
+        stickyChecks.length
+      : 0;
+  const stickyLabel = !stickyJob
+    ? ""
+    : !stickyStarted
+      ? "Démarrer l'intervention"
+      : stickyProgress >= 1
+        ? "Valider & Clôturer"
+        : "Étape suivante";
 
-      {/* Status Banner */}
-      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-4 flex items-center gap-3">
-        <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-        <div>
-          <p className="text-sm font-medium text-green-800 dark:text-green-300">
-            En service — {jobs.length}{" "}
-            {jobs.length > 1 ? "affectations actives" : "affectation active"}
-          </p>
-          <p className="text-xs text-green-600 dark:text-green-400">
-            Dernière synchro : {new Date().toLocaleTimeString("fr-FR")}
-          </p>
+  return (
+    <div className="space-y-6 max-w-2xl mx-auto pb-28">
+      {/* En-tête mobile : identité, présence, contact bureau, cloche. */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            className="grid h-12 w-12 flex-none place-items-center rounded-full bg-blue-600 text-lg font-bold text-white shadow-sm"
+            aria-hidden="true"
+          >
+            {initials(techName)}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-base font-bold text-gray-900 dark:text-white">
+              {techName}
+            </p>
+            <span className="mt-0.5 inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-300">
+              <span
+                className="h-1.5 w-1.5 animate-pulse rounded-full bg-green-500"
+                aria-hidden="true"
+              />
+              En service
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-none items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              const job = activeJob;
+              if (job)
+                setMessagesJob({ id: job.id, orderNumber: job.orderNumber });
+              else setIncidentOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            <MessageSquare className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Contacter le bureau</span>
+            <span className="sm:hidden">Bureau</span>
+          </button>
+          <NotificationBell enabled />
         </div>
       </div>
 
@@ -763,36 +1038,18 @@ export default function TechnicianPage() {
         </p>
       )}
 
-      {/*
-        The fleet map.
+      {/* L'ancre du bouton « Mes bons du jour ». */}
+      <span id="mes-bons" className="block scroll-mt-6" aria-hidden="true" />
 
-        The whole park rather than only this technician's assignments, by
-        choice: it is how they see where the rest of the fleet is and which of
-        it is in trouble — useful when the office rings to ask them to take one
-        more job on the way back. Their own position is drawn on it, and
-        selecting a site draws that site's check-in radius, so the distance that
-        decides whether the check-in button is available becomes something they
-        can see rather than something the screen only asserts.
-
-        Not polled: this portal runs on a phone in the field, and a timer
-        re-fetching pins that have not moved spends battery to tell them
-        nothing. It loads when opened and refreshes with the page.
-      */}
-      <FleetMapCard
-        title="Carte du parc"
-        height={280}
-        selfPosition={position}
-        intervalMs={0}
-      />
-
-      {/* Active Assignments */}
-      {jobs.length === 0 ? (
+      {/* Mission active — une seule à l'écran */}
+      {!activeJob ? (
         <EmptyState
-          title="Aucune affectation active"
-          hint="Les nouvelles affectations du tableau des bons de travail apparaîtront ici."
+          icon={ClipboardList}
+          title="Aucune mission planifiée pour le moment"
+          description="Vous êtes en attente d'affectation."
         />
       ) : (
-        jobs.map((job) => {
+        [activeJob].map((job) => {
           // `null` means "not yet recorded" and is not the same as a recorded
           // NOT_APPLICABLE — an item nobody assessed must not count towards
           // completion, and must not be silently filed as a Pass either.
@@ -807,6 +1064,18 @@ export default function TechnicianPage() {
           const siteIsUnmapped =
             job.siteLatitude === null || job.siteLongitude === null;
           /**
+           * L'itinéraire, calculé comme le fait le message WhatsApp : les
+           * coordonnées du site d'abord, l'adresse en recherche ensuite. Un
+           * lien qui ouvre une carte au hasard vaut moins que pas de lien.
+           */
+          const preciseLocation = job.interventionAddress?.trim() || job.address;
+          const itineraryUrl =
+            job.siteLatitude !== null && job.siteLongitude !== null
+              ? `https://www.google.com/maps/dir/?api=1&destination=${job.siteLatitude},${job.siteLongitude}`
+              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                  `${preciseLocation}, ${job.building}`
+                )}`;
+          /**
            * A full bar is not the same as a clean inspection. The bar measures
            * how much has been *recorded*, so a checklist that is complete and
            * contains a FAIL would otherwise fill green and read as all-clear —
@@ -814,13 +1083,6 @@ export default function TechnicianPage() {
            * the colour of the worst result found.
            */
           const failures = checks.filter((c) => c === "FAIL").length;
-          const attention = checks.filter((c) => c === "NEEDS_ATTENTION").length;
-          const progressFill =
-            failures > 0
-              ? "bg-red-500"
-              : attention > 0
-                ? "bg-amber-500"
-                : "bg-green-500";
 
           const recordedPhotos = photos[job.id] ?? {};
           const attached = Object.keys(recordedPhotos).length;
@@ -831,47 +1093,102 @@ export default function TechnicianPage() {
             (_, i) => !recordedPhotos[i]
           );
           const isCritical = job.priority === "CRITICAL" || job.priority === "EMERGENCY";
+          /**
+           * Le pointage est le seul seuil : `ASSIGNED` = carte condensée,
+           * `IN_PROGRESS` = parcours guidé. Le serveur pose `IN_PROGRESS` au
+           * check-in, donc l'écran et la base ne peuvent pas diverger.
+           */
+          const started = job.status === "IN_PROGRESS" || Boolean(job.arrivedAt);
 
           return (
+            <div key={job.id} id={`job-${job.id}`} className="scroll-mt-6">
             <Card
-              key={job.id}
               className={`overflow-hidden ${isCritical ? "!border-red-300 dark:!border-red-800 border-2" : ""}`}
             >
               {/* Job Header */}
               <div className={`${isCritical ? "bg-red-50 dark:bg-red-900/20" : "bg-gray-50 dark:bg-gray-800/50"} px-5 py-4 border-b border-gray-200 dark:border-gray-800`}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-mono text-gray-500">{job.orderNumber}</span>
+                <div className="mb-2 flex items-center justify-end">
                   <span className={`px-2 py-0.5 text-[10px] font-bold rounded border ${PRIORITY_STYLES[job.priority] ?? PRIORITY_STYLES.MEDIUM}`}>
                     {enumLabel(job.priority)}
                   </span>
                 </div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                  {job.title}
+                {/* 1. Immeuble et adresse, en tête de carte */}
+                <h3 className="text-lg font-bold leading-tight text-gray-900 dark:text-white">
+                  {job.building}
                 </h3>
-                {job.description && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{job.description}</p>
-                )}
-                <div className="mt-2 space-y-1">
-                  <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1.5">
-                    <Wrench className="w-3.5 h-3.5" />
-                    {job.elevator} — {job.building}
+                {/*
+                  Le lieu exact d'abord, l'adresse du site ensuite.
+
+                  Le bon porte ce que le bureau a préparé — une cage, un
+                  étage, une entrée — et c'est cette phrase que le technicien
+                  doit lire en arrivant. L'adresse de l'immeuble reste sous
+                  elle quand elle diffère, pour lever l'ambiguïté sur un site
+                  à plusieurs accès.
+                */}
+                <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/30">
+                  <p className="flex items-start gap-1.5 text-sm font-semibold text-blue-950 dark:text-blue-100">
+                    <MapPin
+                      className="mt-0.5 h-4 w-4 flex-none"
+                      aria-hidden="true"
+                    />
+                    <span>
+                      {job.interventionAddress?.trim() || job.address}
+                    </span>
                   </p>
-                  <p className="text-sm text-gray-500 flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5" />
-                    {job.address}
-                  </p>
-                  <p className="text-sm text-gray-500 flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5" />
-                    {job.scheduledDate
-                      ? `Planifié : ${new Date(job.scheduledDate).toLocaleString(
-                          "fr-FR"
-                        )}`
-                      : "Non planifié"}
-                    {job.estimatedHours != null &&
-                      ` • Est. ${job.estimatedHours} h`}
-                    {job.component && ` • ${job.component}`}
-                  </p>
+                  {job.interventionAddress?.trim() &&
+                    job.interventionAddress.trim() !== job.address && (
+                      <p className="mt-0.5 pl-5 text-xs text-blue-800/80 dark:text-blue-200/80">
+                        Site : {job.address}, {job.building}
+                      </p>
+                    )}
                 </div>
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+                  <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+                  {job.elevator} · {job.title}
+                </p>
+
+                {/* 2. Code d'accès, mis en valeur : c'est ce qu'on cherche des
+                    yeux en arrivant devant la porte. */}
+                <div className="mt-3 flex items-center gap-2.5 rounded-xl bg-blue-600 px-4 py-3 text-white shadow-sm">
+                  <KeyRound className="h-5 w-5 flex-none" aria-hidden="true" />
+                  <span className="text-xs font-bold uppercase tracking-wide text-blue-100">
+                    Code
+                  </span>
+                  <span className="font-mono text-2xl font-black tracking-[0.18em]">
+                    {job.accessCode ?? "—"}
+                  </span>
+                </div>
+
+                {/* 3. Créneau et estimation */}
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-gray-500">
+                  <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                  {job.scheduledDate
+                    ? `Planifié : ${new Date(job.scheduledDate).toLocaleString(
+                        "fr-FR"
+                      )}`
+                    : "Non planifié"}
+                  {job.estimatedHours != null &&
+                    ` • Est. ${job.estimatedHours} h`}
+                  {job.component && ` • ${job.component}`}
+                </p>
+
+                {job.description && (
+                  <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                    {job.description}
+                  </p>
+                )}
+                {/* Itinéraire immédiatement accessible, avant même le
+                    pointage : on le touche dans la voiture ou devant la porte. */}
+                <a
+                  href={itineraryUrl}
+                  target="_blank"
+                  rel="noopener"
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                >
+                  <MapPin className="h-4 w-4" aria-hidden="true" />
+                  Itinéraire vers le site
+                </a>
+
                 {/*
                   Check-in replaces the old "Démarrer l'intervention" button
                   rather than sitting beside it. Two controls that both mean
@@ -918,7 +1235,25 @@ export default function TechnicianPage() {
                       >
                         {busyId === job.id
                           ? "Pointage…"
-                          : "📍 J'ai pointé mon arrivée"}
+                          : "📍 Pointer mon arrivée (GPS)"}
+                      </button>
+                      {/*
+                        Le pointage manuel reste toujours offert.
+                        Le GPS est une commodité, pas une condition d'accès au
+                        chantier : un sous-sol, une permission refusée ou un
+                        téléphone sans fix ne doivent pas empêcher de dire
+                        « je suis arrivé ». Le serveur enregistre le fait sans
+                        coordonnées et le signale comme non vérifié.
+                      */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void checkIn(job.id, { skipGps: true })
+                        }
+                        disabled={busyId === job.id}
+                        className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                      >
+                        Je suis sur place (sans GPS)
                       </button>
                       <button
                         type="button"
@@ -1039,10 +1374,10 @@ export default function TechnicianPage() {
                         )}
                       </div>
                     ) : (
-                      <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800/60 dark:text-gray-400">
+                      <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                         {verdict.reason === "no-site-coordinates"
-                          ? "Distance au chantier indisponible : ce site n'a pas encore de position sur la carte."
-                          : "Distance au chantier indisponible : votre position n'est pas connue. Activez la localisation du navigateur."}
+                          ? "📍 Localisation non partagée : ce site n'a pas encore de position. Vous pouvez pointer votre arrivée avec le bouton « Je suis sur place »."
+                          : "📍 Localisation non partagée : votre position n'est pas connue. Vous pouvez pointer votre arrivée avec le bouton « Je suis sur place »."}
                       </p>
                     )}
 
@@ -1077,45 +1412,73 @@ export default function TechnicianPage() {
                 )}
               </div>
 
-              {/* Checklist Progress */}
-              <div className="px-5 py-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                    Points de contrôle
-                  </h4>
-                  <span className="text-xs font-medium text-gray-500">
-                    {done}/{checks.length} renseignés
-                    {failures > 0 && (
-                      <span className="ml-1.5 font-semibold text-red-600 dark:text-red-400">
-                        · {failures} en échec
-                      </span>
-                    )}
-                  </span>
+              {!started && (
+                <div className="border-t border-gray-200 px-5 py-4 dark:border-gray-800">
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    La check-list, les photos, les pièces et la signature
+                    s&apos;ouvrent après le pointage.
+                  </p>
+                  <p className="mt-1 text-xs text-gray-400">
+                    Appuyez sur «&nbsp;Pointer / Démarrer l&apos;intervention&nbsp;»
+                    ci-dessus.
+                  </p>
                 </div>
+              )}
+
+              {started && (
+                <>
+                  {/* Étape 1 — le pointage est déjà fait (statut IN_PROGRESS). */}
+                  <div className="border-t border-gray-200 px-5 py-4 dark:border-gray-800">
+                    <StepHeader
+                      step={1}
+                      title="Pointage & présence"
+                      done
+                      subtitle={
+                        job.arrivedAt
+                          ? `Arrivée pointée à ${new Date(
+                              job.arrivedAt
+                            ).toLocaleTimeString("fr-FR", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}`
+                          : "Présence enregistrée"
+                      }
+                    />
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Réseau absent ou sous-sol : le pointage reste possible, la
+                      position est simplement omise.
+                    </p>
+                  </div>
+
+              {/* Checklist Progress */}
+              <div
+                id={`checklist-${job.id}`}
+                className="scroll-mt-6 px-5 py-4"
+              >
+                <StepHeader
+                  step={2}
+                  title="Check-list de contrôle"
+                  subtitle={`${done}/${checks.length} validés${
+                    failures > 0 ? ` · ${failures} défaut(s)` : ""
+                  }`}
+                />
                 {job.checklist.length > 0 && (
-                  <p className="mb-2 text-xs text-blue-700 dark:text-blue-400">
+                  <p className="mt-3 text-xs text-blue-700 dark:text-blue-400">
                     Liste du programme d&apos;entretien de ce site.
                   </p>
                 )}
                 {job.inspection && (
-                  <p className="text-xs text-green-600 dark:text-green-400 mb-2 font-mono">
-                    Enregistré sous{" "}
+                  <p className="mt-2 text-xs text-green-600 dark:text-green-400">
                     <Link
                       href={`/rapports-inspection/${job.inspection.id}`}
                       className="underline decoration-dotted underline-offset-2 hover:text-green-700"
                     >
-                      {job.inspection.reportNumber}
+                      Rapport enregistré ✓
                     </Link>
                   </p>
                 )}
-                <div className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden mb-4">
-                  <div
-                    className={`h-full ${progressFill} rounded-full transition-all duration-500`}
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
 
-                <div className="space-y-2">
+                <div className="mt-3 space-y-2">
                   {checklistFor(job).map((item, i) => {
                     const result = checks[i] ?? null;
                     const Icon = result ? RESULT_ICON[result] : Circle;
@@ -1162,6 +1525,35 @@ export default function TechnicianPage() {
                                 {enumLabel(result)}
                               </span>
                             )}
+                          </button>
+
+                          {/* Deux gestes directs : OK / Défaut. Le cycle à
+                              quatre états reste sur la ligne du libellé. */}
+                          <button
+                            type="button"
+                            onClick={() => setCheck(job, i, "PASS")}
+                            aria-pressed={result === "PASS"}
+                            aria-label={`Marquer OK : ${item}`}
+                            className={`rounded-md px-2 py-1.5 text-xs font-bold transition-colors ${
+                              result === "PASS"
+                                ? "bg-green-600 text-white"
+                                : "bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950/40 dark:text-green-300"
+                            }`}
+                          >
+                            OK
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCheck(job, i, "FAIL")}
+                            aria-pressed={result === "FAIL"}
+                            aria-label={`Marquer un défaut : ${item}`}
+                            className={`rounded-md px-2 py-1.5 text-xs font-bold transition-colors ${
+                              result === "FAIL"
+                                ? "bg-red-600 text-white"
+                                : "bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-300"
+                            }`}
+                          >
+                            Défaut
                           </button>
 
                           <button
@@ -1247,6 +1639,14 @@ export default function TechnicianPage() {
                 </div>
               </div>
 
+              <div className="border-t border-gray-200 px-5 pt-4 dark:border-gray-800">
+                <StepHeader
+                  step={3}
+                  title="Photos & pièces"
+                  subtitle="Preuves photo par point de contrôle, pièces posées et demandes de commande."
+                />
+              </div>
+
               {/* Parts Used */}
               {job.partsReplaced && job.partsReplaced.length > 0 && (
                 <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-800">
@@ -1290,16 +1690,39 @@ export default function TechnicianPage() {
                 embedded
               />
 
+              <div
+                id={`close-${job.id}`}
+                className="scroll-mt-6 border-t border-gray-200 px-5 pt-4 dark:border-gray-800"
+              >
+                <StepHeader
+                  step={4}
+                  title="Dictée, signature & clôture"
+                  subtitle="Dictez vos notes ou saisissez-les, faites signer, puis envoyez au bureau."
+                />
+              </div>
+
               {/* Notes editor */}
               {showNotes === job.id ? (
-                <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-800">
-                  <textarea
-                    value={notes[job.id] ?? ""}
-                    onChange={(e) => setNotes({ ...notes, [job.id]: e.target.value })}
-                    rows={3}
-                    placeholder="Notes de terrain, constats, mesures…"
-                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                <div className="px-5 py-4">
+                  <div className="relative">
+                    <textarea
+                      value={notes[job.id] ?? ""}
+                      onChange={(e) => setNotes({ ...notes, [job.id]: e.target.value })}
+                      rows={3}
+                      placeholder="Notes de terrain, constats, mesures…"
+                      className="w-full px-3 py-2 pr-12 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <DictationButton
+                      onText={(text) =>
+                        setNotes((current) => ({
+                          ...current,
+                          [job.id]: `${current[job.id] ?? ""}${
+                            current[job.id] ? " " : ""
+                          }${text}`,
+                        }))
+                      }
+                    />
+                  </div>
                   <div className="flex gap-2 mt-2">
                     <button
                       onClick={() => saveNotes(job.id)}
@@ -1323,7 +1746,7 @@ export default function TechnicianPage() {
               {signingJob === job.id && (
                 <div className="px-5 py-4 border-t border-gray-200 dark:border-gray-800">
                   <SignaturePad
-                    label={`Signature du technicien — ${job.orderNumber}`}
+                    label={`Signature du technicien — ${job.building}`}
                     onCancel={() => setSigningJob(null)}
                     onSave={(value) => {
                       setSignatures((prev) => ({ ...prev, [job.id]: value }));
@@ -1391,9 +1814,61 @@ export default function TechnicianPage() {
                     : completionActionLabel(job.type)}
                 </button>
               </div>
+                </>
+              )}
             </Card>
+            </div>
           );
         })
+      )}
+
+      {/* Les autres affectations, en lecture seule tant que la mission active
+          n'est pas clôturée. Repliées par défaut : elles ne doivent pas
+          concurrencer visuellement le chantier en cours. */}
+      {otherJobs.length > 0 && (
+        <details className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+          <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-gray-900 dark:text-white">
+            <span>Missions suivantes en attente ({otherJobs.length})</span>
+            <span className="text-xs font-normal text-gray-400">
+              Après clôture de la mission en cours
+            </span>
+          </summary>
+          <ul className="divide-y divide-gray-100 border-t border-gray-100 dark:divide-gray-800 dark:border-gray-800">
+            {otherJobs.map((job) => (
+              <li
+                key={job.id}
+                className="flex items-start justify-between gap-3 px-4 py-3 text-sm"
+              >
+                <div className="min-w-0">
+                  <p className="font-mono text-xs text-gray-500">
+                    {job.orderNumber}
+                  </p>
+                  <p className="truncate font-medium text-gray-900 dark:text-white">
+                    {job.title}
+                  </p>
+                  <p className="truncate text-xs text-gray-500">
+                    {job.building} —{" "}
+                    {job.interventionAddress?.trim() || job.address}
+                  </p>
+                </div>
+                <div className="flex flex-none flex-col items-end gap-1">
+                  <span
+                    className={`rounded border px-2 py-0.5 text-[10px] font-bold ${
+                      PRIORITY_STYLES[job.priority] ?? PRIORITY_STYLES.MEDIUM
+                    }`}
+                  >
+                    {enumLabel(job.priority)}
+                  </span>
+                  {job.scheduledDate && (
+                    <span className="text-[11px] text-gray-400">
+                      {new Date(job.scheduledDate).toLocaleDateString("fr-FR")}
+                    </span>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       {/*
@@ -1482,6 +1957,59 @@ export default function TechnicianPage() {
           }}
           onSubmit={(report) => submitCompletionReport(reportFor, report)}
         />
+      )}
+
+      <IncidentDialog
+        open={incidentOpen}
+        onClose={() => setIncidentOpen(false)}
+        onCreated={() => void load()}
+      />
+
+      {messagesJob && (
+        <MessagesDialog
+          workOrderId={messagesJob.id}
+          onClose={() => setMessagesJob(null)}
+        />
+      )}
+
+      {/* Barre d'action fixe — téléphone uniquement. Le geste contextuel de
+          l'intervention courante reste sous le pouce, sans remonter la page. */}
+      {stickyJob && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_20px_rgba(0,0,0,0.08)] backdrop-blur dark:border-gray-800 dark:bg-gray-950/95 md:hidden">
+          <button
+            type="button"
+            onClick={() => {
+              if (!stickyStarted) {
+                document
+                  .getElementById(`job-${stickyJob.id}`)
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                return;
+              }
+              if (stickyProgress >= 1) {
+                setReportError("");
+                setReportFor(stickyJob);
+                return;
+              }
+              // « Étape suivante » mène à l'étape réellement incomplète : la
+              // check-list d'abord, puis la clôture.
+              document
+                .getElementById(`checklist-${stickyJob.id}`)
+                ?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            className={`mx-auto flex w-full max-w-2xl items-center justify-center gap-2 rounded-xl px-4 py-3 text-base font-bold text-white transition-colors ${
+              stickyStarted && stickyProgress >= 1
+                ? "bg-green-600 hover:bg-green-700"
+                : "bg-blue-600 hover:bg-blue-700"
+            }`}
+          >
+            {stickyStarted && stickyProgress >= 1 ? (
+              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <ArrowRight className="h-5 w-5" aria-hidden="true" />
+            )}
+            {stickyLabel}
+          </button>
+        </div>
       )}
     </div>
   );

@@ -30,6 +30,8 @@ import { prisma } from "@/lib/db/prisma";
 import { handleRouteError, jsonOk, notFound } from "@/lib/api/http";
 import { requireRole } from "@/lib/api/guard";
 import { generatePassword } from "@/lib/auth/passwords";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoClientAccounts } from "@/lib/demo/registers";
 
 /** Le même coût que la création et que le seed — voir `POST /api/clients`. */
 const BCRYPT_ROUNDS = 12;
@@ -63,6 +65,32 @@ export async function POST(_request: NextRequest, { params }: Params) {
     // ce qui n'est pas la même chose que « un accès a été réémis ».
     return jsonOk({ client, password });
   } catch (error) {
+    /**
+     * En démonstration, aucun hachage n'est écrit — mais une invitation doit
+     * pouvoir être préparée, sinon l'onglet « Accès » d'une fiche client est
+     * un bouton mort.
+     *
+     * Le mot de passe est engendré par la même fonction que la production et
+     * marqué `demo: true` : l'écran le présente comme une invitation simulée,
+     * et rien n'est persisté. Un compte de démonstration dont l'accès ne
+     * s'ouvre pas ne risque donc rien.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("POST /api/clients/[id]/password");
+      const client = demoClientAccounts().clients.find(
+        (row) => row.id === params.id
+      );
+      if (!client) {
+        return handleRouteError(
+          notFound(`Compte client introuvable : ${params.id}`)
+        );
+      }
+      return jsonOk({
+        client: { id: client.id, name: client.name, email: client.email },
+        password: generatePassword(),
+        demo: true,
+      });
+    }
     return handleRouteError(error);
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -17,6 +17,8 @@ import {
   BarChart3,
   Shield,
   CalendarClock,
+  FileText,
+  MapPin,
 } from "lucide-react";
 import {
   LineChart,
@@ -39,6 +41,7 @@ import {
 } from "recharts";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { InfoHint } from "@/components/ui/info-hint";
 import { ContractSlaBadge } from "@/components/contracts/contract-sla-badge";
 import { contractForBuilding } from "@/lib/contracts/coverage";
 import type { CoverageContract } from "@/lib/contracts/coverage";
@@ -56,6 +59,8 @@ interface ElevatorDetail {
   model: string;
   serialNumber: string | null;
   installationDate: string | null;
+  /** Complément d'adresse propre à l'appareil : bâtiment, cage, étage. */
+  installationLocation: string | null;
   motorType: string;
   maxPayloadKg: number;
   controllerType: string;
@@ -67,7 +72,17 @@ interface ElevatorDetail {
   overallHealth: number;
   lastMaintenance: string | null;
   nextMaintenance: string | null;
-  building: { id: string; name: string; address: string; city: string };
+  building: {
+    id: string;
+    name: string;
+    address: string;
+    city: string;
+    /**
+     * Code d'accès immeuble / local technique. L'API le renvoie aux rôles
+     * internes, et à un technicien seulement s'il a un bon sur cet appareil.
+     */
+    accessCode?: string | null;
+  };
   components: Array<{
     id: string;
     name: string;
@@ -119,7 +134,26 @@ interface ElevatorDetail {
     createdAt: string;
     isAcknowledged: boolean;
   }>;
+  /** Les trois derniers signalements de l'appareil (rôles internes seulement). */
+  recentIncidents?: Array<{
+    id: string;
+    incidentNumber: string;
+    status: string;
+    notes: string | null;
+    createdAt: string;
+    resolvedAt: string | null;
+    errorCode: { code: string; title: string } | null;
+  }>;
 }
+
+/** Libellés des statuts d'incident, pour la carte du technicien. */
+const INCIDENT_STATUS_LABELS: Record<string, string> = {
+  ESCALATED: "En attente d'affectation",
+  TECHNICIAN_ASSIGNED: "Affecté",
+  IN_PROGRESS: "En cours",
+  CLOSED: "Clôturé",
+  RESOLVED_BY_CLIENT: "Résolu par le client",
+};
 
 const RISK_COLORS: Record<string, string> = {
   LOW: "#22c55e",
@@ -216,7 +250,14 @@ function riskOf(rul: number): string {
 export default function ElevatorDetailPage() {
   const params = useParams();
   const id = params.id as string;
+  const router = useRouter();
   const { data: session } = useSession();
+  /**
+   * Rôle lu tôt : il pilote un effet (chargement des codes défaut) qui doit
+   * rester au-dessus des retours anticipés, sous peine de violer les règles
+   * des hooks.
+   */
+  const userRole = session?.user?.role;
   const [data, setData] = useState<ElevatorDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -239,12 +280,23 @@ export default function ElevatorDetailPage() {
   const [runningPrediction, setRunningPrediction] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
+  /** Catalogue des codes défaut, pour la carte du technicien sur site. */
+  const [errorCodes, setErrorCodes] = useState<
+    Array<{ id: string; code: string; title: string }>
+  >([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const res = await fetch(`/api/elevators/${id}`);
+      // Un technicien sur un appareil qui ne lui est pas affecté : l'API
+      // répond 403, on le renvoie vers ses interventions avec un message.
+      // Afficher un écran vide ici laisserait croire à une panne de l'app.
+      if (res.status === 403) {
+        router.replace("/bons-de-travail?acces=refuse");
+        return;
+      }
       if (res.status === 404) throw new Error("Ascenseur introuvable");
       if (!res.ok) throw new Error(`L'API de détail a renvoyé ${res.status}`);
       const json = await res.json();
@@ -256,7 +308,7 @@ export default function ElevatorDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, router]);
 
   useEffect(() => {
     load();
@@ -290,6 +342,35 @@ export default function ElevatorDetailPage() {
       cancelled = true;
     };
   }, []);
+
+  /**
+   * Les codes défaut, seulement pour un technicien.
+   *
+   * C'est le référentiel qu'il consulte devant l'armoire : le charger pour tous
+   * les rôles ajouterait une requête à un écran qui n'en a pas besoin. Un échec
+   * laisse la liste vide — la carte d'accès reste utile.
+   */
+  useEffect(() => {
+    if (userRole !== "FIELD_TECHNICIAN") return;
+
+    let cancelled = false;
+
+    fetch("/api/error-codes?limit=50")
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((json) => {
+        if (!cancelled && Array.isArray(json?.data)) setErrorCodes(json.data);
+      })
+      .catch(() => {
+        if (!cancelled) setErrorCodes([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userRole]);
 
   const runPrediction = async () => {
     setRunningPrediction(true);
@@ -330,6 +411,19 @@ export default function ElevatorDetailPage() {
           description: `Demande d'inspection manuelle pour ${
             data.elevatorCode
           } (${BRAND_LABELS[data.brand] ?? data.brand} ${data.model}).`,
+          /**
+           * Le lieu exact accompagne le bon dès sa création. Ici, c'est le
+           * site qui le fournit : la fiche de l'appareil ne demande pas
+           * d'adresse à l'opérateur, elle connaît déjà l'immeuble et le
+           * complément d'installation.
+           */
+          interventionAddress: [
+            data.building.address,
+            data.building.city,
+            data.installationLocation,
+          ]
+            .filter(Boolean)
+            .join(", "),
           type: "INSPECTION",
           priority: data.status === "CRITICAL_SHUTDOWN" ? "EMERGENCY" : "MEDIUM",
           elevatorId: data.id,
@@ -338,7 +432,7 @@ export default function ElevatorDetailPage() {
       const json = await res.json();
       if (!res.ok)
         throw new Error(json.error ?? "Échec de la création du bon de travail");
-      setActionMsg(`Bon de travail ${json.data.orderNumber} créé.`);
+      setActionMsg(`Intervention ${json.data.orderNumber} créée.`);
       await load();
     } catch (e) {
       setActionMsg(e instanceof Error ? e.message : "Échec de la création");
@@ -385,7 +479,6 @@ export default function ElevatorDetailPage() {
     risk: riskOf(c.remainingUsefulLife),
   }));
 
-  const userRole = session?.user?.role;
   // Mirrors the guards on the API: POST /api/predictive is management-only,
   // POST /api/work-orders is open to ops roles. A BUILDING_OWNER holds neither.
   const canRunPrediction =
@@ -440,6 +533,15 @@ export default function ElevatorDetailPage() {
               {BRAND_LABELS[el.brand] ?? el.brand} {el.model} —{" "}
               {el.building.name} ({el.building.address}, {el.building.city})
             </p>
+            {el.installationLocation && (
+              <p className="mt-1 flex items-start gap-1.5 text-sm text-gray-600 dark:text-gray-300">
+                <MapPin className="mt-0.5 h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+                <span>
+                  <span className="font-medium">Lieu d&apos;installation :</span>{" "}
+                  {el.installationLocation}
+                </span>
+              </p>
+            )}
           </div>
           <div className="flex gap-2">
             {canCreateWorkOrder && (
@@ -472,6 +574,100 @@ export default function ElevatorDetailPage() {
           <p className="mt-2 text-sm text-blue-600 dark:text-blue-400">{actionMsg}</p>
         )}
       </div>
+
+      {/* ─── Terrain : accès, historique récent, référentiel ─────────── */}
+      {userRole === "FIELD_TECHNICIAN" && (
+        <Card className="border-2 border-blue-200 p-5 dark:border-blue-900">
+          <div className="flex items-center gap-2">
+            <Wrench className="h-5 w-5 text-blue-600" aria-hidden="true" />
+            <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+              Intervention sur site
+            </h3>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Code d&apos;accès immeuble / local technique
+              </p>
+              {el.building.accessCode ? (
+                <p className="mt-2 font-mono text-2xl font-bold tracking-[0.2em] text-gray-900 dark:text-white">
+                  {el.building.accessCode}
+                </p>
+              ) : (
+                <p className="mt-2 text-sm text-gray-500">
+                  Non communiqué — aucun bon de travail ne vous est affecté sur
+                  cet appareil.
+                </p>
+              )}
+              <a
+                href="/qr-appareil/manuel-ascenseur.pdf"
+                target="_blank"
+                rel="noopener"
+                className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline"
+              >
+                <FileText className="h-4 w-4" aria-hidden="true" />
+                Notice technique (PDF)
+              </a>
+            </div>
+
+            <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                3 derniers signalements
+              </p>
+              {el.recentIncidents && el.recentIncidents.length > 0 ? (
+                <ul className="mt-2 space-y-2">
+                  {el.recentIncidents.map((incident) => (
+                    <li key={incident.id} className="text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs text-gray-600 dark:text-gray-400">
+                          {new Date(incident.createdAt).toLocaleDateString("fr-FR")}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {INCIDENT_STATUS_LABELS[incident.status] ??
+                            incident.status}
+                        </span>
+                      </div>
+                      <p className="text-gray-600 dark:text-gray-400">
+                        {incident.errorCode
+                          ? ` · ${incident.errorCode.code}`
+                          : ""}
+                        {incident.notes ? ` — ${incident.notes}` : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-gray-500">
+                  Aucun signalement récent.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <details className="mt-4 rounded-xl border border-gray-200 dark:border-gray-800">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-800 dark:text-gray-200">
+              Codes défaut ({errorCodes.length})
+            </summary>
+            <ul className="grid gap-2 border-t border-gray-200 p-4 dark:border-gray-800 sm:grid-cols-2">
+              {errorCodes.map((code) => (
+                <li key={code.id} className="text-sm">
+                  <span className="font-mono font-semibold">{code.code}</span>
+                  {" — "}
+                  <span className="text-gray-600 dark:text-gray-400">
+                    {code.title}
+                  </span>
+                </li>
+              ))}
+              {errorCodes.length === 0 && (
+                <li className="text-sm text-gray-500">
+                  Référentiel indisponible.
+                </li>
+              )}
+            </ul>
+          </details>
+        </Card>
+      )}
 
       {/* Quick Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
@@ -727,8 +923,9 @@ export default function ElevatorDetailPage() {
                       })}
                       %
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="mt-1 flex items-center justify-center gap-1 text-xs text-gray-500">
                       Durée de vie restante
+                      <InfoHint term="rul" />
                     </p>
                     <div className="mt-2 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
                       <div

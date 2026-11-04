@@ -4,13 +4,33 @@ import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ClipboardList, Download, FileCheck, Receipt, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  ClipboardList,
+  Download,
+  FileCheck,
+  Receipt,
+  RefreshCw,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { ErrorState } from "@/components/ui/states";
+import { EmptyState, ErrorState } from "@/components/ui/states";
 import { ContractSlaBadge } from "@/components/contracts/contract-sla-badge";
+import { InfoHint } from "@/components/ui/info-hint";
+import {
+  TrafficDot,
+  TrafficLegend,
+  TrafficPill,
+} from "@/components/ui/traffic";
+import {
+  TRAFFIC_LEVELS,
+  elevatorTrafficLabel,
+  elevatorTrafficLevel,
+  type TrafficLevel,
+} from "@/lib/ui/traffic";
 import type { CoverageContract } from "@/lib/contracts/coverage";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { formatDzd } from "@/lib/ui/money";
+import { ClientQuotesCard } from "@/components/client/quotes-card";
 import { ProgressTrack } from "@/components/ui/progress-track";
 import { ValidationBadge } from "@/components/ui/validation-badge";
 import { EmergencyButton } from "@/components/client/emergency-button";
@@ -68,6 +88,8 @@ interface IncidentRow {
 interface ElevatorRow {
   id: string;
   elevatorCode: string;
+  /** L'état de service, pour la pastille verte/orange/rouge du résumé. */
+  status: string;
   building: { id: string; name: string };
 }
 
@@ -82,6 +104,19 @@ interface InvoiceRow {
   buildingName: string;
 }
 
+interface WorkOrderRow {
+  id: string;
+  orderNumber: string;
+  title: string;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+  elevator: {
+    elevatorCode: string;
+    building: { name: string };
+  };
+}
+
 function formatDay(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
@@ -92,9 +127,15 @@ function formatDay(value: string): string {
   });
 }
 
+/**
+ * Un appareil tel que ce portail le lit : ce que le bouton d'urgence et
+ * l'assistant attendent, plus l'état de service qui alimente la pastille.
+ */
+type PortalElevator = EmergencyElevator & { status: string };
+
 export default function ClientPortalPage() {
   const { data: session, status } = useSession();
-  const [elevators, setElevators] = useState<EmergencyElevator[]>([]);
+  const [elevators, setElevators] = useState<PortalElevator[]>([]);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [invoiceError, setInvoiceError] = useState("");
@@ -108,6 +149,16 @@ export default function ClientPortalPage() {
   const [contracts, setContracts] = useState<CoverageContract[]>([]);
   const [contractsLoaded, setContractsLoaded] = useState(false);
   const [contractError, setContractError] = useState("");
+  /**
+   * L'historique des interventions, chargé à part.
+   *
+   * Une panne de cette lecture ne doit pas priver le client du bouton
+   * d'urgence : la section affiche son propre message et le reste du portail
+   * continue de fonctionner.
+   */
+  const [workOrders, setWorkOrders] = useState<WorkOrderRow[]>([]);
+  const [workOrdersLoaded, setWorkOrdersLoaded] = useState(false);
+  const [workOrderError, setWorkOrderError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -142,6 +193,7 @@ export default function ClientPortalPage() {
         (elevatorJson.data ?? []).map((e: ElevatorRow) => ({
           id: e.id,
           elevatorCode: e.elevatorCode,
+          status: e.status,
           buildingName: e.building?.name ?? "Bâtiment inconnu",
         }))
       );
@@ -206,6 +258,28 @@ export default function ClientPortalPage() {
     }
   }, []);
 
+  const loadWorkOrders = useCallback(async () => {
+    setWorkOrderError("");
+    try {
+      const res = await fetch("/api/work-orders?limit=20");
+      if (!res.ok) {
+        throw new Error(
+          `Impossible de charger l'historique des interventions (${res.status})`
+        );
+      }
+      const json = await res.json();
+      setWorkOrders(Array.isArray(json?.data) ? json.data : []);
+    } catch (e) {
+      setWorkOrderError(
+        e instanceof Error
+          ? e.message
+          : "Impossible de charger l'historique des interventions."
+      );
+    } finally {
+      setWorkOrdersLoaded(true);
+    }
+  }, []);
+
   useEffect(() => {
     // Wait for the session before fetching: until it resolves we do not know
     // which portal this account gets, and firing both requests for a
@@ -221,13 +295,27 @@ export default function ClientPortalPage() {
     void load();
     void loadInvoices();
     void loadContracts();
-  }, [load, loadContracts, loadInvoices, nonContracted, status]);
+    void loadWorkOrders();
+
+    /**
+     * L'état « en direct » demandé par le portail : les appareils et les
+     * signalements sont relus toutes les trente secondes. Les factures, les
+     * contrats et l'historique ne changent pas à cette cadence — les recharger
+     * aussi serait du trafic pour rien.
+     */
+    const id = window.setInterval(() => {
+      void load({ silent: true });
+    }, 30_000);
+
+    return () => window.clearInterval(id);
+  }, [load, loadContracts, loadInvoices, loadWorkOrders, nonContracted, status]);
 
   const refresh = useCallback(() => {
     void load({ silent: true });
     void loadInvoices();
     void loadContracts();
-  }, [load, loadContracts, loadInvoices]);
+    void loadWorkOrders();
+  }, [load, loadContracts, loadInvoices, loadWorkOrders]);
 
   // Checked before the loading state so a non-contracted client never sees the
   // emergency skeleton of a portal that is not theirs.
@@ -246,8 +334,154 @@ export default function ClientPortalPage() {
     return <ErrorState message={error} onRetry={load} />;
   }
 
+  /**
+   * Le résumé visuel, compté une fois.
+   *
+   * Le client n'a pas à lire dix lignes de statut pour savoir si son immeuble
+   * va bien : il doit voir un chiffre et une couleur. Le détail par appareil
+   * reste juste en dessous, mais la première information est un état, pas une
+   * liste.
+   */
+  const counts: Record<TrafficLevel, number> = {
+    ok: 0,
+    warning: 0,
+    danger: 0,
+    neutral: 0,
+  };
+  for (const elevator of elevators) {
+    counts[elevatorTrafficLevel(elevator.status)] += 1;
+  }
+  const buildingCount = new Set(elevators.map((e) => e.buildingName)).size;
+
+  function scrollToReport(event: React.MouseEvent<HTMLAnchorElement>) {
+    const target = document.getElementById("signaler");
+    if (!target) return;
+    event.preventDefault();
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.querySelector<HTMLElement>("button, input, textarea, select")?.focus({
+      preventScroll: true,
+    });
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {/*
+        Le résumé passe avant le bouton d'urgence : il répond à la question que
+        le client se pose en arrivant — « est-ce que mes appareils vont bien ? »
+        — puis offre l'action de signalement à côté de la réponse, sans qu'il
+        faille chercher plus bas.
+      */}
+      <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        <div className="px-5 py-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                État de mes appareils
+              </p>
+              <h2 className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+                {elevators.length === 0
+                  ? "Aucun appareil rattaché"
+                  : `${elevators.length} ascenseur${
+                      elevators.length > 1 ? "s" : ""
+                    } · ${buildingCount} immeuble${buildingCount > 1 ? "s" : ""}`}
+              </h2>
+
+              {elevators.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {counts.ok > 0 && (
+                    <TrafficPill level="ok" label={`${counts.ok} en service`} />
+                  )}
+                  {counts.warning > 0 && (
+                    <TrafficPill
+                      level="warning"
+                      label={`${counts.warning} à surveiller`}
+                    />
+                  )}
+                  {counts.danger > 0 && (
+                    <TrafficPill
+                      level="danger"
+                      label={`${counts.danger} en panne`}
+                    />
+                  )}
+                  {counts.neutral > 0 && (
+                    <TrafficPill
+                      level="neutral"
+                      label={`${counts.neutral} hors ligne`}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+
+            {elevators.length > 0 && (
+              <a
+                href="#signaler"
+                onClick={scrollToReport}
+                className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-base font-bold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-gray-900 sm:w-auto"
+              >
+                <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+                Signaler une panne
+              </a>
+            )}
+          </div>
+
+          {elevators.length === 0 ? (
+            <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+              Aucun équipement n&apos;est encore rattaché à votre compte.
+              Contactez le bureau pour faire ajouter vos appareils.
+            </p>
+          ) : (
+            <ul className="mt-4 divide-y divide-gray-100 dark:divide-gray-800">
+              {/* Trois appareils au plus : le résumé doit tenir au-dessus de la
+                  ligne de flottaison, pour que le bouton d'urgence qui suit
+                  reste atteignable sans faire défiler une liste. */}
+              {elevators.slice(0, 3).map((elevator) => {
+                const level = elevatorTrafficLevel(elevator.status);
+                return (
+                  <li
+                    key={elevator.id}
+                    className="flex items-center gap-3 py-3"
+                  >
+                    <TrafficDot
+                      level={level}
+                      size="lg"
+                      pulse
+                      label={elevatorTrafficLabel(elevator.status)}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">
+                        {elevator.elevatorCode}
+                      </p>
+                      <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+                        {elevator.buildingName}
+                      </p>
+                    </div>
+                    <span
+                      className={`text-xs font-medium ${TRAFFIC_LEVELS[level].text}`}
+                    >
+                      {elevatorTrafficLabel(elevator.status)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {elevators.length > 3 && (
+            <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+              et {elevators.length - 3} autre
+              {elevators.length - 3 > 1 ? "s" : ""} appareil
+              {elevators.length - 3 > 1 ? "s" : ""} rattaché
+              {elevators.length - 3 > 1 ? "s" : ""} à vos immeubles.
+            </p>
+          )}
+        </div>
+
+        <div className="border-t border-gray-100 bg-gray-50/60 px-5 py-3 dark:border-gray-800 dark:bg-gray-950/40">
+          <TrafficLegend compact />
+        </div>
+      </section>
+
       {/* Order matters: the emergency path is first on the page and first in
           the reading order, so it is reachable without scrolling past prose. */}
       <EmergencyButton elevators={elevators} onEscalated={refresh} />
@@ -292,9 +526,20 @@ export default function ClientPortalPage() {
         </div>
 
         {incidents.length === 0 ? (
-          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
-            Aucun signalement pour le moment.
-          </p>
+          <EmptyState
+            className="mt-4"
+            icon={ClipboardList}
+            title="Aucun signalement"
+            description="Quand vous signalez une panne, elle apparaît ici avec son numéro et son avancement, jusqu'à la clôture de l'intervention."
+            action={{
+              label: "Signaler une panne",
+              icon: AlertTriangle,
+              onClick: () =>
+                document
+                  .getElementById("signaler")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            }}
+          />
         ) : (
           <ul className="mt-4 space-y-4">
             {incidents.map((incident) => (
@@ -364,13 +609,73 @@ export default function ClientPortalPage() {
         )}
       </Card>
 
+      {/* ─── Historique des interventions ─────────────────────── */}
+      <Card className="p-5">
+        <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
+          <ClipboardList className="h-5 w-5 text-gray-400" aria-hidden="true" />
+          Historique des interventions
+        </h2>
+
+        {workOrderError ? (
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            {workOrderError}
+          </p>
+        ) : !workOrdersLoaded ? (
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            Chargement de votre historique…
+          </p>
+        ) : workOrders.length === 0 ? (
+          <EmptyState
+            className="mt-4"
+            icon={ClipboardList}
+            title="Aucune intervention"
+            description="Les visites d'entretien et les dépannages réalisés sur vos appareils apparaîtront ici, avec leur numéro et leur résultat."
+            action={{
+              label: "Signaler une panne",
+              icon: AlertTriangle,
+              onClick: () =>
+                document
+                  .getElementById("signaler")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+            }}
+          />
+        ) : (
+          <ul className="mt-4 divide-y divide-gray-100 dark:divide-gray-800">
+            {workOrders.map((order) => (
+              <li
+                key={order.id}
+                className="flex flex-wrap items-center justify-between gap-2 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">
+                    <span className="font-mono text-xs text-gray-500">
+                      {order.orderNumber}
+                    </span>{" "}
+                    {order.title}
+                  </p>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {order.elevator.elevatorCode} —{" "}
+                    {order.elevator.building.name} ·{" "}
+                    {formatDay(order.completedAt ?? order.createdAt)}
+                  </p>
+                </div>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  {enumLabel(order.status)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       {/* ─── Mes contrats & SLA ───────────────────────────────── */}
       <Card className="p-5">
         <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
           <FileCheck className="h-5 w-5 text-gray-400" aria-hidden="true" />
           {session?.user?.role === "BUILDING_OWNER"
-            ? "Mes contrats & SLA"
-            : "Contrats & SLA"}
+            ? "Mes contrats de maintenance"
+            : "Contrats de maintenance"}
+          <InfoHint term="coverage" />
         </h2>
 
         {!contractsLoaded ? (
@@ -384,10 +689,12 @@ export default function ClientPortalPage() {
             {contractError}
           </p>
         ) : contracts.length === 0 ? (
-          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
-            Aucun contrat actif ne couvre vos immeubles. Le bureau peut vous
-            indiquer la marche à suivre.
-          </p>
+          <EmptyState
+            className="mt-4"
+            icon={FileCheck}
+            title="Aucun contrat actif"
+            description="Aucun contrat en vigueur ne couvre vos immeubles pour le moment. Le bureau peut vous indiquer la marche à suivre pour régulariser la situation."
+          />
         ) : (
           <ul className="mt-4 space-y-4">
             {contracts.map((contract) => (
@@ -404,16 +711,18 @@ export default function ClientPortalPage() {
 
                 <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                   <div>
-                    <dt className="text-xs text-gray-500 dark:text-gray-400">
+                    <dt className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                       Palier souscrit
+                      <InfoHint term="tier" />
                     </dt>
                     <dd className="font-medium text-gray-900 dark:text-white">
                       {enumLabel(contract.slaTier)}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-gray-500 dark:text-gray-400">
+                    <dt className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                       Engagements de service
+                      <InfoHint term="sla" />
                     </dt>
                     <dd className="text-gray-700 dark:text-gray-300">
                       Prise en charge {contract.responseHours} h · intervention{" "}
@@ -430,8 +739,9 @@ export default function ClientPortalPage() {
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-xs text-gray-500 dark:text-gray-400">
+                    <dt className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                       Renouvellement
+                      <InfoHint term="tacitRenewal" />
                     </dt>
                     <dd className="text-gray-700 dark:text-gray-300">
                       {enumLabel(contract.renewalMode)} · préavis{" "}
@@ -469,6 +779,8 @@ export default function ClientPortalPage() {
         )}
       </Card>
 
+      <ClientQuotesCard />
+
       {/* Une section, et non un onglet : ce portail n'a aucun onglet — tout y
           est empilé, et en introduire un pour la seule facturation ferait de ce
           bloc le seul endroit qu'on ne trouve pas en faisant défiler la page.
@@ -485,10 +797,12 @@ export default function ClientPortalPage() {
             {invoiceError}
           </p>
         ) : invoices.length === 0 ? (
-          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
-            Aucune facture pour le moment. Les interventions couvertes par votre
-            contrat ne sont pas facturées.
-          </p>
+          <EmptyState
+            className="mt-4"
+            icon={Receipt}
+            title="Aucune facture"
+            description="Les interventions couvertes par votre contrat ne sont pas facturées. Une facture n'apparaît ici que pour des travaux hors contrat."
+          />
         ) : (
           <ul className="mt-4 divide-y divide-gray-100 dark:divide-gray-800">
             {invoices.map((invoice) => (

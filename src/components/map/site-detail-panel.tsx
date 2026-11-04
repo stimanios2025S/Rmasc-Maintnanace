@@ -40,6 +40,15 @@ export interface SiteDetailPanelProps {
   site: FleetMapSite;
   onClose: () => void;
   /**
+   * L'appareil qu'une notification de panne désigne.
+   *
+   * Il est remonté en tête de liste et mis en évidence : la panne vient
+   * d'être signalée sur *cette* machine, et la chercher dans six lignes
+   * triées par gravité serait exactement le travail que la notification
+   * devait épargner.
+   */
+  focusElevatorId?: string | null;
+  /**
    * Hands the site to the caller to be re-placed on the map.
    *
    * Optional, and absent wherever the caller cannot write a position back — a
@@ -52,6 +61,7 @@ export interface SiteDetailPanelProps {
 export function SiteDetailPanel({
   site,
   onClose,
+  focusElevatorId = null,
   onReposition,
   className,
 }: SiteDetailPanelProps) {
@@ -59,12 +69,16 @@ export function SiteDetailPanel({
 
   // A new array then sorted: `site.elevators` is the payload's own array and
   // `Array.prototype.sort` mutates in place, which would reorder the caller's
-  // data behind its back.
-  const units = [...site.elevators].sort(
-    (a, b) =>
+  // data behind its back. The unit a notification designates comes first; the
+  // rest keep the worst-first order that explains the pin's colour.
+  const units = [...site.elevators].sort((a, b) => {
+    if (a.id === focusElevatorId) return -1;
+    if (b.id === focusElevatorId) return 1;
+    return (
       compareAttention(a.level, b.level) ||
       a.elevatorCode.localeCompare(b.elevatorCode)
-  );
+    );
+  });
 
   return (
     <aside
@@ -156,7 +170,11 @@ export function SiteDetailPanel({
 
         <ul className="space-y-2">
           {units.map((unit) => (
-            <ElevatorRow key={unit.id} unit={unit} />
+            <ElevatorRow
+              key={unit.id}
+              unit={unit}
+              highlighted={unit.id === focusElevatorId}
+            />
           ))}
         </ul>
       </div>
@@ -205,7 +223,13 @@ function Fact({
   );
 }
 
-function ElevatorRow({ unit }: { unit: FleetMapElevator }) {
+function ElevatorRow({
+  unit,
+  highlighted = false,
+}: {
+  unit: FleetMapElevator;
+  highlighted?: boolean;
+}) {
   const style = ATTENTION_STYLES[unit.level];
 
   // Rounded to whole days here rather than in `attention.ts`: the module
@@ -215,7 +239,14 @@ function ElevatorRow({ unit }: { unit: FleetMapElevator }) {
     : null;
 
   return (
-    <li className="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+    <li
+      className={cn(
+        "rounded-lg border p-3",
+        highlighted
+          ? "border-red-400 ring-2 ring-red-200 dark:border-red-700 dark:ring-red-900/60"
+          : "border-gray-200 dark:border-gray-800"
+      )}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -227,6 +258,11 @@ function ElevatorRow({ unit }: { unit: FleetMapElevator }) {
             <span className="truncate font-mono text-sm font-semibold text-gray-900 dark:text-white">
               {unit.elevatorCode}
             </span>
+            {highlighted && (
+              <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:bg-red-950/50 dark:text-red-300">
+                Signalé
+              </span>
+            )}
           </div>
           <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
             {enumLabel(unit.brand)} {unit.model} · {unit.floorsServed} niveaux

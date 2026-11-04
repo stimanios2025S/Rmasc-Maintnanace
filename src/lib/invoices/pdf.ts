@@ -13,40 +13,46 @@
  * importé ; seule la composition propre à une facture reste ici.
  *
  * Ce qui reste propre à ce document, et ne doit pas remonter dans la charte :
- * le bloc client/intervention, le bandeau d'état, le tableau des pièces et le
+ * le bloc client/intervention, le bandeau d'état, le tableau financier et le
  * total. Une « fonction de facture » paramétrée par un titre ne produirait
  * correctement aucun des documents.
  *
- * LA RÉGRESSION VISUELLE A ÉTÉ VÉRIFIÉE, PAS SUPPOSÉE
- * `scripts/pdf-golden.ts` rend sept variantes (ordinaire, sans pièces, réglée,
- * annulée, sans coordonnées, textes longs, devise étrangère) et imprime
- * l'empreinte SHA-256 de leurs flux de contenu décompressés. Les empreintes
- * avant et après ce raccordement sont identiques.
+ * LA TVA, ET POURQUOI ELLE EST DÉDUITE DU TOTAL
+ * Le schéma ne stocke qu'un montant : `Invoice.amount`, celui que le bureau a
+ * arrêté à l'émission. Il n'existe ni colonne de taux ni lignes chiffrées, et
+ * une facture émise est figée — on ne recalcule pas ce qu'un client doit.
  *
- * Elles ne peuvent pas porter sur le fichier entier : pdfkit inscrit la date de
- * création dans le PDF, et deux rendus du même code diffèrent donc de quelques
- * octets. C'est le *contenu* qui doit être identique, et il l'est.
+ * Le document imprime pourtant HT / TVA / TTC, comme le formulaire de
+ * l'entreprise. Le montant stocké est donc traité comme le **TTC** : le HT est
+ * obtenu en le divisant par 1,19 et la TVA par différence. Le total à payer
+ * reste exactement celui de la base, au centime près ; c'est la seule lecture
+ * qui ne modifie pas une facture déjà envoyée.
+ *
+ * POURQUOI LE TABLEAU NE PORTE QU'UNE LIGNE
+ * Les prix ne sont pas stockés par pièce : le technicien saisit un montant
+ * global et la liste des pièces posées. Inventer des prix unitaires pour
+ * remplir des colonnes produirait un document faux. Le tableau porte donc la
+ * prestation facturée (quantité 1, prix HT déduit), et les pièces sont listées
+ * en annexe avec leurs quantités, sous le tableau.
  *
  * IL N'INVENTE AUCUNE MENTION LÉGALE
- * Le cachet de l'entreprise — raison sociale, adresse, téléphone, numéro
- * d'identification fiscale — n'est pas écrit en dur. Une facture portant une
- * adresse ou un NIF fabriqués serait un faux document, et c'est exactement le
- * genre de valeur qu'on ne remarque pas avant de l'avoir envoyée à un client.
- * Ces mentions viennent donc de l'environnement, et le document s'imprime sans
- * elles tant qu'elles ne sont pas renseignées :
+ * Le cachet de l'entreprise — raison sociale, adresse, téléphone, identifiants
+ * légaux — n'est pas écrit en dur. Une facture portant une adresse ou un NIF
+ * fabriqués serait un faux document, et c'est exactement le genre de valeur
+ * qu'on ne remarque pas avant de l'avoir envoyée à un client. Ces mentions
+ * viennent de `charte.ts`, donc de l'environnement (voir `.env.example`) :
  *
- *   INVOICE_COMPANY_NAME      « RMASC » par défaut — le seul nom qu'on connaisse
- *   INVOICE_COMPANY_ADDRESS
- *   INVOICE_COMPANY_PHONE
- *   INVOICE_COMPANY_EMAIL
- *   INVOICE_COMPANY_TAX_ID    NIF, RC, ou ce que l'administration exige
+ *   INVOICE_COMPANY_NAME / ADDRESS / PHONE / EMAIL
+ *   INVOICE_COMPANY_RC / NIF / NIS / AI
+ *   INVOICE_COMPANY_BANK / RIB
+ *   INVOICE_COMPANY_MENTIONS
+ *   INVOICE_LOGO_PATH, INVOICE_STAMP_PATH
  *
- * LE TAMPON
- * `cachet.png` est posé en bas à droite. Le fichier vit dans `public/`, ou
- * partout ailleurs si `INVOICE_STAMP_PATH` le désigne. S'il est absent, la
- * facture s'imprime sans tampon — jamais avec un carré vide ou une image de
- * remplacement : un document sans cachet est une facture non signée, un
- * document avec un faux cachet est un document falsifié.
+ * L'ÉCHÉANCE DE PAIEMENT
+ * Le schéma ne porte pas de colonne d'échéance. Le document imprime la date
+ * d'émission augmentée du délai de règlement, `INVOICE_PAYMENT_TERMS_DAYS`
+ * (30 jours par défaut) — une valeur de configuration, pas une donnée figée par
+ * facture.
  *
  * POURQUOI LES VALEURS VIENNENT DE LA LIGNE `Invoice`
  * Voir le commentaire du modèle : une facture est un document opposable, et tout
@@ -71,14 +77,17 @@ import {
   MUTED,
   PAGE_MARGIN,
   RULE,
+  companyName,
+  drawDocumentFooter,
   drawDocumentHeader,
   drawSectionTitle,
-  drawStamp,
+  drawStampIn,
   frame,
   frenchDate,
   printable,
 } from "@/lib/documents/charte";
-import { formatDzd } from "@/lib/ui/money";
+import { VAT_RATE_PERCENT } from "@/lib/quotes/totals";
+import { amountInWords } from "@/lib/quotes/words";
 
 /** Une pièce telle qu'elle a été figée sur la facture. */
 interface FrozenPart {
@@ -113,13 +122,38 @@ function readParts(value: unknown): FrozenPart[] {
   return parts;
 }
 
-function amountLabel(amount: Invoice["amount"], currency: string): string {
-  // `formatDzd` écrit « DZD » parce que tout montant de ce produit est en
-  // dinars. La colonne existe pour qu'une seconde devise n'exige pas une
-  // migration ; si elle arrive un jour, c'est le code stocké qui s'imprime.
-  return currency === "DZD"
-    ? formatDzd(amount.toString()) ?? "0 DZD"
-    : `${amount.toString()} ${currency}`;
+/** Le délai de règlement imprimé en échéance, en jours. */
+function paymentTermsDays(): number {
+  const configured = Number(process.env.INVOICE_PAYMENT_TERMS_DAYS);
+  return Number.isFinite(configured) && configured > 0 ? configured : 30;
+}
+
+/**
+ * Les trois montants du document, déduits du total stocké (voir l'en-tête).
+ *
+ * Le calcul se fait au centime, comme le module des devis : une TVA calculée en
+ * flottant sur un total de 12 500 afficherait 1 995,8000000000002.
+ */
+function totalsFromTtc(amount: number): {
+  totalHt: number;
+  vatAmount: number;
+  totalTtc: number;
+} {
+  const totalTtc = Math.round(amount * 100) / 100;
+  const totalHt =
+    Math.round((totalTtc / (1 + VAT_RATE_PERCENT / 100)) * 100) / 100;
+  const vatAmount = Math.round((totalTtc - totalHt) * 100) / 100;
+  return { totalHt, vatAmount, totalTtc };
+}
+
+/** Un montant tel qu'il s'imprime dans une colonne : « 10 504,20 ». */
+function moneyLabel(value: number): string {
+  return printable(
+    value.toLocaleString("fr-FR", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  );
 }
 
 /**
@@ -177,9 +211,12 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     const doc = new PDFDocument({
       size: "A4",
       margin: PAGE_MARGIN,
+      // Les pages restent en mémoire pour recevoir le pied de page après coup :
+      // sans ce tampon, seule la dernière page porterait les mentions.
+      bufferPages: true,
       info: {
         Title: `Facture ${invoice.number}`,
-        Author: process.env.INVOICE_COMPANY_NAME ?? "RMASC",
+        Author: companyName(),
         Subject: `Bon de travail ${invoice.orderNumber}`,
       },
     });
@@ -190,6 +227,13 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     doc.on("error", reject);
 
     const { left, right, width } = frame(doc);
+
+    /** Ajoute une page si le contenu n'a plus de place, et rend le nouveau y. */
+    const ensureRoom = (y: number, needed: number): number => {
+      if (y + needed < doc.page.height - PAGE_MARGIN) return y;
+      doc.addPage();
+      return PAGE_MARGIN;
+    };
 
     /**
      * Tout ce que le document imprime, passé une fois par `printable`.
@@ -215,7 +259,6 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
       orderTitle: printable(invoice.orderTitle),
       reportNotes: invoice.reportNotes ? printable(invoice.reportNotes) : null,
       orderType: invoice.orderType,
-      amount: printable(amountLabel(invoice.amount, invoice.currency)),
       completedLabel: invoice.completedAt
         ? printable(frenchDate(invoice.completedAt))
         : null,
@@ -227,14 +270,18 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
       ...(part.partNumber ? { partNumber: printable(part.partNumber) } : {}),
     }));
 
+    const totals = totalsFromTtc(Number(invoice.amount));
+    const dueAt = new Date(
+      invoice.issuedAt.getTime() + paymentTermsDays() * 86_400_000
+    );
+
     // ─── En-tête ──────────────────────────────────────────────
     //
-    // L'entreprise à gauche, le document à droite, puis le trait de séparation.
-    // `drawDocumentHeader` rend la hauteur de ce trait : l'appelant n'a pas à
-    // recalculer où il tombe.
+    // L'entreprise à gauche (logo, coordonnées, identifiants), le document à
+    // droite, puis le trait de séparation rendu par la charte.
     let y = drawDocumentHeader(doc, {
       title: "FACTURE",
-      lines: [view.number, `Émise le ${view.issuedAt}`],
+      lines: [view.number],
     });
     y += 18;
 
@@ -255,8 +302,9 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
       y += bandHeight + 18;
     }
 
-    // ─── Client et lieu ───────────────────────────────────────
+    // ─── Client, site et références ───────────────────────────
     const columnWidth = (width - 24) / 2;
+    const rightColumnX = left + columnWidth + 24;
 
     // Les deux étiquettes ne passent pas par `drawSectionTitle` : elles sont
     // posées sur une demi-largeur, alors que la charte écrit sur toute la
@@ -264,13 +312,11 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
     // l'autre.
     doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8);
     doc.text("FACTURÉ À", left, y, { width: columnWidth });
-    doc.text("INTERVENTION", left + columnWidth + 24, y, { width: columnWidth });
+    doc.text("SITE / APPAREIL", rightColumnX, y, { width: columnWidth });
 
     doc.fillColor(INK).font("Helvetica-Bold").fontSize(11);
     doc.text(view.clientName, left, y + 14, { width: columnWidth });
-    doc.text(view.buildingName, left + columnWidth + 24, y + 14, {
-      width: columnWidth,
-    });
+    doc.text(view.buildingName, rightColumnX, y + 14, { width: columnWidth });
 
     doc.font("Helvetica").fontSize(9).fillColor(MUTED);
     const clientLines = [
@@ -291,14 +337,36 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
       width: columnWidth,
     });
 
-    doc.text(clientLines.join("\n") || "—", left, y + 30, { width: columnWidth });
-    doc.text(siteLines.join("\n"), left + columnWidth + 24, y + 30, {
+    doc.text(clientLines.join("\n") || "—", left, y + 30, {
       width: columnWidth,
+      lineGap: 1,
+    });
+    doc.text(siteLines.join("\n"), rightColumnX, y + 30, {
+      width: columnWidth,
+      lineGap: 1,
     });
 
-    y += 30 + Math.max(clientHeight, siteHeight) + 20;
+    y += 30 + Math.max(clientHeight, siteHeight) + 14;
 
-    // ─── Le bon ───────────────────────────────────────────────
+    // ─── Références ───────────────────────────────────────────
+    y = ensureRoom(y, 60);
+    drawSectionTitle(doc, "Références de la facture", y);
+    y += 13;
+
+    const references = [
+      `Numéro : ${view.number}`,
+      `Date d'émission : ${view.issuedAt}`,
+      `Échéance de paiement : ${printable(frenchDate(dueAt))}`,
+    ];
+
+    doc.fillColor(MUTED).font("Helvetica").fontSize(9);
+    doc.text(printable(references.join("   ·   ")), left, y, {
+      width,
+      lineGap: 2,
+    });
+    y = doc.y + 16;
+
+    // ─── Le bon d'origine ─────────────────────────────────────
     doc.rect(left, y, width, 26).fill("#f3f4f6");
     doc.fillColor(INK).font("Helvetica-Bold").fontSize(9);
     doc.text(`Bon de travail ${view.orderNumber}`, left + 10, y + 8, {
@@ -313,97 +381,234 @@ export function renderInvoicePdf(invoice: Invoice): Promise<Buffer> {
       y + 8,
       { width: width - 20, align: "right" }
     );
-    y += 26 + 18;
+    y += 26 + 16;
 
     doc.fillColor(INK).font("Helvetica-Bold").fontSize(12);
     doc.text(view.orderTitle, left, y, { width });
     y = doc.y + 16;
 
     // ─── Travaux effectués ────────────────────────────────────
-    drawSectionTitle(doc, "TRAVAUX EFFECTUÉS", y);
+    y = ensureRoom(y, 70);
+    drawSectionTitle(doc, "Travaux effectués", y);
     doc.fillColor(INK).font("Helvetica").fontSize(10);
     doc.text(view.reportNotes?.trim() || "Non renseigné.", left, y + 13, {
       width,
       lineGap: 2,
     });
-    y = doc.y + 20;
+    y = doc.y + 18;
 
-    // ─── Pièces ───────────────────────────────────────────────
-    drawSectionTitle(doc, "PIÈCES REMPLACÉES", y);
+    // ─── Tableau financier ────────────────────────────────────
+    y = ensureRoom(y, 110);
+
+    const col = {
+      designation: left,
+      qty: left + width * 0.62,
+      price: left + width * 0.74,
+      amount: left + width * 0.87,
+    };
+
+    const headerRow = () => {
+      doc.rect(left, y, width, 18).fill("#f3f4f6");
+      doc.fillColor(INK).font("Helvetica-Bold").fontSize(7.5);
+      doc.text("DÉSIGNATION DES PRESTATIONS / PIÈCES", col.designation + 4, y + 6, {
+        width: width * 0.6 - 8,
+      });
+      doc.text("QTÉ", col.qty, y + 6, {
+        width: width * 0.1,
+        align: "right",
+      });
+      doc.text("P.U. HT (DZD)", col.price, y + 6, {
+        width: width * 0.12,
+        align: "right",
+      });
+      doc.text("TOTAL HT (DZD)", col.amount, y + 6, {
+        width: right - col.amount,
+        align: "right",
+      });
+      y += 18;
+    };
+
+    headerRow();
+
+    const designationWidth = width * 0.6 - 8;
+    const designationHeight = doc.heightOfString(view.orderTitle, {
+      width: designationWidth,
+    });
+    const rowHeight = Math.max(designationHeight, 11) + 8;
+
+    doc.fillColor(INK).font("Helvetica").fontSize(8.5);
+    doc.text(view.orderTitle, col.designation + 4, y + 4, {
+      width: designationWidth,
+    });
+    doc.text("1", col.qty, y + 4, {
+      width: width * 0.1,
+      align: "right",
+    });
+    doc.text(moneyLabel(totals.totalHt), col.price, y + 4, {
+      width: width * 0.12,
+      align: "right",
+    });
+    doc.text(moneyLabel(totals.totalHt), col.amount, y + 4, {
+      width: right - col.amount,
+      align: "right",
+    });
+    y += rowHeight;
+
+    doc
+      .moveTo(left, y)
+      .lineTo(right, y)
+      .strokeColor(RULE)
+      .lineWidth(0.5)
+      .stroke();
     y += 14;
 
-    const colRef = left + width * 0.62;
-    const colQty = left + width * 0.86;
+    // ─── Pièces remplacées (annexe) ───────────────────────────
+    //
+    // Sans prix unitaires : le montant a été arrêté globalement. Les lister
+    // avec des prix inventés ferait un document faux ; les taire priverait le
+    // client du détail de ce qui a été posé.
+    if (parts.length > 0) {
+      y = ensureRoom(y, 60);
+      drawSectionTitle(doc, "Pièces remplacées — comprises dans le montant", y);
+      y += 14;
 
-    if (parts.length === 0) {
-      doc.fillColor(MUTED).font("Helvetica").fontSize(10);
-      doc.text("Aucune pièce remplacée sur cette intervention.", left, y, { width });
-      y = doc.y + 16;
-    } else {
+      const colRef = left + width * 0.62;
+      const colQty = left + width * 0.86;
+
       doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8);
       doc.text("DÉSIGNATION", left, y, { width: colRef - left });
       doc.text("RÉFÉRENCE", colRef, y, { width: colQty - colRef });
       doc.text("QTÉ", colQty, y, { width: right - colQty, align: "right" });
       y += 12;
-      doc.moveTo(left, y).lineTo(right, y).strokeColor(RULE).lineWidth(0.5).stroke();
+      doc
+        .moveTo(left, y)
+        .lineTo(right, y)
+        .strokeColor(RULE)
+        .lineWidth(0.5)
+        .stroke();
       y += 6;
 
       for (const part of parts) {
         const rowTop = y;
-        doc.fillColor(INK).font("Helvetica").fontSize(10);
+        doc.fillColor(INK).font("Helvetica").fontSize(9.5);
         doc.text(part.name, left, rowTop, { width: colRef - left - 8 });
         const nameHeight = doc.heightOfString(part.name, {
           width: colRef - left - 8,
         });
 
-        doc.fillColor(MUTED).fontSize(9);
+        doc.fillColor(MUTED).fontSize(8.5);
         doc.text(part.partNumber ?? "—", colRef, rowTop + 1, {
           width: colQty - colRef - 8,
         });
-        doc.fillColor(INK).fontSize(10);
+        doc.fillColor(INK).fontSize(9.5);
         doc.text(String(part.qty), colQty, rowTop, {
           width: right - colQty,
           align: "right",
         });
 
-        y = rowTop + Math.max(nameHeight, 12) + 6;
+        y = rowTop + Math.max(nameHeight, 12) + 5;
       }
-      y += 6;
+      y += 8;
     }
 
-    // ─── Total ────────────────────────────────────────────────
-    y += 4;
-    doc.moveTo(left, y).lineTo(right, y).strokeColor(RULE).lineWidth(1).stroke();
-    y += 14;
+    // ─── Totaux ───────────────────────────────────────────────
+    y = ensureRoom(y, 120);
 
-    doc.fillColor(MUTED).font("Helvetica").fontSize(9);
+    const totalsX = left + width * 0.55;
+    const totalsWidth = right - totalsX;
+
+    const totalRow = (label: string, value: string, bold = false) => {
+      doc
+        .fillColor(bold ? INK : MUTED)
+        .font(bold ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(bold ? 11 : 9.5);
+      doc.text(printable(label), totalsX, y, { width: totalsWidth * 0.6 });
+      doc.text(printable(value), totalsX + totalsWidth * 0.6, y, {
+        width: totalsWidth * 0.4,
+        align: "right",
+      });
+      y += bold ? 18 : 14;
+    };
+
+    totalRow("Total HT", `${moneyLabel(totals.totalHt)} DZD`);
+    totalRow(`TVA (${VAT_RATE_PERCENT}%)`, `${moneyLabel(totals.vatAmount)} DZD`);
+    doc
+      .moveTo(totalsX, y)
+      .lineTo(right, y)
+      .strokeColor(RULE)
+      .lineWidth(0.5)
+      .stroke();
+    y += 6;
+    totalRow("Total TTC", `${moneyLabel(totals.totalTtc)} DZD`, true);
+
+    // ─── Le montant en lettres ────────────────────────────────
+    y = ensureRoom(y, 50);
+    doc.rect(left, y, width, 30).fill("#f9fafb");
+    doc.fillColor(INK).font("Helvetica").fontSize(9.5);
     doc.text(
-      "Le montant ci-dessous comprend la main-d'œuvre et les pièces listées ci-dessus.",
-      left,
-      y + 6,
-      { width: width * 0.55 }
+      printable(
+        `Arrêté la présente facture à la somme de : ${amountInWords(
+          totals.totalTtc
+        )}.`
+      ),
+      left + 8,
+      y + 7,
+      { width: width - 16, lineGap: 2 }
+    );
+    y = doc.y + 16;
+
+    // ─── Conditions et signature, côte à côte ────────────────
+    //
+    // Les empiler coûtait une page : sur une facture à une ligne, le cadre de
+    // signature se retrouvait seul sur la deuxième feuille. Deux colonnes
+    // gardent le document sur une page et rapprochent le cachet des conditions
+    // qu'il engage.
+    y = ensureRoom(y, 130);
+
+    const signatureWidth = width * 0.48;
+    const conditionsX = left + signatureWidth + 24;
+    const conditionsWidth = width - signatureWidth - 24;
+
+    doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8);
+    doc.text("CACHET ET SIGNATURE DE L'ENTREPRISE", left, y, {
+      width: signatureWidth,
+    });
+    doc.text("CONDITIONS DE RÈGLEMENT", conditionsX, y, {
+      width: conditionsWidth,
+    });
+
+    doc.fillColor(INK).font("Helvetica").fontSize(9);
+    doc.text(
+      printable(
+        `Paiement à ${paymentTermsDays()} jours, échéance le ${frenchDate(
+          dueAt
+        )}. Règlement par virement bancaire aux coordonnées ci-dessous.`
+      ),
+      conditionsX,
+      y + 13,
+      { width: conditionsWidth, lineGap: 2 }
     );
 
-    doc.fillColor(INK).font("Helvetica-Bold").fontSize(11);
-    doc.text("TOTAL À PAYER", left + width * 0.6, y, {
-      width: width * 0.4,
-      align: "right",
+    doc.fillColor(MUTED).font("Helvetica").fontSize(8);
+    doc.text(printable(companyName()), left, y + 13, {
+      width: signatureWidth,
     });
-    doc.fontSize(16);
-    doc.text(view.amount, left + width * 0.6, y + 14, {
-      width: width * 0.4,
-      align: "right",
-    });
+    doc.text("La Direction", left, y + 25, { width: signatureWidth });
+    doc
+      .rect(left, y + 38, signatureWidth, 56)
+      .strokeColor(RULE)
+      .lineWidth(0.5)
+      .stroke();
 
-    // Le bloc de total occupe environ 40 points ; on repart en dessous pour le
-    // cachet, qui ne doit jamais recouvrir le montant.
-    y += 56;
+    // Le tampon est posé dans le cadre, jamais sur les conditions.
+    drawStampIn(doc, left + 8, y + 42, 48);
 
-    // ─── Tampon ───────────────────────────────────────────────
-    //
-    // `drawStamp` borne le tampon dans la page et ne fait jamais échouer le
-    // document sur un fichier illisible.
-    drawStamp(doc, y);
+    // ─── Pied de page, sur chaque page ────────────────────────
+    const range = doc.bufferedPageRange();
+    for (let index = 0; index < range.count; index++) {
+      doc.switchToPage(range.start + index);
+      drawDocumentFooter(doc, index + 1, range.count);
+    }
 
     doc.end();
   });

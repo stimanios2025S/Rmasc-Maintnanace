@@ -89,7 +89,17 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             elevatorCode: true,
-            building: { select: { id: true, name: true, address: true, city: true } },
+            building: {
+              select: {
+                id: true,
+                name: true,
+                address: true,
+                city: true,
+                // Le code d'accès accompagne la visite : le technicien le lit
+                // sur sa ligne avant de partir, pas sur la fiche de l'appareil.
+                accessCode: true,
+              },
+            },
           },
         },
       },

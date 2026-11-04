@@ -284,7 +284,7 @@ async function advanceStatus(
 
   // Tell the reporter their fault was dealt with. The client account is the
   // only audience for this — staff already see the status on the board.
-  if (isTerminal) {
+  if (isTerminal && incident.clientId) {
     await notify({
       userId: incident.clientId,
       title: `Incident ${incident.incidentNumber} clôturé`,
@@ -307,7 +307,11 @@ async function assertMayTransition(
   session: Session,
   incident: {
     status: string;
-    clientId: string;
+    /**
+     * Nul pour un signalement public déposé depuis le QR : il n'y a pas de
+     * compte à comparer, et un client ne peut donc pas le revendiquer.
+     */
+    clientId: string | null;
     technicianId: string | null;
     elevator: { buildingId: string };
   },

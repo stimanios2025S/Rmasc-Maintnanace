@@ -30,6 +30,7 @@ import {
   MessageCircle,
   RefreshCw,
   ShieldCheck,
+  UserPlus,
   X,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -112,6 +113,14 @@ export default function AccessRequestsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [approval, setApproval] = useState<ApprovalResult | null>(null);
   const [notice, setNotice] = useState("");
+  /**
+   * Vrai quand le registre vient de la fixture (pas de PostgreSQL).
+   *
+   * Sert à deux choses : afficher un bandeau honnête, et proposer les deux
+   * décisions sur les trois demandes d'exemple — pas seulement sur celle qui
+   * attend — pour que les boutons soient réellement testables.
+   */
+  const [demoMode, setDemoMode] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,6 +133,7 @@ export default function AccessRequestsPage() {
       }
       const payload = await response.json();
       setRows(Array.isArray(payload?.data) ? payload.data : []);
+      setDemoMode(payload?.demo === true);
     } catch (err) {
       setError(
         err instanceof Error
@@ -165,6 +175,50 @@ export default function AccessRequestsPage() {
             ? payload.error
             : payload?.error?.message;
         throw new Error(message ?? `La décision a échoué (${response.status}).`);
+      }
+
+      /**
+       * Acquittement de démonstration : rien n'a été écrit.
+       *
+       * On met la carte à jour localement — sinon le rechargement ramènerait la
+       * fixture intacte et le clic semblerait n'avoir rien fait. Aucun panneau
+       * d'identifiants n'est affiché : le mot de passe serait celui d'un compte
+       * qui n'existe pas.
+       */
+      if (payload?.demo === true) {
+        const approved = action === "APPROVE";
+        setApproval(null);
+        setRows((current) =>
+          current
+            .map((item) =>
+              item.id === row.id
+                ? {
+                    ...item,
+                    status: approved ? ("APPROVED" as const) : ("REJECTED" as const),
+                    decidedAt: new Date().toISOString(),
+                    decidedBy: { id: "demo", name: "Mode démonstration" },
+                    createdUser: approved
+                      ? {
+                          id: "demo-account",
+                          name: `${row.firstName} ${row.lastName}`,
+                          email: row.email,
+                        }
+                      : null,
+                  }
+                : item
+            )
+            /**
+             * La carte quitte l'onglet courant si elle n'y répond plus — comme
+             * le ferait un rechargement, sans ramener la fixture intacte.
+             */
+            .filter((item) => !status || item.status === status)
+        );
+        setNotice(
+          `Demande de ${row.firstName} ${row.lastName} ${
+            approved ? "approuvée" : "refusée"
+          } en mode démonstration. Aucun compte n'a été créé et la décision n'a pas été enregistrée en base.`
+        );
+        return;
       }
 
       if (action === "APPROVE") {
@@ -234,6 +288,15 @@ export default function AccessRequestsPage() {
         </div>
       </div>
 
+      {demoMode && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+          Mode démonstration : les décisions sont acquittées, mais aucun compte
+          n&apos;est créé et rien n&apos;est enregistré en base. Les trois
+          demandes d&apos;exemple sont visibles dans l&apos;onglet{" "}
+          <strong>Toutes</strong>.
+        </p>
+      )}
+
       {approval && (
         <div className="space-y-3">
           <CredentialsPanel
@@ -278,8 +341,14 @@ export default function AccessRequestsPage() {
         <ErrorState message={error} onRetry={load} />
       ) : rows.length === 0 ? (
         <EmptyState
-          title="Aucune demande dans ce filtre"
-          hint="Une demande apparaît ici dès qu'une personne scanne le QR d'un appareil et remplit le formulaire."
+          icon={UserPlus}
+          title="Aucune demande d'accès"
+          description="Une demande apparaît ici dès qu'une personne scanne le QR collé sur un appareil et remplit le formulaire. Approuver la demande crée son compte client et rattache l'immeuble."
+          action={{
+            label: "Voir les comptes clients",
+            href: "/administration/clients",
+            variant: "secondary",
+          }}
         />
       ) : (
         <div className="space-y-3">
@@ -323,7 +392,7 @@ export default function AccessRequestsPage() {
                   )}
                 </div>
 
-                {row.status === "PENDING" && (
+                {(row.status === "PENDING" || demoMode) && (
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <button
                       type="button"

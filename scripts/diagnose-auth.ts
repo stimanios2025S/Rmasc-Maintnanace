@@ -15,8 +15,8 @@ const DEMO_EMAILS = [
   "admin@elevatorpulse.com",
   "manager@elevatorpulse.com",
   "tech1@elevatorpulse.com",
-  "tech2@elevatorpulse.com",
-  "owner@metroplaza.com",
+  "yacine@elevatorpulse.com",
+  "client@elevatorpulse.com",
 ];
 
 async function main() {

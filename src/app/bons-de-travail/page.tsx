@@ -6,7 +6,6 @@ import {
   Plus,
   Clock,
   User,
-  Calendar,
   ChevronRight,
   Wrench,
   CheckCircle2,
@@ -14,17 +13,18 @@ import {
   Zap,
   MessageCircleWarning,
   ClipboardCheck,
-  Banknote,
   CirclePause,
   CircleX,
+  ClipboardList,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
-import { ValidationBadge } from "@/components/ui/validation-badge";
-import { ProgressTrack } from "@/components/ui/progress-track";
+import {
+  SectionTabs,
+  INTERVENTION_TABS,
+} from "@/components/layout/section-tabs";
 import { formatEnum } from "@/lib/utils";
 import { enumLabel } from "@/lib/ui/enum-labels";
-import { formatDzd } from "@/lib/ui/money";
 import { useSession } from "next-auth/react";
 import { OPS_ROLES } from "@/types";
 import type { IncidentStatus } from "@/types";
@@ -102,7 +102,11 @@ interface WorkOrderRow {
   status: string;
   scheduledDate: string | null;
   estimatedHours: number | null;
-  elevator: { elevatorCode: string; building: { name: string } };
+  elevator: {
+    id: string;
+    elevatorCode: string;
+    building: { name: string; address: string; accessCode: string | null };
+  };
   assignedTo: { id: string; name: string } | null;
   /**
    * Present only when a customer escalation produced this order. Absent on
@@ -142,37 +146,216 @@ interface WorkOrderRow {
 }
 
 /**
- * Combien de temps un rapport attend.
+ * La file d'un technicien de terrain : trois onglets, une carte par mission.
  *
- * Arrondi vers le bas, et en une seule unité : « il y a 2 j » se lit d'un coup
- * d'œil dans une colonne, « il y a 2 jours 4 heures et 12 minutes » se lit une
- * fois. Au-delà d'un mois on passe aux semaines, parce que le nombre de jours
- * cesse d'être une information à ce stade — c'est le rapport lui-même qu'il
- * faut aller chercher.
+ * POURQUOI PAS LE KANBAN
+ * Six colonnes supposent qu'on choisit un statut. Un technicien n'en choisit
+ * pas : il a ce qui est à faire, ce qu'il a commencé, et ce qu'il a terminé. Le
+ * kanban lui montrait aussi les cartes de gestion (À valider, Suspendu,
+ * Annulé), le numéro de bon, l'état WhatsApp et la charge de ses collègues —
+ * tout ce dont il n'a pas besoin sur un toit.
+ *
+ * Les cartes ne portent que quatre choses : priorité & type, immeuble &
+ * appareil, motif, action. Pas de WO-…, pas d'INC-…, pas de pourcentage.
  */
-function waitingFor(iso: string | null): string | null {
-  if (!iso) return null;
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return null;
+const TECHNICIAN_TABS = [
+  { key: "todo", label: "À faire", icon: ClipboardList },
+  { key: "doing", label: "En cours", icon: Zap },
+  { key: "done", label: "Terminées", icon: CheckCircle2 },
+] as const;
 
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 60) return "il y a moins d'une heure";
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `il y a ${hours} h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `il y a ${days} j`;
-  const weeks = Math.floor(days / 7);
-  return `il y a ${weeks} sem.`;
+type TechnicianTab = (typeof TECHNICIAN_TABS)[number]["key"];
+
+function priorityDot(priority: string): string {
+  if (priority === "CRITICAL" || priority === "EMERGENCY") return "bg-red-500";
+  if (priority === "HIGH") return "bg-orange-500";
+  if (priority === "MEDIUM") return "bg-amber-400";
+  return "bg-gray-400";
 }
 
 /**
- * Un montant lisible, en dinars.
+ * Le badge de priorité des cartes kanban, compact et homogène.
  *
- * `fr-DZ` groupe les milliers par une espace et utilise la virgule décimale,
- * ce qui est la façon dont le montant sera écrit sur la facture. Les centimes
- * ne sont affichés que lorsqu'il y en a : « 18 500 DZD » plutôt que
- * « 18 500,00 DZD », qui laisse croire à une précision qui n'existe pas.
+ * Un seul mot, une seule couleur, une seule forme — les trois cartes d'une
+ * colonne doivent se lire comme une série, pas comme trois avis différents.
  */
+function kanbanPriority(priority: string): {
+  emoji: string;
+  label: string;
+  className: string;
+} {
+  if (priority === "CRITICAL" || priority === "EMERGENCY") {
+    return {
+      emoji: "🔴",
+      label: "CRITIQUE",
+      className:
+        "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300",
+    };
+  }
+  if (priority === "HIGH") {
+    return {
+      emoji: "🟠",
+      label: "ÉLEVÉE",
+      className:
+        "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300",
+    };
+  }
+  if (priority === "MEDIUM") {
+    return {
+      emoji: "🔵",
+      label: "MOYENNE",
+      className:
+        "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
+    };
+  }
+  return {
+    emoji: "⚪",
+    label: "FAIBLE",
+    className: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
+  };
+}
+
+/** Les initiales d'un technicien, pour l'avatar sans photo. */
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+/**
+ * L'avancement d'un bon, sur quatre crans.
+ *
+ * `CANCELLED` est traité comme un bon clos : il n'est pas « en cours », et le
+ * laisser au cran 0 aurait affiché une étape active sur une archive.
+ */
+function workOrderStepIndex(status: string): number {
+  if (status === "COMPLETED" || status === "CANCELLED") return 4;
+  if (status === "PENDING_APPROVAL") return 3;
+  if (status === "IN_PROGRESS" || status === "ON_HOLD") return 2;
+  if (status === "ASSIGNED") return 1;
+  return 0;
+}
+
+function TechnicianMissionList({ orders }: { orders: WorkOrderRow[] }) {
+  const [tab, setTab] = useState<TechnicianTab>("todo");
+
+  const groups: Record<TechnicianTab, WorkOrderRow[]> = {
+    todo: orders.filter((o) => o.status === "OPEN" || o.status === "ASSIGNED"),
+    doing: orders.filter((o) => o.status === "IN_PROGRESS"),
+    // Le rapport envoyé au bureau est terminé du point de vue du terrain.
+    done: orders.filter(
+      (o) => o.status === "COMPLETED" || o.status === "PENDING_APPROVAL"
+    ),
+  };
+
+  const current = groups[tab];
+  const action =
+    tab === "todo"
+      ? "📍 Démarrer la mission"
+      : tab === "doing"
+        ? "⚡ Reprendre la mission"
+        : "👁️ Consulter le rapport";
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-2xl font-black tracking-tight text-gray-900 dark:text-white">
+          Mes missions
+        </h2>
+        <p className="mt-1 text-sm text-gray-500">
+          {groups.todo.length + groups.doing.length === 0
+            ? "Aucune mission active."
+            : `${groups.todo.length + groups.doing.length} mission${
+                groups.todo.length + groups.doing.length > 1 ? "s" : ""
+              } à traiter.`}
+        </p>
+      </div>
+
+      <div
+        role="tablist"
+        aria-label="Filtrer les missions"
+        className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1 dark:bg-gray-800"
+      >
+        {TECHNICIAN_TABS.map(({ key, label, icon: Icon }) => {
+          const selected = tab === key;
+          return (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setTab(key)}
+              className={`flex flex-col items-center justify-center gap-1 rounded-lg px-2 py-2 text-xs font-bold transition-colors ${
+                selected
+                  ? "bg-white text-gray-900 shadow-sm dark:bg-gray-900 dark:text-white"
+                  : "text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              }`}
+            >
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              <span>
+                {label} ({groups[key].length})
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {current.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-500 dark:border-gray-800">
+          Aucune mission dans cette catégorie.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {current.map((order) => (
+            <li
+              key={order.id}
+              className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-2.5 py-1 text-[11px] font-bold text-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                  <span
+                    className={`h-2 w-2 rounded-full ${priorityDot(order.priority)}`}
+                    aria-hidden="true"
+                  />
+                  {enumLabel(order.priority)}
+                </span>
+                <span className="rounded-full border border-gray-200 px-2.5 py-1 text-[11px] font-semibold text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                  {enumLabel(order.type)}
+                </span>
+              </div>
+
+              <p className="mt-3 text-lg font-bold leading-tight text-gray-900 dark:text-white">
+                {order.elevator.building.name}
+              </p>
+              <p className="font-mono text-xs tracking-wide text-gray-500">
+                {order.elevator.elevatorCode}
+              </p>
+
+              <p className="mt-2 line-clamp-2 text-sm text-gray-600 dark:text-gray-400">
+                {order.title}
+              </p>
+
+              <Link
+                href={
+                  tab === "done"
+                    ? `/bons-de-travail/${order.id}`
+                    : "/technicien"
+                }
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-700"
+              >
+                {action}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** La cause d'un échec WhatsApp, en clair, pour l'infobulle. */
 function whatsappFailureReason(code: string | null): string {
   switch (code) {
     case "no-recipient":
@@ -199,47 +382,70 @@ function whatsappFailureReason(code: string | null): string {
  * geste est le même : décrocher le téléphone et appeler. La nuance technique est
  * dans l'infobulle, pour celui qui va réparer l'instance.
  */
-function WhatsAppState({
-  order,
-}: {
-  order: Pick<
-    WorkOrderRow,
-    "whatsappAttemptedAt" | "whatsappDeliveredAt" | "whatsappFailure" | "assignedTo"
-  >;
-}) {
-  if (!order.whatsappAttemptedAt || order.whatsappDeliveredAt) return null;
-
-  return (
-    <p
-      className="mb-3 flex items-start gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] font-medium text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
-      title={whatsappFailureReason(order.whatsappFailure)}
-    >
-      <MessageCircleWarning
-        className="mt-px h-3.5 w-3.5 flex-none"
-        aria-hidden="true"
-      />
-      <span>
-        WhatsApp non délivré
-        {order.assignedTo ? ` à ${order.assignedTo.name.split(" ")[0]}` : ""} —
-        appelez-le.
-      </span>
-    </p>
-  );
-}
-
 interface ElevatorOption {
   id: string;
   elevatorCode: string;
-  building: { name: string };
+  installationLocation: string | null;
+  building: { name: string; address: string; city: string };
 }
 
-const PRIORITY_COLORS: Record<string, string> = {
-  LOW: "bg-gray-100 text-gray-700",
-  MEDIUM: "bg-blue-100 text-blue-700",
-  HIGH: "bg-orange-100 text-orange-700",
-  EMERGENCY: "bg-red-100 text-red-700",
-  CRITICAL: "bg-red-200 text-red-900 animate-pulse",
-};
+/**
+ * Le lieu proposé pour un appareil.
+ *
+ * L'adresse de l'immeuble puis son complément (cage, étage) : c'est ce que le
+ * champ obligatoire du formulaire pré-remplit, et ce que le bureau corrige
+ * quand l'intervention ne se fait pas au pied de la machine.
+ */
+function suggestedLocation(elevator: ElevatorOption | undefined): string {
+  if (!elevator) return "";
+  return [
+    elevator.building.address,
+    elevator.building.city,
+    elevator.installationLocation,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/** Un technicien proposé à la création, avec sa charge réelle. */
+interface TechnicianOption {
+  id: string;
+  name: string;
+  status: string;
+  openWorkOrders: number;
+  openIncidents: number;
+}
+
+/**
+ * L'état d'un technicien, dit en une ligne lisible dans un `<select>`.
+ *
+ * Les trois couleurs sont celles de la demande : vert joignable, orange déjà
+ * sur un job, rouge hors service. Le nombre de tâches vient des bons ouverts
+ * (ASSIGNED / IN_PROGRESS / ON_HOLD), calculé par l'API — un compteur stocké
+ * aurait dérivé au premier changement d'état manqué.
+ */
+function technicianAvailability(technician: TechnicianOption): string {
+  if (technician.status === "OFF_DUTY") return "🔴 Hors service";
+  if (technician.status === "ON_LEAVE") return "🔴 En congé";
+
+  const load = technician.openWorkOrders;
+  const tasks =
+    load > 0
+      ? ` - ${load} tâche${load > 1 ? "s" : ""} active${load > 1 ? "s" : ""}`
+      : "";
+
+  /**
+   * La charge décide de la couleur, pas seulement le statut déclaré.
+   *
+   * Un technicien encore marqué « disponible » mais qui porte déjà deux bons
+   * n'est pas libre : le sélecteur le présente donc en orange, avec le nombre
+   * de tâches. C'est la même lecture que la carte de suivi de la flotte.
+   */
+  if (technician.status === "ON_JOB" || load > 0) {
+    return `🟠 En intervention${tasks}`;
+  }
+  return "🟢 Disponible";
+}
 
 const TYPE_COLORS: Record<string, string> = {
   PREVENTIVE: "bg-green-50 text-green-700 border-green-200",
@@ -275,13 +481,52 @@ const NEXT_STATUS: Record<string, string> = {
 };
 
 export default function WorkOrdersPage() {
-  const [view, setView] = useState<"kanban" | "list">("kanban");
+  const [view, setView] = useState<"cards" | "list">("cards");
+  /**
+   * Le filtre de statut, porté par les cartes KPI horizontales.
+   *
+   * Il remplace les colonnes Kanban : plus de pavés à faire défiler
+   * horizontalement, une seule liste filtrée par un clic. Le filtre ne change
+   * aucun statut en base — c'est une lecture, pas une décision.
+   */
+  const [statusFilter, setStatusFilter] = useState<
+    "ALL" | "OPEN" | "ASSIGNED" | "IN_PROGRESS" | "PENDING_APPROVAL" | "COMPLETED"
+  >("ALL");
+  /** Quel bon affiche son code d'accès, quand on a cliqué sur la clé. */
+  const [codeOpenId, setCodeOpenId] = useState<string | null>(null);
+  /**
+   * Le filtre « un appareil », posé par la carte du parc.
+   *
+   * Lu depuis l'URL au premier rendu plutôt que par `useSearchParams` : le
+   * paramètre ne change pas pendant la vie de l'écran, et un composant client
+   * qui appelle ce hook hors d'une frontière Suspense casse le rendu statique.
+   */
+  const [elevatorFilter] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("elevatorId");
+  });
   const [orders, setOrders] = useState<WorkOrderRow[]>([]);
   const [elevatorOptions, setElevatorOptions] = useState<ElevatorOption[]>([]);
+  const [technicians, setTechnicians] = useState<TechnicianOption[]>([]);
+  const [techniciansLoaded, setTechniciansLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  /**
+   * Message affiché quand la fiche d'un appareil a refusé l'accès (403) et que
+   * l'écran a renvoyé ici. Lu depuis l'URL, puis celle-ci est nettoyée pour
+   * qu'un rafraîchissement ne rejoue pas l'alerte.
+   */
+  const [accessDenied, setAccessDenied] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("acces") !== "refuse") return;
+
+    setAccessDenied(true);
+    window.history.replaceState({}, "", "/bons-de-travail");
+  }, []);
 
   // A BUILDING_OWNER has read-only access to the board. Without this they were
   // shown Create / Auto-dispatch / Move-to controls that every one of produced
@@ -292,14 +537,31 @@ export default function WorkOrdersPage() {
   // Auto-dispatch is management-only; a field technician sees the board but
   // cannot dispatch work to a colleague.
   const canDispatch = role === "ADMIN" || role === "MAINTENANCE_MANAGER";
+  /**
+   * Un technicien ne crée pas de bon de travail : il exécute ceux qu'on lui
+   * affecte. Le bouton et le formulaire disparaissent, plutôt que de rester
+   * visibles et de produire un refus.
+   */
+  const canCreate = canManage && role !== "FIELD_TECHNICIAN";
   const [formError, setFormError] = useState("");
   const [form, setForm] = useState({
     title: "",
     type: "PREVENTIVE",
     priority: "MEDIUM",
     elevatorId: "",
+    /**
+     * Le lieu exact de l'intervention, obligatoire.
+     *
+     * Pré-rempli avec l'adresse du site et le complément de l'appareil dès
+     * qu'un ascenseur est choisi. Le bureau peut le remplacer par une adresse
+     * plus précise (entrée, cage, étage), et la valeur saisie part telle quelle
+     * sur le bon.
+     */
+    interventionAddress: "",
     scheduledDate: "",
     estimatedHours: "",
+    /** Vide = « assigner plus tard » : le bon reste OPEN au dispatching. */
+    assignedToId: "",
   });
 
   const load = useCallback(async () => {
@@ -311,20 +573,29 @@ export default function WorkOrdersPage() {
         fetch("/api/elevators"),
       ]);
       if (!woRes.ok)
-        throw new Error(`L'API des bons de travail a répondu ${woRes.status}`);
+        throw new Error(`La liste des interventions a répondu ${woRes.status}`);
       const woJson = await woRes.json();
       setOrders(woJson.data ?? []);
       if (elRes.ok) {
         const elJson = await elRes.json();
-        setElevatorOptions(elJson.data ?? []);
-        setForm((f) => ({
-          ...f,
-          elevatorId: f.elevatorId || elJson.data?.[0]?.id || "",
-        }));
+        const options = (elJson.data ?? []) as ElevatorOption[];
+        setElevatorOptions(options);
+        setForm((f) => {
+          const elevatorId = f.elevatorId || options[0]?.id || "";
+          const selected = options.find((option) => option.id === elevatorId);
+          return {
+            ...f,
+            elevatorId,
+            // Ne remplace pas un lieu déjà saisi : un rafraîchissement de la
+            // liste ne doit pas effacer la correction du bureau.
+            interventionAddress:
+              f.interventionAddress || suggestedLocation(selected),
+          };
+        });
       }
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Échec du chargement des bons de travail"
+        e instanceof Error ? e.message : "Échec du chargement des interventions"
       );
     } finally {
       setLoading(false);
@@ -334,6 +605,38 @@ export default function WorkOrdersPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Le roster n'est lu qu'à l'ouverture du formulaire.
+   *
+   * `all=1` inclut les absents pour pouvoir les afficher en rouge et les
+   * désactiver — les masquer laisserait croire que l'équipe est plus petite
+   * qu'elle n'est. La route reste réservée aux rôles de gestion, comme le
+   * bouton qui ouvre ce formulaire.
+   */
+  useEffect(() => {
+    if (!showCreate || !canDispatch) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/technicians?all=1", { cache: "no-store" });
+        if (!res.ok) throw new Error(`Le roster a répondu ${res.status}`);
+        const json = await res.json();
+        if (!cancelled) {
+          setTechnicians(Array.isArray(json.data) ? json.data : []);
+        }
+      } catch {
+        if (!cancelled) setTechnicians([]);
+      } finally {
+        if (!cancelled) setTechniciansLoaded(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showCreate, canDispatch]);
 
   const mutate = async (id: string, body: Record<string, unknown>) => {
     setBusyId(id);
@@ -381,6 +684,12 @@ export default function WorkOrdersPage() {
       setFormError("Le titre et l'ascenseur sont obligatoires.");
       return;
     }
+    if (!form.interventionAddress.trim()) {
+      setFormError(
+        "Le lieu / l'adresse exacte de l'intervention est obligatoire."
+      );
+      return;
+    }
     setBusyId("create");
     try {
       const res = await fetch("/api/work-orders", {
@@ -388,17 +697,24 @@ export default function WorkOrdersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: form.title.trim(),
+          interventionAddress: form.interventionAddress.trim(),
           type: form.type,
           priority: form.priority,
           elevatorId: form.elevatorId,
           scheduledDate: form.scheduledDate || undefined,
           estimatedHours: form.estimatedHours ? Number(form.estimatedHours) : undefined,
+          /**
+           * Le serveur pose `ASSIGNED` dès qu'une personne est nommée, et
+           * `OPEN` sinon — c'est la règle de la route de création, pas une
+           * décision de l'écran.
+           */
+          assignedToId: form.assignedToId || undefined,
         }),
-      });
+        });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Échec de la création");
       setShowCreate(false);
-      setForm({ title: "", type: "PREVENTIVE", priority: "MEDIUM", elevatorId: elevatorOptions[0]?.id ?? "", scheduledDate: "", estimatedHours: "" });
+      setForm({ title: "", type: "PREVENTIVE", priority: "MEDIUM", elevatorId: elevatorOptions[0]?.id ?? "", interventionAddress: suggestedLocation(elevatorOptions[0]), scheduledDate: "", estimatedHours: "", assignedToId: "" });
       await load();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Échec de la création");
@@ -407,14 +723,45 @@ export default function WorkOrdersPage() {
     }
   };
 
-  const ordersByStatus = useMemo(
+  /**
+   * Le périmètre « un appareil », puis le statut choisi.
+   *
+   * `En cours` regroupe `IN_PROGRESS` et `ON_HOLD` : les deux états disent
+   * qu'une intervention est engagée, et les séparer dans la barre aurait
+   * ajouté une onglet que personne n'ouvre.
+   */
+  const scopedOrders = useMemo(
     () =>
-      STATUSES.map((status) => ({
-        status,
-        orders: orders.filter((wo) => wo.status === status),
-      })),
-    [orders]
+      elevatorFilter
+        ? orders.filter((wo) => wo.elevator.id === elevatorFilter)
+        : orders,
+    [orders, elevatorFilter]
   );
+
+  const visibleOrders = useMemo(() => {
+    if (statusFilter === "ALL") return scopedOrders;
+    if (statusFilter === "IN_PROGRESS") {
+      return scopedOrders.filter(
+        (wo) => wo.status === "IN_PROGRESS" || wo.status === "ON_HOLD"
+      );
+    }
+    return scopedOrders.filter((wo) => wo.status === statusFilter);
+  }, [scopedOrders, statusFilter]);
+
+  /** Les compteurs des cartes KPI, calculés sur le périmètre complet. */
+  const statusCounts = useMemo(() => {
+    const count = (statuses: readonly string[]) =>
+      scopedOrders.filter((wo) => statuses.includes(wo.status)).length;
+
+    return {
+      ALL: scopedOrders.length,
+      OPEN: count(["OPEN"]),
+      ASSIGNED: count(["ASSIGNED"]),
+      IN_PROGRESS: count(["IN_PROGRESS", "ON_HOLD"]),
+      PENDING_APPROVAL: count(["PENDING_APPROVAL"]),
+      COMPLETED: count(["COMPLETED", "CANCELLED"]),
+    };
+  }, [scopedOrders]);
 
   /**
    * « Actif » veut dire : quelqu'un a encore quelque chose à faire dessus.
@@ -454,27 +801,36 @@ export default function WorkOrdersPage() {
     return <ErrorState message={error} onRetry={load} />;
   }
 
+  // Le terrain a sa propre vue : trois onglets, quatre informations par carte.
+  // Le kanban, ses six colonnes et ses indicateurs WhatsApp restent au bureau.
+  if (role === "FIELD_TECHNICIAN") {
+    return <TechnicianMissionList orders={orders} />;
+  }
+
   return (
     <div className="space-y-6">
+      <SectionTabs tabs={INTERVENTION_TABS} ariaLabel="Interventions et maintenance" />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-            Bons de travail
+            Interventions &amp; Bons de travail
           </h2>
           <p className="text-gray-500 mt-1">
-            {orders.length} {orders.length > 1 ? "bons" : "bon"} au total •{" "}
-            {activeCount} {activeCount > 1 ? "actifs" : "actif"}
+            {orders.length} intervention{orders.length > 1 ? "s" : ""} au total
+            {" · "}
+            {activeCount} en cours
             {pendingCount > 0 && (
               <>
-                {" "}
-                •{" "}
-                <Link
-                  href="#a-valider"
+                {" · "}
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("PENDING_APPROVAL")}
                   className="font-medium text-amber-600 hover:text-amber-700 dark:text-amber-400"
                 >
                   {pendingCount} à valider
-                </Link>
+                </button>
               </>
             )}
             {/* Les bons annulés n'ont pas de colonne — voir `StatusStyleKey` —
@@ -497,7 +853,7 @@ export default function WorkOrdersPage() {
         </div>
         <div className="flex gap-2">
           <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
-            {(["kanban", "list"] as const).map((v) => (
+            {(["cards", "list"] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -507,20 +863,124 @@ export default function WorkOrdersPage() {
                     : "text-gray-500"
                 }`}
               >
-                {v === "kanban" ? "Kanban" : "Liste"}
+                {v === "cards" ? "Cartes" : "Liste"}
               </button>
             ))}
           </div>
-          {canManage && (
+          {canCreate && (
             <button
               onClick={() => setShowCreate(true)}
               className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
             >
               <Plus className="w-4 h-4" />
-              Nouveau bon de travail
+              Nouvelle intervention
             </button>
           )}
         </div>
+      </div>
+
+      {elevatorFilter && (
+        <p className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
+          Interventions filtrées sur un appareil.
+          <Link href="/bons-de-travail" className="underline">
+            Voir toutes les interventions
+          </Link>
+        </p>
+      )}
+
+      {/*
+        La barre de statuts remplace les colonnes Kanban.
+
+        Six cartes filtrantes, chacune avec sa bordure d'accent et son
+        compteur : un clic restreint la liste en dessous. Le compteur porte le
+        total réel, pas le total filtré — un chiffre qui change quand on le
+        clique ne dit plus rien.
+      */}
+      <div
+        className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
+        role="tablist"
+        aria-label="Filtrer les interventions par statut"
+      >
+        {(
+          [
+            {
+              key: "ALL",
+              label: "Tous",
+              emoji: "",
+              border: "border-t-slate-300",
+              dot: "bg-slate-400",
+              count: statusCounts.ALL,
+            },
+            {
+              key: "OPEN",
+              label: "Ouvert",
+              emoji: "⚪",
+              border: "border-t-slate-400",
+              dot: "bg-slate-400",
+              count: statusCounts.OPEN,
+            },
+            {
+              key: "ASSIGNED",
+              label: "Assigné",
+              emoji: "🔵",
+              border: "border-t-blue-500",
+              dot: "bg-blue-500",
+              count: statusCounts.ASSIGNED,
+            },
+            {
+              key: "IN_PROGRESS",
+              label: "En cours",
+              emoji: "🟡",
+              border: "border-t-amber-500",
+              dot: "bg-amber-500",
+              count: statusCounts.IN_PROGRESS,
+            },
+            {
+              key: "PENDING_APPROVAL",
+              label: "À valider",
+              emoji: "🟣",
+              border: "border-t-purple-500",
+              dot: "bg-purple-500",
+              count: statusCounts.PENDING_APPROVAL,
+            },
+            {
+              key: "COMPLETED",
+              label: "Clôturé",
+              emoji: "🟢",
+              border: "border-t-emerald-500",
+              dot: "bg-emerald-500",
+              count: statusCounts.COMPLETED,
+            },
+          ] as const
+        ).map((item) => {
+          const active = statusFilter === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setStatusFilter(item.key)}
+              className={`flex items-center justify-between gap-2 rounded-lg border border-t-2 border-slate-200/80 bg-white px-3 py-2 text-left transition-colors dark:border-slate-800 dark:bg-slate-900 ${item.border} ${
+                active
+                  ? "ring-2 ring-blue-500/40"
+                  : "hover:bg-slate-50 dark:hover:bg-slate-800/60"
+              }`}
+            >
+              <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full shadow-sm ${item.dot}`}
+                  aria-hidden="true"
+                />
+                {item.emoji ? `${item.emoji} ` : ""}
+                <span className="truncate">{item.label}</span>
+              </span>
+              <span className="rounded-full border border-slate-200/60 bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                {item.count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {error && (
@@ -529,227 +989,204 @@ export default function WorkOrdersPage() {
         </p>
       )}
 
-      {/* Kanban View */}
-      {view === "kanban" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          {ordersByStatus.map(({ status, orders: col }) => {
-            const config = STATUS_CONFIG[status];
+      {accessDenied && (
+        <div
+          role="alert"
+          className="flex items-start justify-between gap-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3 dark:bg-red-950/40 dark:border-red-900 dark:text-red-300"
+        >
+          <span>
+            <strong>Accès refusé.</strong> Cet appareil ne fait pas partie de vos
+            interventions — sa fiche n&apos;est visible que par un technicien qui
+            y est affecté.
+          </span>
+          <button
+            type="button"
+            onClick={() => setAccessDenied(false)}
+            aria-label="Fermer le message"
+            className="flex-none rounded p-1 hover:bg-red-100 dark:hover:bg-red-900/40"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {/* Vue cartes — une ligne par intervention */}
+      {view === "cards" && (
+        <div className="space-y-2">
+          {visibleOrders.length === 0 && (
+            <Card className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+              Aucune intervention pour ce filtre.
+            </Card>
+          )}
+
+          {visibleOrders.map((wo) => {
+            const priority = kanbanPriority(wo.priority);
+            const step = workOrderStepIndex(wo.status);
+            const next = NEXT_STATUS[wo.status];
+            const accessCode = wo.elevator.building.accessCode;
+            const codeOpen = codeOpenId === wo.id;
+            const canAct = Boolean(canManage && next);
+
             return (
               <div
-                key={status}
-                id={status === "PENDING_APPROVAL" ? "a-valider" : undefined}
-                className="flex flex-col scroll-mt-6"
+                key={wo.id}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900"
               >
-                <div className={`${config.headerColor} text-white px-4 py-2.5 rounded-t-lg flex items-center justify-between`}>
-                  <div className="flex items-center gap-2">
-                    <config.icon className="w-4 h-4" />
-                    <span className="text-sm font-semibold">{config.label}</span>
-                  </div>
-                  <span className="bg-white/20 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                    {col.length}
-                  </span>
-                </div>
-
-                <div className="bg-gray-50 dark:bg-gray-800/50 rounded-b-lg p-3 space-y-3 min-h-[200px]">
-                  {col.map((wo) => {
-                    const waiting = waitingFor(wo.reportSubmittedAt);
-                    const amount = formatDzd(wo.invoiceAmount);
-                    return (
-                    <div
-                      key={wo.id}
-                      className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow"
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1.1fr)_auto] lg:items-center">
+                  {/* 1 — urgence & appareil */}
+                  <div className="min-w-0">
+                    <span
+                      className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide ${priority.className}`}
                     >
-                      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-                        <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${PRIORITY_COLORS[wo.priority] ?? PRIORITY_COLORS.MEDIUM}`}>
-                          {enumLabel(wo.priority)}
-                        </span>
-                        <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded border ${TYPE_COLORS[wo.type] ?? TYPE_COLORS.INSPECTION}`}>
-                          {enumLabel(wo.type)}
-                        </span>
-                      </div>
+                      {priority.emoji} {priority.label}
+                    </span>
+                    <p className="mt-1 font-mono text-sm font-bold text-slate-900 dark:text-white">
+                      {wo.elevator.elevatorCode}
+                    </p>
+                    <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                      {wo.elevator.building.name}
+                    </p>
+                    {codeOpen && (
+                      <p className="mt-1 inline-flex rounded bg-slate-900 px-2 py-0.5 font-mono text-[10px] font-bold text-white dark:bg-black">
+                        🔑 {accessCode ?? "non renseigné"}
+                      </p>
+                    )}
+                  </div>
 
-                      <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
-                        {wo.title}
-                      </h4>
-                      {/* Le numéro est le lien vers la fiche, et non la carte
-                          entière : la carte contient déjà des boutons
-                          (affectation, changement de statut), et un lien qui
-                          enveloppe des boutons fait de chaque clic manqué une
-                          navigation. */}
+                  {/* 2 — mission */}
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                      {wo.title}
+                    </p>
+                    <span
+                      className={`mt-1 inline-flex rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                        TYPE_COLORS[wo.type] ?? TYPE_COLORS.INSPECTION
+                      }`}
+                    >
+                      {enumLabel(wo.type)}
+                    </span>
+                  </div>
+
+                  {/* 3 — technicien */}
+                  <div className="flex min-w-0 items-center gap-2">
+                    {wo.assignedTo ? (
+                      <>
+                        <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white dark:bg-slate-700">
+                          {initials(wo.assignedTo.name)}
+                        </span>
+                        <span className="truncate text-xs font-medium text-slate-700 dark:text-slate-300">
+                          {wo.assignedTo.name}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                        Non assigné
+                      </span>
+                    )}
+                  </div>
+
+                  {/* 4 — mini-stepper */}
+                  <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                    {["Signalé", "Assigné", "En cours", "Validé"].map(
+                      (label, index) => {
+                        const done = index < step;
+                        const active = index === step;
+                        return (
+                          <span
+                            key={label}
+                            className="inline-flex items-center gap-1"
+                          >
+                            {index > 0 && (
+                              <span
+                                className="h-px w-2 bg-slate-300 dark:bg-slate-700"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span
+                              className={
+                                done
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : active
+                                    ? "font-bold text-blue-600 dark:text-blue-400"
+                                    : "text-slate-400 dark:text-slate-500"
+                              }
+                            >
+                              <span
+                                className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${
+                                  done
+                                    ? "bg-emerald-500"
+                                    : active
+                                      ? "animate-pulse bg-blue-500"
+                                      : "bg-slate-300 dark:bg-slate-600"
+                                }`}
+                                aria-hidden="true"
+                              />
+                              {index + 1}. {label}
+                            </span>
+                          </span>
+                        );
+                      }
+                    )}
+                  </div>
+
+                  {/* 5 — actions */}
+                  <div className="flex items-center justify-end gap-1.5">
+                    {wo.status === "OPEN" && canDispatch ? (
+                      <button
+                        type="button"
+                        onClick={() => dispatch(wo.id)}
+                        disabled={busyId === wo.id}
+                        className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        <Zap className="h-3 w-3" aria-hidden="true" />
+                        Intervenir
+                      </button>
+                    ) : canAct ? (
+                      <button
+                        type="button"
+                        onClick={() => mutate(wo.id, { status: next })}
+                        disabled={busyId === wo.id}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                        {wo.status === "ASSIGNED"
+                          ? "Démarrer"
+                          : wo.status === "IN_PROGRESS"
+                            ? "Clôturer"
+                            : "Valider"}
+                      </button>
+                    ) : (
                       <Link
                         href={`/bons-de-travail/${wo.id}`}
-                        className="mb-2 inline-block text-[10px] font-mono text-gray-400 hover:text-blue-600 hover:underline dark:hover:text-blue-400"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                       >
-                        {wo.orderNumber}
+                        👁️ Consulter
                       </Link>
+                    )}
 
-                      <div className="text-xs text-gray-500 space-y-0.5 mb-3">
-                        <p className="font-mono">{wo.elevator.elevatorCode}</p>
-                        <p>{wo.elevator.building.name}</p>
-                      </div>
-
-                      {/* Where this order came from. A corrective order with
-                          no incident behind it needs no explanation; one that
-                          a customer escalated carries the fault code and the
-                          customer's own account, and both are worth reading
-                          before deciding who to send. */}
-                      {wo.incident && (
-                        <div className="mb-3 space-y-1.5 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-2.5 py-2">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <ValidationBadge
-                              status={wo.incident.status}
-                              size="compact"
-                            />
-                            {wo.incident.isDirectTransfer && (
-                              <span
-                                className="inline-flex items-center rounded-full border border-red-300 bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
-                                title="Créé par le bouton d'urgence — l'occupant n'a jamais parcouru les étapes du code d'erreur"
-                              >
-                                URGENCE
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[10px] font-mono text-gray-400">
-                            {wo.incident.incidentNumber}
-                            {wo.incident.errorCode && ` · ${wo.incident.errorCode.code}`}
-                          </p>
-                          {wo.incident.errorCode && (
-                            <p className="text-[11px] text-gray-600 dark:text-gray-400">
-                              {wo.incident.errorCode.title}
-                            </p>
-                          )}
-                          {/* The bar reads the incident's own status, not the
-                              order's. An order sitting in ASSIGNED tells you
-                              where the paperwork is; the bar tells you where
-                              the *fault* is, which is what the customer is
-                              waiting on. */}
-                          <ProgressTrack
-                            status={wo.incident.status}
-                            showLabels={false}
-                            className="pt-0.5"
-                          />
-                          <Link
-                            href="/administration/incidents"
-                            className="inline-block text-[10px] font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                          >
-                            Ouvrir dans le tableau des incidents →
-                          </Link>
-                        </div>
-                      )}
-
-                      <WhatsAppState order={wo} />
-
-                      <div className="flex items-center justify-between text-xs mb-2">
-                        {wo.assignedTo ? (
-                          <div className="flex items-center gap-1 text-gray-600 dark:text-gray-300">
-                            <User className="w-3 h-3" />
-                            <span>{wo.assignedTo.name.split(" ")[0]}</span>
-                          </div>
-                        ) : canDispatch ? (
-                          <button
-                            onClick={() => dispatch(wo.id)}
-                            disabled={busyId === wo.id}
-                            className="flex items-center gap-1 text-blue-600 font-medium hover:text-blue-700 disabled:opacity-50"
-                          >
-                            <Zap className="w-3 h-3" />
-                            {busyId === wo.id
-                              ? "Affectation…"
-                              : "Affectation automatique"}
-                          </button>
-                        ) : (
-                          <span className="text-gray-400">Non affecté</span>
-                        )}
-                        {wo.scheduledDate && (
-                          <div className="flex items-center gap-1 text-gray-400">
-                            <Calendar className="w-3 h-3" />
-                            <span>
-                              {new Date(wo.scheduledDate).toLocaleDateString(
-                                "fr-FR"
-                              )}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Ce que contient un rapport en attente, et depuis
-                          quand. Les deux questions que se pose celui qui
-                          ouvre cette colonne — « depuis quand » et « pour
-                          combien » — sans avoir à ouvrir chaque fiche pour
-                          savoir laquelle traiter d'abord. */}
-                      {wo.status === "PENDING_APPROVAL" && (
-                        <div className="mb-3 space-y-1 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-900/10 px-2.5 py-2">
-                          <p className="text-[11px] font-medium text-amber-800 dark:text-amber-300">
-                            {waiting ?? "Rapport envoyé"}
-                          </p>
-                          {!wo.isBillable ? (
-                            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80">
-                              Non facturable
-                            </p>
-                          ) : amount ? (
-                            <p className="flex items-center gap-1 text-[11px] text-amber-800 dark:text-amber-300">
-                              <Banknote className="w-3 h-3 shrink-0" />
-                              <span className="tabular-nums">
-                                {amount} à facturer
-                              </span>
-                            </p>
-                          ) : (
-                            <p className="flex items-center gap-1 text-[11px] font-medium text-amber-800 dark:text-amber-300">
-                              <Banknote className="w-3 h-3 shrink-0" />
-                              Montant à compléter
-                            </p>
-                          )}
-                          <Link
-                            href={`/bons-de-travail/${wo.id}`}
-                            className="flex items-center gap-0.5 pt-0.5 text-[11px] font-semibold text-amber-700 hover:text-amber-800 hover:underline dark:text-amber-400"
-                          >
-                            Lire le rapport et valider
-                            <ChevronRight className="w-3 h-3" />
-                          </Link>
-                        </div>
-                      )}
-
-                      <div className="pt-2 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between text-xs text-gray-400">
-                        <span>Est. {wo.estimatedHours ?? "—"} h</span>
-                        {NEXT_STATUS[wo.status] && canManage ? (
-                          <button
-                            onClick={() => mutate(wo.id, { status: NEXT_STATUS[wo.status] })}
-                            disabled={busyId === wo.id}
-                            className="flex items-center gap-0.5 text-blue-600 font-medium hover:text-blue-700 disabled:opacity-50"
-                          >
-                            Passer à {formatEnum(NEXT_STATUS[wo.status])}
-                            <ChevronRight className="w-3 h-3" />
-                          </button>
-                        ) : !canManage ? (
-                          <span className="text-gray-400">
-                            {formatEnum(wo.status)}
-                          </span>
-                        ) : wo.status === "OPEN" ? (
-                          <span className="text-gray-400">
-                            En attente d&apos;affectation
-                          </span>
-                        ) : wo.status === "COMPLETED" ? (
-                          <span className="flex items-center gap-1 text-green-600">
-                            <CheckCircle2 className="w-3 h-3" /> Terminé
-                          </span>
-                        ) : (
-                          // Everything else — en attente, annulé, à valider sans
-                          // droit de gestion — porte son propre libellé. Le
-                          // « Terminé » vert servait de cas par défaut, si bien
-                          // qu'un bon en pause s'affichait comme un bon fini.
-                          <span className="text-gray-400">
-                            {formatEnum(wo.status)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    );
-                  })}
-
-                  {col.length === 0 && (
-                    <div className="text-center py-8 text-gray-400 text-sm">
-                      Aucun bon
-                    </div>
-                  )}
+                    <button
+                      type="button"
+                      onClick={() => setCodeOpenId(codeOpen ? null : wo.id)}
+                      aria-label="Voir le code d'accès de l'immeuble"
+                      aria-expanded={codeOpen}
+                      title={
+                        accessCode
+                          ? `Code : ${accessCode}`
+                          : "Code non renseigné"
+                      }
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-[12px] hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                    >
+                      🔑
+                    </button>
+                    <Link
+                      href={`/bons-de-travail/${wo.id}`}
+                      aria-label="Ouvrir la fiche détaillée"
+                      title="Ouvrir la fiche détaillée"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-[12px] hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                    >
+                      📄
+                    </Link>
+                  </div>
                 </div>
               </div>
             );
@@ -757,14 +1194,21 @@ export default function WorkOrdersPage() {
         </div>
       )}
 
+
       {/* List View */}
       {view === "list" && (
         <Card className="overflow-hidden">
           {orders.length === 0 ? (
             <div className="p-6">
               <EmptyState
-                title="Aucun bon de travail"
-                hint="Créez votre premier bon avec le bouton ci-dessus."
+                icon={ClipboardCheck}
+                title="Aucune intervention enregistrée"
+                description="Une intervention regroupe le travail à faire sur un appareil : un dépannage, une visite d'entretien ou une inspection. Créez la première, ou laissez le bureau vous en affecter une."
+                action={{
+                  label: "Créer une intervention",
+                  icon: Plus,
+                  onClick: () => setShowCreate(true),
+                }}
               />
             </div>
           ) : (
@@ -772,70 +1216,101 @@ export default function WorkOrdersPage() {
               <table className="w-full">
                 <thead>
                   <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                    {["N° de bon", "Titre", "Ascenseur", "Type", "Priorité", "Statut", "Incident", "Affecté à", "Planifié"].map((h) => (
-                      <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">{h}</th>
+                    {[
+                      "Urgence",
+                      "Immeuble · accès",
+                      "Motif",
+                      "Technicien",
+                      "Statut",
+                      "Planifié",
+                      "Fiche",
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3"
+                      >
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                  {orders.map((wo) => (
-                    <tr key={wo.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                      <td className="px-6 py-4 text-xs font-mono">
-                        <Link
-                          href={`/bons-de-travail/${wo.id}`}
-                          className="text-blue-600 hover:underline dark:text-blue-400"
-                        >
-                          {wo.orderNumber}
-                        </Link>
+                  {visibleOrders.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400"
+                      >
+                        Aucune intervention pour ce filtre.
                       </td>
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">
-                        <Link
-                          href={`/bons-de-travail/${wo.id}`}
-                          className="hover:text-blue-600 dark:hover:text-blue-400"
-                        >
-                          {wo.title}
-                        </Link>
-                      </td>
-                      <td className="px-6 py-4 text-xs font-mono text-gray-500">{wo.elevator.elevatorCode}</td>
-                      <td className="px-6 py-4">
-                        <span className={`px-2 py-0.5 text-[10px] font-medium rounded border ${TYPE_COLORS[wo.type] ?? TYPE_COLORS.INSPECTION}`}>
-                          {enumLabel(wo.type)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${PRIORITY_COLORS[wo.priority] ?? PRIORITY_COLORS.MEDIUM}`}>
+                    </tr>
+                  )}
+                  {visibleOrders.map((wo) => (
+                    <tr
+                      key={wo.id}
+                      className="hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                    >
+                      {/* Urgence : le feu, puis le libellé. */}
+                      <td className="px-4 py-4">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300">
+                          <span
+                            className={`h-2 w-2 rounded-full ${priorityDot(
+                              wo.priority
+                            )}`}
+                            aria-hidden="true"
+                          />
                           {enumLabel(wo.priority)}
                         </span>
                       </td>
-                      <td className="px-6 py-4">
-                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${STATUS_CONFIG[wo.status as StatusStyleKey]?.color ?? "bg-gray-100 text-gray-600"}`}>
-                          {formatEnum(wo.status)}
-                        </span>
+
+                      {/* L'immeuble et son code, ce qu'on lit au téléphone. */}
+                      <td className="px-4 py-4">
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                          {wo.elevator.building.name}
+                        </p>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                          <span className="font-mono">
+                            {wo.elevator.elevatorCode}
+                          </span>
+                          <span className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white dark:bg-black">
+                            🔑{" "}
+                            {wo.elevator.building.accessCode ??
+                              "non renseigné"}
+                          </span>
+                        </p>
                       </td>
-                      <td className="px-6 py-4">
-                        {wo.incident ? (
-                          <div className="space-y-1">
-                            <ValidationBadge
-                              status={wo.incident.status}
-                              size="compact"
-                            />
-                            <p className="font-mono text-[10px] text-gray-400">
-                              {wo.incident.incidentNumber}
-                            </p>
-                          </div>
-                        ) : (
-                          <span className="text-gray-400 italic text-sm">—</span>
+
+                      {/* Le motif. Le numéro de bon n'est plus affiché : il
+                          reste dans l'URL de la fiche, pas à l'écran. */}
+                      <td className="px-4 py-4">
+                        <Link
+                          href={`/bons-de-travail/${wo.id}`}
+                          className="text-sm font-medium text-gray-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-400"
+                        >
+                          {wo.title}
+                        </Link>
+                        <span
+                          className={`mt-1 ml-1 inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                            TYPE_COLORS[wo.type] ?? TYPE_COLORS.INSPECTION
+                          }`}
+                        >
+                          {enumLabel(wo.type)}
+                        </span>
+                        {wo.incident?.errorCode && (
+                          <p className="mt-0.5 text-[11px] text-gray-400">
+                            {wo.incident.errorCode.code} —{" "}
+                            {wo.incident.errorCode.title}
+                          </p>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-400">
+
+                      <td className="px-4 py-4 text-sm text-gray-600 dark:text-gray-400">
                         <span className="inline-flex items-center gap-1.5">
                           {wo.assignedTo?.name ?? (
-                            <span className="text-gray-400 italic">—</span>
+                            <span className="italic text-gray-400">
+                              Non affecté
+                            </span>
                           )}
-                          {/* Même indicateur que sur la carte, réduit à une
-                              icône : en tableau, la largeur d'une cellule ne
-                              permet pas la phrase entière, et le survol la
-                              donne. */}
                           {wo.whatsappAttemptedAt && !wo.whatsappDeliveredAt && (
                             <span
                               className="inline-flex flex-none"
@@ -852,12 +1327,34 @@ export default function WorkOrdersPage() {
                           )}
                         </span>
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-500">
+
+                      <td className="px-4 py-4">
+                        <span
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                            STATUS_CONFIG[wo.status as StatusStyleKey]?.color ??
+                            "bg-gray-100 text-gray-600"
+                          }`}
+                        >
+                          {formatEnum(wo.status)}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-4 text-sm text-gray-500">
                         {wo.scheduledDate ? (
                           new Date(wo.scheduledDate).toLocaleDateString("fr-FR")
                         ) : (
-                          <span className="text-gray-400 italic">—</span>
+                          <span className="italic text-gray-400">—</span>
                         )}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <Link
+                          href={`/bons-de-travail/${wo.id}`}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          Ouvrir
+                          <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                        </Link>
                       </td>
                     </tr>
                   ))}
@@ -869,12 +1366,12 @@ export default function WorkOrdersPage() {
       )}
 
       {/* Create Modal */}
-      {showCreate && (
+      {canCreate && showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Nouveau bon de travail
+                Nouvelle intervention
               </h3>
               <button
                 onClick={() => setShowCreate(false)}
@@ -916,7 +1413,20 @@ export default function WorkOrdersPage() {
               </div>
               <select
                 value={form.elevatorId}
-                onChange={(e) => setForm({ ...form, elevatorId: e.target.value })}
+                onChange={(e) => {
+                  const elevatorId = e.target.value;
+                  const selected = elevatorOptions.find(
+                    (option) => option.id === elevatorId
+                  );
+                  setForm((f) => ({
+                    ...f,
+                    elevatorId,
+                    // Changer d'appareil change le lieu proposé. La valeur
+                    // déjà corrigée est remplacée volontairement : elle
+                    // décrivait l'ancienne machine, pas la nouvelle.
+                    interventionAddress: suggestedLocation(selected),
+                  }));
+                }}
                 className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white"
               >
                 {elevatorOptions.map((el) => (
@@ -925,6 +1435,78 @@ export default function WorkOrdersPage() {
                   </option>
                 ))}
               </select>
+              {/*
+                Le lieu exact, obligatoire. Pré-rempli depuis l'appareil mais
+                éditable : un ensemble de plusieurs cages ou un local
+                technique ne se déduit pas d'une adresse de rue, et c'est
+                précisément ce que le technicien doit lire avant de partir.
+              */}
+              <div>
+                <label
+                  htmlFor="create-address"
+                  className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                >
+                  Lieu / adresse exacte de l&apos;intervention{" "}
+                  <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  id="create-address"
+                  value={form.interventionAddress}
+                  onChange={(e) =>
+                    setForm({ ...form, interventionAddress: e.target.value })
+                  }
+                  rows={2}
+                  required
+                  placeholder="Ex. : 12 rue des Oliviers — Bâtiment A, 3e étage, local technique"
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  Repris sur la fiche du technicien et utilisé pour
+                  l&apos;itinéraire.
+                </p>
+              </div>
+              <div>
+                <label
+                  htmlFor="create-assignee"
+                  className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                >
+                  Assigner un technicien
+                </label>
+                <select
+                  id="create-assignee"
+                  value={form.assignedToId}
+                  onChange={(e) =>
+                    setForm({ ...form, assignedToId: e.target.value })
+                  }
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white"
+                >
+                  <option value="">Assigner plus tard (Non assigné)</option>
+                  {technicians.map((technician) => {
+                    const unavailable =
+                      technician.status === "OFF_DUTY" ||
+                      technician.status === "ON_LEAVE";
+                    return (
+                      <option
+                        key={technician.id}
+                        value={technician.id}
+                        disabled={unavailable}
+                      >
+                        {technician.name} — {technicianAvailability(technician)}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  {form.assignedToId
+                    ? "Le bon sera créé au statut « Assigné » et apparaîtra dans l'espace du technicien."
+                    : "Le bon restera en attente (non assigné) dans le centre de dispatching."}
+                </p>
+                {techniciansLoaded && technicians.length === 0 && (
+                  <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                    Aucun technicien lisible pour ce compte.
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <input
                   type="date"

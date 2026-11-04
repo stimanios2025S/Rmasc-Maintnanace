@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/states";
+import { InfoHint } from "@/components/ui/info-hint";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import {
   addMonthsUtc,
@@ -463,8 +464,9 @@ export default function ContractDetailPage() {
         </Card>
 
         <Card className="p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+          <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
             Palier SLA engagé
+            <InfoHint term="tier" />
           </p>
           <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
             {enumLabel(contract.slaTier)}

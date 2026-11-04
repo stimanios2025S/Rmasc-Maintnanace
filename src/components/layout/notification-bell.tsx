@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BellRing, CheckCheck, Loader2 } from "lucide-react";
+import { useSession } from "next-auth/react";
+import {
+  BellRing,
+  CheckCheck,
+  Eye,
+  Loader2,
+  MapPin,
+  Zap,
+} from "lucide-react";
+import { DispatchModal } from "@/components/admin/dispatch-modal";
 
 /**
  * The user's own notification tray.
@@ -25,6 +34,109 @@ interface NotificationRow {
   linkUrl: string | null;
   isRead: boolean;
   createdAt: string;
+  /** Le bon concerné, quand la notification en désigne un. */
+  workOrder?: {
+    id: string;
+    priority: string;
+    status: string;
+    title: string;
+    description: string | null;
+    elevator: {
+      elevatorCode: string;
+      building: {
+        name: string;
+        city: string;
+        address: string;
+        accessCode: string | null;
+      };
+    };
+    incident: {
+      /** Renseignés pour que la cloche du bureau puisse dispatcher d'ici. */
+      id: string;
+      incidentNumber: string;
+      status: string;
+      notes: string | null;
+      errorCode: { code: string; title: string } | null;
+    } | null;
+  } | null;
+}
+
+/**
+ * Le feu tricolore d'une notification.
+ *
+ * `EMERGENCY` n'est pas une priorité de bon de travail dans l'enum, mais il
+ * apparaît dans les charges utiles historiques : on le traite comme le rouge
+ * plutôt que de le laisser sans témoin.
+ */
+type Urgency = "red" | "orange" | "green" | "neutral";
+
+function urgencyOf(row: NotificationRow): Urgency {
+  const priority = row.workOrder?.priority;
+  if (priority === "CRITICAL" || priority === "HIGH" || priority === "EMERGENCY") {
+    return "red";
+  }
+  if (priority === "MEDIUM") return "orange";
+  if (priority === "LOW") return "green";
+  return "neutral";
+}
+
+const URGENCY_META: Record<
+  Urgency,
+  { emoji: string; label: string; badge: string; light: string }
+> = {
+  red: {
+    emoji: "🔴",
+    label: "URGENT / CRITIQUE",
+    badge: "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300",
+    light: "bg-red-600",
+  },
+  orange: {
+    emoji: "🟠",
+    label: "À TRAITER / MOYEN",
+    badge:
+      "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300",
+    light: "bg-amber-500",
+  },
+  green: {
+    emoji: "🟢",
+    label: "ROUTINE",
+    badge:
+      "bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300",
+    light: "bg-green-600",
+  },
+  neutral: {
+    emoji: "⚪",
+    label: "INFO",
+    badge: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
+    light: "bg-gray-400",
+  },
+};
+
+/** Le témoin : anneau qui pulse pour le rouge, point plein sinon. */
+function UrgencyLight({ urgency }: { urgency: Urgency }) {
+  const color = URGENCY_META[urgency].light;
+
+  if (urgency === "red") {
+    return (
+      <span className="relative mt-1 flex h-2.5 w-2.5 flex-shrink-0">
+        <span
+          className={`absolute inline-flex h-full w-full animate-ping rounded-full ${color} opacity-70`}
+          aria-hidden="true"
+        />
+        <span
+          className={`relative inline-flex h-2.5 w-2.5 rounded-full ${color}`}
+          aria-hidden="true"
+        />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`mt-1 h-2.5 w-2.5 flex-shrink-0 rounded-full ${color}`}
+      aria-hidden="true"
+    />
+  );
 }
 
 function timeAgo(iso: string): string {
@@ -41,10 +153,25 @@ function timeAgo(iso: string): string {
 
 export function NotificationBell({ enabled }: { enabled: boolean }) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const role = session?.user?.role;
+  const isTechnician = role === "FIELD_TECHNICIAN";
+  /**
+   * Les deux rôles qui dispatchent. Même règle que le tableau des incidents
+   * (`ADMIN`, `MAINTENANCE_MANAGER`) : la cloche ne doit pas offrir un geste
+   * que la route refusera.
+   */
+  const canDispatch = role === "ADMIN" || role === "MAINTENANCE_MANAGER";
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  /** La panne dont le sélecteur de technicien est ouvert, s'il l'est. */
+  const [dispatchTarget, setDispatchTarget] = useState<{
+    id: string;
+    incidentNumber: string;
+    elevatorCode: string;
+  } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
@@ -96,15 +223,71 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
       setRows((prev) =>
         prev.map((r) => (r.id === row.id ? { ...r, isRead: true } : r))
       );
-      void fetch("/api/notifications", {
+      // Route unitaire : le `userId` est dans son WHERE, donc marquer la
+      // notification de quelqu'un d'autre est impossible à exprimer.
+      void fetch(`/api/notifications/${row.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: row.id }),
       }).catch(() => undefined);
     }
 
     if (row.linkUrl) router.push(row.linkUrl);
   }
+
+  /** Marque lue sans naviguer : c'est le geste qui arrête le clignotement. */
+  function markRead(row: NotificationRow) {
+    if (row.isRead) return;
+
+    setUnread((n) => Math.max(0, n - 1));
+    setRows((prev) =>
+      prev.map((r) => (r.id === row.id ? { ...r, isRead: true } : r))
+    );
+    void fetch(`/api/notifications/${row.id}`, {
+      method: "PATCH",
+    }).catch(() => undefined);
+  }
+
+  /** Ouvre directement le bon de travail sur le portail du terrain. */
+  function startMission(row: NotificationRow) {
+    markRead(row);
+    setOpen(false);
+    const id = row.workOrder?.id;
+    router.push(id ? `/technicien?mission=${id}` : "/technicien");
+  }
+
+  /** Ouvre la fiche du bon, vue bureau. */
+  function viewWorkOrder(row: NotificationRow) {
+    markRead(row);
+    setOpen(false);
+    if (row.workOrder) router.push(`/bons-de-travail/${row.workOrder.id}`);
+  }
+
+  /**
+   * Dispatcher depuis la cloche.
+   *
+   * Le sélecteur est celui du tableau des incidents — même liste, mêmes
+   * statuts réels, même règle « le moins chargé d'abord ». Un second dialogue
+   * écrit pour cette cloche aurait fini par proposer d'autres gens.
+   */
+  function dispatchFromBell(row: NotificationRow) {
+    const workplace = row.workOrder;
+    if (!workplace?.incident) return;
+    markRead(row);
+    setOpen(false);
+    setDispatchTarget({
+      id: workplace.incident.id,
+      incidentNumber: workplace.incident.incidentNumber,
+      elevatorCode: workplace.elevator.elevatorCode,
+    });
+  }
+
+  /**
+   * Une alerte rouge non lue fait clignoter la cloche elle-même, pas seulement
+   * son badge : sur un téléphone posé dans une cage d'ascenseur, c'est le
+   * mouvement qui attire l'œil, pas un chiffre.
+   */
+  const hasUrgentUnread = rows.some(
+    (row) => !row.isRead && urgencyOf(row) === "red"
+  );
 
   async function markAllRead() {
     setLoading(true);
@@ -145,9 +328,15 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
         }
         className="relative rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800"
       >
-        <BellRing className="h-5 w-5 text-gray-500" />
+        <BellRing
+          className={`h-5 w-5 ${
+            hasUrgentUnread
+              ? "animate-pulse text-red-600 dark:text-red-400"
+              : "text-gray-500"
+          }`}
+        />
         {unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
+          <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] animate-pulse items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white ring-2 ring-white dark:ring-gray-950">
             {unread > 99 ? "99+" : unread}
           </span>
         )}
@@ -185,53 +374,177 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
               Aucune nouvelle notification.
             </p>
           ) : (
-            <ul className="max-h-80 overflow-y-auto">
-              {rows.map((row) => (
-                <li key={row.id}>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => void openRow(row)}
-                    className={`block w-full px-4 py-3 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-800 ${
+            <ul className="max-h-96 overflow-y-auto">
+              {rows.map((row) => {
+                const urgency = urgencyOf(row);
+                const meta = URGENCY_META[urgency];
+                const workOrder = row.workOrder;
+                const description =
+                  workOrder?.incident?.notes?.trim() ||
+                  workOrder?.description?.trim() ||
+                  row.message;
+                const building = workOrder?.elevator.building;
+                const accessCode = building?.accessCode ?? null;
+
+                return (
+                  <li
+                    key={row.id}
+                    className={
                       row.isRead ? "" : "bg-blue-50/60 dark:bg-blue-950/20"
-                    }`}
+                    }
                   >
-                    <span className="flex items-start gap-2">
-                      {!row.isRead && (
-                        <span
-                          aria-hidden="true"
-                          className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-blue-600"
-                        />
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium text-gray-900 dark:text-white">
-                          {row.title}
+                    <div className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => void openRow(row)}
+                        className="block w-full text-left"
+                      >
+                        <span className="flex items-start gap-2">
+                          <UrgencyLight urgency={urgency} />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center justify-between gap-1.5">
+                              {workOrder ? (
+                                <span
+                                  className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold tracking-wide ${meta.badge}`}
+                                >
+                                  {meta.emoji} {meta.label}
+                                </span>
+                              ) : (
+                                <span />
+                              )}
+                              <span className="text-[10px] uppercase tracking-wide text-gray-400">
+                                {timeAgo(row.createdAt)}
+                              </span>
+                            </span>
+
+                            {/*
+                              L'immeuble et l'appareil, en gras : c'est ce que
+                              le dispatcheur cherche des yeux avant tout le
+                              reste. La ville lève l'ambiguïté entre deux sites
+                              qui portent le même nom.
+                            */}
+                            <span className="mt-1 block text-base font-bold leading-snug text-gray-900 dark:text-white">
+                              {building?.name ?? workOrder?.title ?? row.title}
+                              {building?.city && (
+                                <span className="font-semibold text-gray-500 dark:text-gray-400">
+                                  {" "}
+                                  · {building.city}
+                                </span>
+                              )}
+                            </span>
+                            <span className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                              <MapPin
+                                className="h-3.5 w-3.5 flex-none"
+                                aria-hidden="true"
+                              />
+                              <span className="font-mono font-semibold text-gray-700 dark:text-gray-300">
+                                {workOrder?.elevator.elevatorCode ??
+                                  workOrder?.title ??
+                                  row.title}
+                              </span>
+                            </span>
+
+                            {/* Le code d'accès : la question suivante au téléphone. */}
+                            <span className="mt-1.5 inline-flex items-center rounded-lg bg-gray-900 px-2 py-1 font-mono text-[11px] font-bold text-white shadow-sm dark:bg-black">
+                              🔑 Code accès :{" "}
+                              {accessCode ?? "non renseigné"}
+                            </span>
+
+                            <span className="mt-1.5 line-clamp-2 block text-xs text-gray-600 dark:text-gray-400">
+                              {description}
+                            </span>
+                          </span>
                         </span>
-                        <span className="mt-0.5 block text-xs text-gray-600 dark:text-gray-400">
-                          {row.message}
-                        </span>
-                        <span className="mt-1 block text-[10px] uppercase tracking-wide text-gray-400">
-                          {timeAgo(row.createdAt)}
-                        </span>
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
+                      </button>
+
+                      <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                        {!row.isRead && (
+                          <button
+                            type="button"
+                            onClick={() => markRead(row)}
+                            className="rounded-lg px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                          >
+                            Marquer comme lu
+                          </button>
+                        )}
+                        {workOrder && isTechnician && (
+                          <button
+                            type="button"
+                            onClick={() => startMission(row)}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-blue-700"
+                          >
+                            🚀 Démarrer la mission
+                          </button>
+                        )}
+                        {workOrder &&
+                          canDispatch &&
+                          (workOrder.incident?.status === "ESCALATED" ? (
+                            <button
+                              type="button"
+                              onClick={() => dispatchFromBell(row)}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-red-700"
+                            >
+                              <Zap className="h-3 w-3" aria-hidden="true" />
+                              Dispatcher en 1-clic
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => viewWorkOrder(row)}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-blue-700"
+                            >
+                              <Eye className="h-3 w-3" aria-hidden="true" />
+                              Voir le bon
+                            </button>
+                          ))}
+                        {workOrder && !isTechnician && !canDispatch && (
+                          <button
+                            type="button"
+                            onClick={() => void openRow(row)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                          >
+                            <Eye className="h-3 w-3" aria-hidden="true" />
+                            Voir le détail
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
 
           <div className="border-t border-gray-200 px-4 py-2.5 dark:border-gray-800">
             <Link
-              href="/client"
+              href={
+                isTechnician
+                  ? "/technicien"
+                  : canDispatch
+                    ? "/administration/incidents"
+                    : "/client"
+              }
               onClick={() => setOpen(false)}
               className="text-xs font-medium text-blue-700 hover:underline dark:text-blue-400"
             >
-              Voir mes signalements
+              {isTechnician
+                ? "Voir mes missions"
+                : canDispatch
+                  ? "Tableau des incidents"
+                  : "Voir mes signalements"}
             </Link>
           </div>
         </div>
       )}
+
+      <DispatchModal
+        incident={dispatchTarget}
+        onClose={() => setDispatchTarget(null)}
+        onDispatched={() => {
+          setDispatchTarget(null);
+          void load();
+        }}
+      />
     </div>
   );
 }

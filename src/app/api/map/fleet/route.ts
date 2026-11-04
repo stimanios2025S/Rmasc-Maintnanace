@@ -178,6 +178,8 @@ export async function GET() {
           reportedLongitude: true,
           reportedPositionSource: true,
           createdAt: true,
+          notes: true,
+          errorCode: { select: { code: true, title: true } },
           elevator: {
             select: {
               id: true,
@@ -390,6 +392,8 @@ export async function GET() {
         source: incident.reportedPositionSource,
         reportedAt: incident.createdAt.toISOString(),
         technicianName: incident.technician?.name ?? null,
+        notes: incident.notes ?? null,
+        errorCode: incident.errorCode ?? null,
         elevatorId: incident.elevator.id,
         elevatorCode: incident.elevator.elevatorCode,
         buildingId: incident.elevator.building.id,

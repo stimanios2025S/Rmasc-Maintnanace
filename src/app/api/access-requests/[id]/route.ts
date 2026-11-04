@@ -24,7 +24,7 @@
  * Il n'est stocké nulle part, comme pour toute ouverture de compte.
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
@@ -38,6 +38,8 @@ import {
 import { requireRole } from "@/lib/api/guard";
 import { generatePassword } from "@/lib/auth/passwords";
 import { deliverInvitation } from "@/lib/notifications/invitation";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoAccessRequests } from "@/lib/demo/registers";
 
 /** Le même facteur que la route des comptes clients, pour des hachages interchangeables. */
 const BCRYPT_ROUNDS = 12;
@@ -56,9 +58,19 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  /**
+   * La décision validée, gardée pour le repli de démonstration.
+   *
+   * Sans elle, le `catch` ne saurait pas si l'échec vient d'une base absente
+   * avant ou après la validation du corps — et acquitter une requête malformée
+   * serait pire que de la refuser.
+   */
+  let decision: { action: "APPROVE" | "REJECT" } | null = null;
+
   try {
     const session = await requireRole("ADMIN");
     const body = DecisionSchema.parse(await readJson(request));
+    decision = body;
 
     const accessRequest = await prisma.accessRequest.findUnique({
       where: { id: params.id },
@@ -223,6 +235,39 @@ export async function PATCH(
       },
     });
   } catch (error) {
+    /**
+     * Mode démonstration : la décision est acquittée, pas enregistrée.
+     *
+     * Aucun compte n'est créé — le mot de passe serait celui d'un utilisateur
+     * qui n'existe pas. La page le détecte par `demo: true` et affiche son
+     * propre message ; elle ne montre pas le panneau d'identifiants.
+     *
+     * Le repli accepte aussi une demande déjà traitée : c'est ce qui permet de
+     * tester « Approuver » et « Refuser » sur les trois cartes de la fixture,
+     * ce qu'une démonstration limitée aux demandes en attente ne permettrait
+     * pas.
+     */
+    if (decision && shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("PATCH /api/access-requests/[id]");
+      const demo = demoAccessRequests().find((row) => row.id === params.id);
+      const approved = decision.action === "APPROVE";
+
+      return NextResponse.json({
+        data: {
+          request: {
+            id: params.id,
+            status: approved ? "APPROVED" : "REJECTED",
+            decidedAt: new Date().toISOString(),
+          },
+          client: null,
+          password: null,
+          buildingAttached: false,
+          buildingName: demo?.elevator.building.name ?? "",
+          invitation: null,
+        },
+        demo: true,
+      });
+    }
     return handleRouteError(error);
   }
 }

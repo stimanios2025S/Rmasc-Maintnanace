@@ -45,6 +45,7 @@ import {
 } from "@/lib/api/guard";
 import { generatePartRequestNumber } from "@/lib/ids";
 import { transitionRefusal } from "@/lib/parts/status";
+import { notify } from "@/lib/notifications/service";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoPartRequirements } from "@/lib/demo/responses";
 import { PART_REQUIREMENT_STATUSES, PART_URGENCIES } from "@/types";
@@ -143,6 +144,47 @@ function scopeFor(
   return { workOrder: { elevator: { building: buildingScopeFor(session) } } };
 }
 
+interface StockHit {
+  quantity: number;
+  location: string | null;
+}
+
+/**
+ * La réserve locale, indexée par référence **et** par nom.
+ *
+ * Les pièces du terrain sont du texte libre : tantôt une référence, tantôt une
+ * désignation. Indexer les deux permet de rapprocher une demande d'un article
+ * sans exiger un identifiant de catalogue que personne ne saisit sur un toit.
+ */
+async function loadStockIndex(): Promise<Map<string, StockHit>> {
+  const items = await prisma.stockItem.findMany({
+    select: { reference: true, name: true, quantity: true, location: true },
+  });
+
+  const index = new Map<string, StockHit>();
+  for (const item of items) {
+    const hit: StockHit = { quantity: item.quantity, location: item.location };
+    index.set(item.reference.trim().toLowerCase(), hit);
+    index.set(item.name.trim().toLowerCase(), hit);
+  }
+  return index;
+}
+
+function stockFor(
+  row: { replacementPartName: string; replacementPartReference: string | null },
+  index: Map<string, StockHit>
+): StockHit | null {
+  const keys = [row.replacementPartReference, row.replacementPartName]
+    .filter((key): key is string => Boolean(key && key.trim()))
+    .map((key) => key.trim().toLowerCase());
+
+  for (const key of keys) {
+    const hit = index.get(key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await requireRole(...OPS_ROLES);
@@ -180,17 +222,41 @@ export async function GET(request: NextRequest) {
       orderBy: [{ urgency: "asc" }, { createdAt: "asc" }],
     });
 
-    return NextResponse.json({ data: rows, total: rows.length });
+    const stock = await loadStockIndex();
+
+    return NextResponse.json({
+      data: rows.map((row) => {
+        const hit = stockFor(row, stock);
+        return {
+          ...row,
+          /** Quantité réellement en réserve, ou null si la pièce est inconnue. */
+          stockAvailable: hit?.quantity ?? null,
+          stockLocation: hit?.location ?? null,
+        };
+      }),
+      total: rows.length,
+    });
   } catch (error) {
     if (shouldServeDemoData(error)) {
       warnDemoFallbackOnce("GET /api/parts-replacement");
       const { searchParams } = request.nextUrl;
-      return NextResponse.json(
-        demoPartRequirements({
-          workOrderId: searchParams.get("workOrderId") || undefined,
-          status: searchParams.get("status") || undefined,
-        })
-      );
+      const demo = demoPartRequirements({
+        workOrderId: searchParams.get("workOrderId") || undefined,
+        status: searchParams.get("status") || undefined,
+      });
+      /**
+       * La réserve n'est pas modélisée par la fixture : `null` plutôt qu'un
+       * chiffre inventé. L'écran affiche « stock non suivi » et n'offre pas de
+       * réservation qui aurait décrémenté un stock qui n'existe pas.
+       */
+      return NextResponse.json({
+        ...demo,
+        data: demo.data.map((row) => ({
+          ...row,
+          stockAvailable: null,
+          stockLocation: null,
+        })),
+      });
     }
     return handleRouteError(error);
   }
@@ -255,6 +321,15 @@ export async function POST(request: NextRequest) {
             quantity: body.quantity,
             urgency: body.urgency,
             notes: body.notes,
+            /**
+             * La demande arrive directement dans la file du magasin.
+             *
+             * C'est le circuit demandé : le technicien constate la pièce
+             * manquante, le magasinier vérifie la réserve. Passer par un état
+             * « en attente du bureau » ajoutait une étape qui ne décidait rien
+             * — le bureau ne connaît pas le stock.
+             */
+            status: "PENDING_STOCK_CHECK",
           },
           select: LIST_SELECT,
         });
@@ -274,15 +349,32 @@ export async function POST(request: NextRequest) {
   }
 }
 
-const DecideSchema = z
-  .object({
-    id: z.string().trim().min(1, "La demande est obligatoire"),
-    status: z.enum(PART_REQUIREMENT_STATUSES),
-  })
-  .strict();
+const DecideSchema = z.union([
+  /**
+   * Le geste du magasinier, en un clic.
+   *
+   * `reserve` décrémente la réserve ; `order` constate la rupture ; `reject`
+   * exige un motif. Le motif est vérifié plus bas, et non par un `.min(1)` ici,
+   * parce qu'il n'est obligatoire que pour une seule des trois actions.
+   */
+  z
+    .object({
+      id: z.string().trim().min(1, "La demande est obligatoire"),
+      action: z.enum(["reserve", "order", "reject"]),
+      reason: z.string().trim().max(2000).optional(),
+    })
+    .strict(),
+  /** L'ancien contrat — une transition d'état nue. Conservé pour l'existant. */
+  z
+    .object({
+      id: z.string().trim().min(1, "La demande est obligatoire"),
+      status: z.enum(PART_REQUIREMENT_STATUSES),
+    })
+    .strict(),
+]);
 
 /**
- * La décision du bureau.
+ * La décision du bureau et du magasin.
  *
  * LA RÈGLE VIT DANS `lib/parts/status.ts`
  * et non ici : l'écran doit offrir exactement les boutons que cette route
@@ -299,12 +391,174 @@ export async function PATCH(request: NextRequest) {
 
     const existing = await prisma.partRequirement.findUnique({
       where: { id: parsed.id },
-      select: { id: true, number: true, status: true, workOrderId: true },
+      select: {
+        id: true,
+        number: true,
+        status: true,
+        workOrderId: true,
+        requestedById: true,
+        quantity: true,
+        replacementPartName: true,
+        replacementPartReference: true,
+        workOrder: {
+          select: { orderNumber: true, elevator: { select: { elevatorCode: true } } },
+        },
+      },
     });
     if (!existing) {
       throw notFound(`Demande de pièce introuvable : ${parsed.id}`);
     }
 
+    // ─── Le circuit du magasin ──────────────────────────────
+    if ("action" in parsed) {
+      const target: PartRequirementStatus =
+        parsed.action === "reserve"
+          ? "RESERVED"
+          : parsed.action === "order"
+            ? "ORDER_REQUIRED"
+            : "REJECTED";
+
+      const now = new Date();
+
+      // Rejouer la même décision ne doit ni re-décrémenter le stock ni
+      // renvoyer une notification : c'est le propre d'un double clic.
+      if (existing.status === target) {
+        const unchanged = await prisma.partRequirement.findUnique({
+          where: { id: parsed.id },
+          select: LIST_SELECT,
+        });
+        return jsonOk(unchanged);
+      }
+
+      const refusal = transitionRefusal(existing.status, target);
+      if (refusal) throw badRequest(refusal);
+
+      if (parsed.action === "reject" && !parsed.reason?.trim()) {
+        throw badRequest(
+          "Un refus doit porter un motif : sans lui, le technicien ne sait pas quoi corriger."
+        );
+      }
+
+      let updated;
+
+      if (parsed.action === "reserve") {
+        const index = await loadStockIndex();
+        const hit = stockFor(existing, index);
+        if (!hit) {
+          throw conflict(
+            `Aucune réserve connue pour « ${
+              existing.replacementPartReference ?? existing.replacementPartName
+            } ». Passez la demande en commande.`
+          );
+        }
+        if (hit.quantity < existing.quantity) {
+          throw conflict(
+            `Stock insuffisant : ${hit.quantity} en réserve pour ${existing.quantity} demandée(s).`
+          );
+        }
+
+        /**
+         * La réservation est une écriture en deux temps, et elle doit être
+         * atomique : lire le stock puis le décrémenter sans verrou laisserait
+         * deux magasiniers réserver la même dernière pièce. Le `updateMany`
+         * filtré sur `quantity >= demandé` est le verrou — s'il ne touche
+         * aucune ligne, quelqu'un est passé entre-temps et l'on refuse.
+         */
+        updated = await prisma.$transaction(async (tx) => {
+          const key =
+            existing.replacementPartReference?.trim() ||
+            existing.replacementPartName.trim();
+
+          const item = await tx.stockItem.findFirst({
+            where: {
+              OR: [
+                { reference: { equals: key, mode: "insensitive" } },
+                { name: { equals: existing.replacementPartName.trim(), mode: "insensitive" } },
+              ],
+              quantity: { gte: existing.quantity },
+            },
+            select: { id: true },
+          });
+
+          if (!item) {
+            throw conflict(
+              "Le stock a changé pendant la réservation. Rechargez l'écran et réessayez."
+            );
+          }
+
+          const claimed = await tx.stockItem.updateMany({
+            where: { id: item.id, quantity: { gte: existing.quantity } },
+            data: { quantity: { decrement: existing.quantity } },
+          });
+          if (claimed.count === 0) {
+            throw conflict(
+              "Le stock a changé pendant la réservation. Rechargez l'écran et réessayez."
+            );
+          }
+
+          return tx.partRequirement.update({
+            where: { id: parsed.id },
+            data: {
+              status: "RESERVED",
+              statusChangedAt: now,
+              statusChangedById: session.user.id ?? null,
+              reservedAt: now,
+              decisionNote: null,
+            },
+            select: LIST_SELECT,
+          });
+        });
+      } else {
+        updated = await prisma.partRequirement.update({
+          where: { id: parsed.id },
+          data: {
+            status: target,
+            statusChangedAt: now,
+            statusChangedById: session.user.id ?? null,
+            reservedAt: null,
+            decisionNote: parsed.reason?.trim() || null,
+          },
+          select: LIST_SELECT,
+        });
+      }
+
+      /**
+       * Le technicien est prévenu du sort de sa demande.
+       *
+       * `notify` ne lève jamais : une notification qui échouerait ne doit pas
+       * annuler une réservation déjà écrite en base.
+       */
+      if (existing.requestedById) {
+        const partLabel =
+          existing.replacementPartReference ?? existing.replacementPartName;
+        const orderLabel = existing.workOrder.elevator.elevatorCode;
+
+        const message =
+          parsed.action === "reserve"
+            ? `${partLabel} ×${existing.quantity} est en réserve au magasin pour l'appareil ${orderLabel}.`
+            : parsed.action === "order"
+              ? `${partLabel} ×${existing.quantity} n'est pas en stock : approvisionnement en cours pour l'appareil ${orderLabel}.`
+              : `${partLabel} ×${existing.quantity} refusée : ${parsed.reason?.trim()}`;
+
+        await notify({
+          userId: existing.requestedById,
+          title:
+            parsed.action === "reserve"
+              ? "📦 Pièce prête au magasin"
+              : parsed.action === "order"
+                ? "⏳ Pièce en cours d'approvisionnement"
+                : "❌ Demande de pièce refusée",
+          message,
+          type: "part_requirement",
+          linkUrl: `/bons-de-travail/${existing.workOrderId}`,
+          workOrderId: existing.workOrderId,
+        });
+      }
+
+      return jsonOk(updated);
+    }
+
+    // ─── L'ancien contrat : une transition nue ──────────────
     if (existing.status === parsed.status) {
       const unchanged = await prisma.partRequirement.findUnique({
         where: { id: parsed.id },
@@ -320,23 +574,80 @@ export async function PATCH(request: NextRequest) {
     if (refusal) throw badRequest(refusal);
 
     const now = new Date();
-    const updated = await prisma.partRequirement.update({
-      where: { id: parsed.id },
-      data: {
-        status: parsed.status,
-        statusChangedAt: now,
-        statusChangedById: session.user.id ?? null,
-        /**
-         * `fulfilledAt` est posé une fois et retiré quand on revient en arrière.
-         * Le laisser derrière une réouverture ferait lire « pièce posée le 3
-         * mars » sur une demande redevenue en attente — et c'est exactement la
-         * ligne qu'on lit six mois plus tard pour savoir si la pièce a été
-         * montée.
-         */
-        fulfilledAt: parsed.status === "FULFILLED" ? now : null,
-      },
-      select: LIST_SELECT,
-    });
+
+    /**
+     * Une pièce posée sort de la réserve physique.
+     *
+     * Une demande passée par « Approuver & réserver » a déjà décrémenté le
+     * stock au moment de la réservation : la décrémenter une seconde fois à la
+     * pose compterait la même pièce deux fois. Les demandes validées ou
+     * commandées sans réservation, elles, n'ont encore touché à aucune
+     * quantité — c'est ici qu'elles la consomment.
+     *
+     * Le `updateMany` filtré sur `quantity >= demandé` est le même verrou que
+     * la réservation : deux poses simultanées de la dernière pièce ne peuvent
+     * pas la faire passer sous zéro. Si l'article n'est pas dans la réserve
+     * (pièce commandée hors stock), la pose reste valide et la quantité est
+     * simplement inchangée.
+     */
+    const consumesStock =
+      parsed.status === "FULFILLED" && existing.status !== "RESERVED";
+
+    const applyTransition = async (tx: Prisma.TransactionClient) =>
+      tx.partRequirement.update({
+        where: { id: parsed.id },
+        data: {
+          status: parsed.status,
+          statusChangedAt: now,
+          statusChangedById: session.user.id ?? null,
+          /**
+           * `fulfilledAt` est posé une fois et retiré quand on revient en arrière.
+           * Le laisser derrière une réouverture ferait lire « pièce posée le 3
+           * mars » sur une demande redevenue en attente — et c'est exactement la
+           * ligne qu'on lit six mois plus tard pour savoir si la pièce a été
+           * montée.
+           */
+          fulfilledAt: parsed.status === "FULFILLED" ? now : null,
+        },
+        select: LIST_SELECT,
+      });
+
+    const updated = consumesStock
+      ? await prisma.$transaction(async (tx) => {
+          const key =
+            existing.replacementPartReference?.trim() ||
+            existing.replacementPartName.trim();
+
+          const item = await tx.stockItem.findFirst({
+            where: {
+              OR: [
+                { reference: { equals: key, mode: "insensitive" } },
+                {
+                  name: {
+                    equals: existing.replacementPartName.trim(),
+                    mode: "insensitive",
+                  },
+                },
+              ],
+              quantity: { gte: existing.quantity },
+            },
+            select: { id: true },
+          });
+
+          if (item) {
+            await tx.stockItem.updateMany({
+              where: { id: item.id, quantity: { gte: existing.quantity } },
+              data: { quantity: { decrement: existing.quantity } },
+            });
+          } else {
+            console.warn(
+              `[parts] pose de ${existing.number} : aucune réserve suffisante pour ${key}, quantité laissée inchangée`
+            );
+          }
+
+          return applyTransition(tx);
+        })
+      : await prisma.$transaction(applyTransition);
 
     return jsonOk(updated);
   } catch (error) {

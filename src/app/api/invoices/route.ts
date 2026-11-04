@@ -60,6 +60,8 @@ import {
 } from "@/lib/registers/filters";
 import { INVOICE_STATUSES } from "@/types";
 import type { InvoiceStatus } from "@/types";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoInvoiceRegister } from "@/lib/demo/registers";
 import { invoiceStatusLabel } from "@/lib/ui/enum-labels";
 import type { AssertNever, InvoiceRegisterRow } from "@/lib/registers/shapes";
 import type { CsvColumn } from "@/lib/export/csv";
@@ -353,6 +355,21 @@ export async function GET(request: NextRequest) {
       totalAmount: aggregate._sum.amount?.toString() ?? null,
     });
   } catch (error) {
+    /**
+     * Sans base, le registre se sert de la fixture.
+     *
+     * Le repli ne s'applique pas à l'export CSV : un fichier téléchargé qui
+     * contiendrait des lignes inventées serait indétectable une fois sur le
+     * disque, alors qu'un écran de démonstration se reconnaît à son bandeau.
+     */
+    if (
+      shouldServeDemoData(error) &&
+      request.nextUrl.searchParams.get("format") !== "csv"
+    ) {
+      warnDemoFallbackOnce("GET /api/invoices");
+      const { limit } = parsePagination(request.nextUrl.searchParams);
+      return NextResponse.json(demoInvoiceRegister(limit));
+    }
     return handleRouteError(error);
   }
 }

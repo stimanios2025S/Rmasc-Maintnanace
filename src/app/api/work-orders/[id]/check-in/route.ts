@@ -298,7 +298,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const where = `${workOrder.elevator.elevatorCode} à ${workOrder.elevator.building.name}`;
 
-    if (workOrder.incident) {
+    if (workOrder.incident?.clientId) {
       await notify({
         userId: workOrder.incident.clientId,
         title: "Technicien sur site",

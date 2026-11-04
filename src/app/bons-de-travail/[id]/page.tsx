@@ -78,6 +78,8 @@ interface WorkOrderDetail {
   orderNumber: string;
   title: string;
   description: string | null;
+  /** Le lieu exact saisi à la création du bon. */
+  interventionAddress: string | null;
   type: string;
   priority: string;
   status: string;
@@ -313,7 +315,7 @@ export default function WorkOrderDetailPage() {
     setLoadError("");
     try {
       const res = await fetch(`/api/work-orders/${id}`);
-      if (res.status === 404) throw new Error("Bon de travail introuvable");
+      if (res.status === 404) throw new Error("Intervention introuvable");
       if (!res.ok) throw new Error(`La fiche a renvoyé ${res.status}`);
       const json = await res.json();
       setData(json.data);
@@ -478,7 +480,7 @@ export default function WorkOrderDetailPage() {
     return (
       <div className="p-6 max-w-5xl mx-auto">
         <EmptyState
-          title="Bon de travail introuvable"
+          title="Intervention introuvable"
           hint="Il a peut-être été supprimé, ou le lien est incomplet."
         />
       </div>
@@ -543,6 +545,21 @@ export default function WorkOrderDetailPage() {
                   {data.elevator.building.address}, {data.elevator.building.city}
                 </span>
               </>
+            }
+          />
+          <Fact
+            icon={MapPin}
+            label="Lieu de l'intervention"
+            value={
+              data.interventionAddress?.trim() || (
+                <>
+                  {data.elevator.building.address},{" "}
+                  {data.elevator.building.city}
+                  <span className="block text-xs text-gray-500 dark:text-gray-400">
+                    Adresse du site — aucun lieu précis n&apos;a été saisi.
+                  </span>
+                </>
+              )
             }
           />
           <Fact

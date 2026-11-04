@@ -26,9 +26,8 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { readCoordinates } from "@/lib/geo/geofence";
 import { enumLabel } from "@/lib/ui/enum-labels";
-import { notifyRoles } from "./service";
+import { notify, notifyRoles } from "./service";
 import {
   sendWhatsApp,
   type WhatsAppFailureReason,
@@ -47,18 +46,19 @@ const ASSIGNMENT_SELECT = {
   orderNumber: true,
   title: true,
   description: true,
+  interventionAddress: true,
   type: true,
-  reportedLatitude: true,
-  reportedLongitude: true,
+  priority: true,
   elevator: {
     select: {
       elevatorCode: true,
+      installationLocation: true,
       building: {
         select: {
           name: true,
           address: true,
-          latitude: true,
-          longitude: true,
+          city: true,
+          accessCode: true,
         },
       },
     },
@@ -85,142 +85,67 @@ export interface AssignmentNoticeOutcome {
   reason?: WhatsAppFailureReason;
 }
 
-// ─── Le lien de navigation ──────────────────────────────────
-
-/**
- * Le lien que le technicien touche pour partir vers le chantier.
- *
- * TROIS CAS, DANS CET ORDRE, ET L'ORDRE EST LE FOND DU SUJET
- * Les coordonnées du **bâtiment** d'abord : c'est l'adresse permanente de
- * l'ascenseur, celle vers laquelle on conduit. Les coordonnées de **signalement**
- * ensuite — l'endroit d'où le client a signalé la panne, souvent le même
- * immeuble, et de loin préférable à rien. Une **recherche sur l'adresse** en
- * dernier : elle ne place aucun point, elle ouvre une recherche, ce qui est la
- * seule chose honnête à faire quand on ne sait pas où c'est. Et rien du tout
- * quand il n'y a même pas d'adresse — une ligne vide vaut mieux qu'un lien qui
- * ouvre une carte au hasard.
- *
- * La distinction entre les deux premiers importe peu au technicien qui part
- * travailler, et c'est pour ça qu'ils sont traités de la même façon ici. Elle
- * importe beaucoup à la carte, où les deux ne sont jamais confondus — voir le
- * commentaire de `reportedLatitude` dans `prisma/schema.prisma`.
- */
-function navigationLine(order: AssignmentOrder): string | null {
-  const building = order.elevator.building;
-
-  const site = readCoordinates(building);
-  if (site) {
-    return (
-      "Itinéraire : https://www.google.com/maps/dir/?api=1&destination=" +
-      `${site.latitude},${site.longitude}`
-    );
-  }
-
-  const reported = readCoordinates({
-    latitude: order.reportedLatitude,
-    longitude: order.reportedLongitude,
-  });
-  if (reported) {
-    return (
-      "Itinéraire : https://www.google.com/maps/dir/?api=1&destination=" +
-      `${reported.latitude},${reported.longitude}`
-    );
-  }
-
-  const address = building.address?.trim();
-  if (address) {
-    return (
-      "Rechercher l'adresse : https://www.google.com/maps/search/?api=1&query=" +
-      encodeURIComponent(`${address}, ${building.name}`)
-    );
-  }
-
-  return null;
-}
-
-/**
- * Le lien vers le portail, quand il pointe quelque part d'utile.
- *
- * Omis sur `localhost` : en développement, `NEXTAUTH_URL` vaut
- * `http://localhost:3000`, et un lien qui promet d'ouvrir l'application sur un
- * téléphone pour n'ouvrir rien est pire que pas de lien. En production c'est
- * l'adresse publique du tunnel, et là il est vraiment utile.
- */
-function portalLine(): string | null {
-  const raw = process.env.NEXTAUTH_URL?.trim();
-  if (!raw) return null;
-  if (/localhost|127\.0\.0\.1|\[::1\]/i.test(raw)) return null;
-  return `Application : ${raw.replace(/\/+$/, "")}/technicien`;
-}
-
 // ─── Le message ─────────────────────────────────────────────
 
 /**
- * Le texte envoyé au technicien.
+ * Le texte envoyé au technicien — miroir exact de la carte de la cloche.
  *
- * Exporté pour être lisible et testable sans envoyer quoi que ce soit — c'est
- * la seule partie de cette chaîne qu'on peut vérifier avec certitude avant
- * qu'Evolution soit installée, et c'est celle qui compte pour celui qui la lit.
+ * Les deux surfaces lisent les mêmes trois champs (priorité, site + code,
+ * signalement) et doivent dire la même chose : une alerte qui annonce « URGENT »
+ * dans l'application et un message WhatsApp qui commence par « NOUVELLE MISSION »
+ * apprennent au technicien à ne plus faire confiance à l'une des deux.
+ *
+ * Le gras est écrit avec les astérisques simples de WhatsApp (`*texte*`), pas
+ * avec le `**` du markdown : le second s'affiche littéralement sur un téléphone.
+ *
+ * Exporté pour être lisible et testable sans envoyer quoi que ce soit.
  */
 export function assignmentMessage(order: AssignmentOrder): string {
   const building = order.elevator.building;
-  const lines: string[] = [];
-
-  lines.push(`NOUVEAU BON DE TRAVAIL — ${order.orderNumber}`);
-  lines.push(`Intervention : ${enumLabel(order.type)}`);
-  lines.push("");
-  lines.push(`${order.elevator.elevatorCode} — ${building.name}`);
-  if (building.address?.trim()) lines.push(building.address.trim());
-  lines.push(`Objet : ${order.title}`);
-
-  const navigation = navigationLine(order);
-  if (navigation) {
-    lines.push("");
-    lines.push(navigation);
-  }
+  const priority = order.priority;
+  const urgent =
+    priority === "CRITICAL" ||
+    priority === "HIGH" ||
+    priority === "EMERGENCY";
+  const light = urgent ? "🔴" : priority === "MEDIUM" ? "🟠" : "🟢";
 
   /**
-   * Le problème, tel que le client l'a raconté.
-   *
-   * Ses mots d'abord, parce que « ça fait un bruit bizarre au 4e » situe mieux
-   * un technicien que n'importe quelle reformulation. Le code affiché par
-   * l'armoire ensuite, quand il y en a un : c'est ce qui transforme une
-   * description en diagnostic.
-   *
-   * Quand il n'y a pas d'incident à l'origine du bon — une visite préventive,
-   * par exemple — c'est la description du bon qui prend la place. Et quand il
-   * n'y a rien du tout, on le dit : un technicien qui sait qu'il ne sait rien
-   * appelle avant de partir, ce qui est exactement ce qu'on veut.
+   * Le motif, dans l'ordre où la cloche le choisit : les mots du client
+   * d'abord, la description du bon ensuite, l'objet en dernier recours.
    */
-  const problemBlock: string[] = [];
-  if (order.incident) {
-    if (order.incident.errorCode) {
-      problemBlock.push(
-        `Code affiché : ${order.incident.errorCode.code} — ${order.incident.errorCode.title}`
-      );
-    }
-    problemBlock.push(
-      order.incident.notes?.trim()
-        ? `Signalé par le client : ${order.incident.notes.trim()}`
-        : "Signalé par le client : aucune description fournie — appelez-le avant de partir."
-    );
-    problemBlock.push(`Incident : ${order.incident.incidentNumber}`);
-  } else if (order.description?.trim()) {
-    problemBlock.push(`Description : ${order.description.trim()}`);
-  } else {
-    problemBlock.push("Aucune description fournie pour ce bon.");
-  }
+  const description =
+    order.incident?.notes?.trim() ||
+    order.description?.trim() ||
+    order.title;
 
-  lines.push("");
-  lines.push(...problemBlock);
+  /**
+   * Le lieu exact, avec l'adresse du site en repli.
+   *
+   * Sur un bon ancien, ou créé par le moteur préventif sans complément, la
+   * seule adresse connue est celle de l'immeuble. On ne laisse jamais une
+   * ligne vide : le technicien doit pouvoir partir avec ce message seul.
+   */
+  const location =
+    order.interventionAddress?.trim() ||
+    [building.address, building.city, order.elevator.installationLocation]
+      .filter(Boolean)
+      .join(", ");
 
-  const portal = portalLine();
-  if (portal) {
-    lines.push("");
-    lines.push(portal);
-  }
+  const base = (
+    process.env.NEXTAUTH_URL?.trim() || "http://localhost:3000"
+  ).replace(/\/+$/, "");
 
-  return lines.join("\n");
+  return [
+    urgent
+      ? "🚨 *[URGENT] NOUVELLE MISSION ASSIGNÉE*"
+      : "📋 *NOUVELLE MISSION ASSIGNÉE*",
+    `${light} *Priorité :* ${enumLabel(priority)}`,
+    `🏢 *Site :* ${building.name} - ${building.address}`,
+    `📍 *Lieu exact :* ${location}`,
+    `🔑 *Code d'accès :* ${building.accessCode?.trim() || "Non communiqué"}`,
+    `📋 *Signalement :* ${description}`,
+    `📲 *Ouvrir le bon :* ${base}/technicien`,
+  ].join("\n");
 }
 
 // ─── L'envoi ────────────────────────────────────────────────
@@ -313,6 +238,23 @@ export async function notifyTechnicianOfWorkOrder(
     if (!order?.assignedTo) {
       return { attempted: false, delivered: false };
     }
+
+    /**
+     * La notification in-app, écrite avant l'envoi WhatsApp.
+     *
+     * C'est elle qui alimente la cloche du portail terrain et le badge des
+     * affectations ; le message WhatsApp n'est qu'un doublon hors application.
+     * L'écrire en premier garantit qu'une passerelle muette ne laisse pas le
+     * technicien sans rien — `notify` ne lève jamais.
+     */
+    await notify({
+      userId: order.assignedTo.id,
+      title: `Nouvelle intervention — ${order.orderNumber}`,
+      message: `${order.elevator.elevatorCode} · ${order.elevator.building.name} — ${order.title}`,
+      type: "ASSIGNMENT",
+      linkUrl: "/technicien",
+      workOrderId: order.id,
+    });
 
     const result = await sendWhatsApp(
       order.assignedTo.phone,

@@ -47,6 +47,12 @@ import type { PartRequirementStatus } from "@/types";
  * exactement la même fonction. Un écran qui proposerait une action que la route
  * refuse est un défaut que ce dépôt corrige chaque fois qu'il le rencontre — et
  * la seule façon de ne pas le réintroduire est de n'écrire la règle qu'une fois.
+ *
+ * SANS CLÉS MAGASIN, L'ÉCRAN NE SE BLOQUE PAS
+ * Hors production, l'absence des trois variables bascule l'écran en
+ * démonstration : catalogue fictif, envois simulés, bandeau d'information. Le
+ * refus de configuration reste connu (`configRefusal`), mais il n'interdit plus
+ * rien — c'est `demoMode` qui décide, et lui seul vient du serveur.
  */
 
 interface PartRow {
@@ -137,6 +143,14 @@ export default function MagasinierPage() {
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [configRefusal, setConfigRefusal] = useState<string | null>(null);
   const [configKnown, setConfigKnown] = useState(false);
+  /**
+   * La liaison réelle est absente, et la démonstration prend le relais.
+   *
+   * Distinct de `configRefusal` : le refus reste vrai — les variables manquent
+   * — mais il n'est plus un blocage. L'écran affiche alors une information
+   * souple, et les envois répondent une simulation au lieu d'échouer.
+   */
+  const [demoMode, setDemoMode] = useState(false);
   /** Le catalogue du magasin, pour choisir l'article de chaque demande. */
   const [articles, setArticles] = useState<StockArticle[]>([]);
   const [catalogueError, setCatalogueError] = useState<string | null>(null);
@@ -182,6 +196,7 @@ export default function MagasinierPage() {
       if (!res.ok) return;
       const json = await res.json();
       setConfigRefusal(json?.data?.refusal ?? null);
+      setDemoMode(json?.data?.demo === true);
       setConfigKnown(true);
     } catch {
       // Silencieux : l'écran reste utilisable, seul l'avertissement manque.
@@ -191,9 +206,9 @@ export default function MagasinierPage() {
   /**
    * Le catalogue du magasin.
    *
-   * Chargé une fois, et seulement si la liaison est configurée : sans
-   * identifiants, l'appel échouerait avec un message qui n'apprendrait rien de
-   * plus que le bandeau déjà affiché.
+   * Chargé une fois au montage. Sans identifiants Magasin, la route sert le
+   * catalogue fictif et marque la réponse `demo: true` : le sélecteur se remplit
+   * quand même, et l'utilisateur peut essayer le parcours complet.
    */
   const loadCatalogue = useCallback(async () => {
     setCatalogueError(null);
@@ -206,6 +221,12 @@ export default function MagasinierPage() {
         );
       }
       setArticles(Array.isArray(json?.data?.articles) ? json.data.articles : []);
+      /**
+       * La route du catalogue porte le même marqueur. Le lire ici couvre le cas
+       * où l'état de la liaison n'aurait pas répondu : l'écran sait quand même
+       * qu'il travaille sur un catalogue fictif.
+       */
+      if (json?.data?.demo === true) setDemoMode(true);
     } catch (e) {
       setCatalogueError(
         e instanceof Error ? e.message : "Catalogue du magasin indisponible."
@@ -309,7 +330,12 @@ export default function MagasinierPage() {
         );
       }
 
-      const data = body?.data ?? {};
+      /**
+       * Deux formes selon l'issue : un envoi réel rend `{ data: { … } }`, la
+       * simulation rend son acquittement à la racine (`{ success, demo, … }`).
+       * Normaliser ici évite de lire `undefined` sur l'un des deux chemins.
+       */
+      const data = body?.data ?? body ?? {};
       const results: Outcome[] = Array.isArray(data.results) ? data.results : [];
       setOutcomes(results);
 
@@ -323,19 +349,31 @@ export default function MagasinierPage() {
        * « 4 traitées » cacherait que deux ont échoué, et c'est précisément ce
        * qu'il faut voir : la transmission est un appel réseau, et un échec
        * partiel est le cas normal, pas l'exception.
+       *
+       * En démonstration, la route fournit son propre acquittement — celui qui
+       * dit « simulée ». Le composer à partir des compteurs le rendrait
+       * identique à un envoi réel : c'est exactement la confusion à éviter.
        */
       setNotice(
-        [
-          sent > 0 ? `${sent} transmise${sent > 1 ? "s" : ""}` : null,
-          failed > 0 ? `${failed} en échec` : null,
-          skipped > 0 ? `${skipped} ignorée${skipped > 1 ? "s" : ""}` : null,
-        ]
-          .filter(Boolean)
-          .join(" · ") || "Rien n'a été transmis."
+        data.demo === true && typeof data.message === "string"
+          ? data.message
+          : [
+              sent > 0 ? `${sent} transmise${sent > 1 ? "s" : ""}` : null,
+              failed > 0 ? `${failed} en échec` : null,
+              skipped > 0 ? `${skipped} ignorée${skipped > 1 ? "s" : ""}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || "Rien n'a été transmis."
       );
 
       setSelected(new Set());
-      await load({ silent: true });
+
+      /**
+       * Rien n'a été écrit en démonstration : relire la liste rendrait les
+       * mêmes lignes, et laisserait croire que l'envoi n'a pas eu lieu. Seul
+       * l'acquittement change, et il suffit à dire ce qui s'est passé.
+       */
+      if (data.demo !== true) await load({ silent: true });
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "L'envoi a échoué.");
     } finally {
@@ -355,10 +393,31 @@ export default function MagasinierPage() {
     return <ErrorState message={error} onRetry={load} />;
   }
 
-  const cannotTransmit = configKnown && configRefusal !== null;
+  /**
+   * Le refus ne bloque que s'il n'existe pas de repli. En démonstration, la
+   * configuration manque toujours — mais l'écran, lui, fonctionne.
+   */
+  const cannotTransmit = configKnown && configRefusal !== null && !demoMode;
 
   return (
     <div className="space-y-6">
+      {/*
+        En démonstration, l'information remplace l'avertissement : les clés
+        manquent, mais le parcours est utilisable de bout en bout. Un bandeau
+        d'alerte ici contredirait le bouton d'envoi, qui, lui, fonctionne.
+      */}
+      {demoMode && (
+        <div className="rounded-xl border border-sky-300 bg-sky-50 p-4 dark:border-sky-800 dark:bg-sky-950/40">
+          <p className="flex items-start gap-2 text-sm font-medium text-sky-900 dark:text-sky-200">
+            <PackageCheck className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+            <span>
+              Mode démonstration : catalogue et transmissions simulés (clés API
+              Magasin non configurées).
+            </span>
+          </p>
+        </div>
+      )}
+
       {/*
         L'avertissement vient en tête et avant les onglets : tant que la liaison
         n'est pas configurée, rien de ce que l'écran propose ne peut aboutir, et
@@ -376,7 +435,7 @@ export default function MagasinierPage() {
         </div>
       )}
 
-      {catalogueError && (
+      {catalogueError && !demoMode && (
         <div className="rounded-xl border border-red-300 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/40">
           <p className="flex items-start gap-2 text-sm font-medium text-red-900 dark:text-red-200">
             <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
@@ -530,10 +589,19 @@ export default function MagasinierPage() {
               ? "Aucun besoin à transmettre"
               : "Rien dans cette vue"
           }
-          hint={
+          description={
             filter === "todo"
-              ? "Un besoin arrive ici une fois le bureau l'a validé. Une demande en attente de décision se valide depuis l'écran Pièces & Commandes."
+              ? "Un besoin arrive ici une fois que le bureau l'a validé. Tant qu'aucun besoin n'est transmis, le magasin central n'a rien à préparer."
               : "Choisissez une autre vue pour voir les autres états."
+          }
+          action={
+            filter === "todo"
+              ? {
+                  label: "Voir les pièces à valider",
+                  href: "/administration/pieces",
+                  variant: "secondary",
+                }
+              : undefined
           }
         />
       ) : (

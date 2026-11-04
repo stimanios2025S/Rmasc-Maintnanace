@@ -79,6 +79,18 @@ export const TECHNICAL_SHEET_SECTIONS: readonly TechnicalSheetSection[] = [
         hint: "Nom du client ou de la copropriété.",
       },
       {
+        name: "contactPhone",
+        label: "Téléphone",
+        placeholder: "ex. : 0661 44 22 10",
+        hint: "Numéro à joindre pour organiser la visite.",
+      },
+      {
+        name: "buildingName",
+        label: "Immeuble",
+        placeholder: "ex. : Tour El Bahia",
+        hint: "Nom de l'immeuble, distinct de l'adresse.",
+      },
+      {
         name: "location",
         label: "Adresse / Localisation",
         placeholder: "ex. : 8 avenue Aouati Mostefa, Constantine",
@@ -91,7 +103,7 @@ export const TECHNICAL_SHEET_SECTIONS: readonly TechnicalSheetSection[] = [
       },
       {
         name: "numberOfFloors",
-        label: "Nombre d'étages",
+        label: "Nombre d'étages / escales",
         placeholder: "ex. : 6",
       },
       {
@@ -121,6 +133,16 @@ export const TECHNICAL_SHEET_SECTIONS: readonly TechnicalSheetSection[] = [
         label: "Type de machine",
         placeholder: "Gearless / Gearbox",
       },
+      {
+        name: "brand",
+        label: "Marque",
+        placeholder: "ex. : Otis, KONE, Schindler…",
+      },
+      {
+        name: "model",
+        label: "Modèle",
+        placeholder: "ex. : Gen3 Nova",
+      },
       { name: "mainBreaker", label: "Disjoncteur principal" },
       { name: "plugSwitch", label: "Prise interrupteur" },
       {
@@ -135,8 +157,8 @@ export const TECHNICAL_SHEET_SECTIONS: readonly TechnicalSheetSection[] = [
       },
       {
         name: "speedVariator",
-        label: "Variateur de vitesse",
-        hint: "En kW.",
+        label: "Type de variateur",
+        hint: "En kW, ou le type constructeur.",
       },
       { name: "arlCard", label: "Carte ARL" },
       { name: "inverter", label: "Onduleur" },
@@ -263,6 +285,31 @@ export const OPTIONAL_FIELD_NAMES: readonly string[] =
   TECHNICAL_SHEET_SECTIONS.flatMap((section) =>
     section.fields.filter((field) => !isRequiredField(field.name)).map((f) => f.name)
   );
+
+/**
+ * Les champs que l'équipe technique peut corriger après la visite.
+ *
+ * Les quatre champs obligatoires viennent du client, mais deux d'entre eux —
+ * la charge et le nombre de niveaux — sont aussi des mesures de terrain : une
+ * valeur déclarée de mémoire se corrige sur la plaque constructeur. Les deux
+ * autres (`clientName`, `location`) restent hors de portée de cette route :
+ * réécrire l'identité du demandeur effacerait sa déclaration sans trace.
+ */
+export const EDITABLE_REQUIRED_FIELD_NAMES = [
+  "weightCapacity",
+  "numberOfFloors",
+] as const;
+
+/** Tous les noms que la complétion d'une fiche accepte. */
+export const EDITABLE_FIELD_NAMES: readonly string[] = [
+  ...OPTIONAL_FIELD_NAMES,
+  ...EDITABLE_REQUIRED_FIELD_NAMES,
+];
+
+/** Vrai quand une colonne est modifiable depuis la fiche technique. */
+export function isEditableField(name: string): boolean {
+  return EDITABLE_FIELD_NAMES.includes(name);
+}
 
 /** Every field name the form submits, required ones first. */
 export const ALL_FIELD_NAMES: readonly string[] = [

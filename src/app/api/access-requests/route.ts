@@ -33,6 +33,8 @@ import {
 } from "@/lib/api/http";
 import { requireRole } from "@/lib/api/guard";
 import { ACCESS_REQUEST_STATUSES, ADMIN_ROLES } from "@/types";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoAccessRequests } from "@/lib/demo/registers";
 import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -163,6 +165,28 @@ export async function GET(request: NextRequest) {
     // l'écran.
     return NextResponse.json({ data: rows, total: rows.length });
   } catch (error) {
+    /**
+     * Sans base, le registre se lit dans la fixture.
+     *
+     * La page répondait 503 et affichait « Le registre a répondu 503 » : un
+     * écran de démonstration qui ne montre aucune demande ne permet ni de lire
+     * le parcours, ni d'essayer une décision. Le repli est en lecture
+     * seulement ; l'écriture est acquittée par la route de décision.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("GET /api/access-requests");
+      const raw = request.nextUrl.searchParams.get("status");
+      const demoStatus =
+        raw && (ACCESS_REQUEST_STATUSES as readonly string[]).includes(raw)
+          ? raw
+          : null;
+      const rows = demoAccessRequests(demoStatus);
+      return NextResponse.json({
+        data: rows,
+        total: rows.length,
+        demo: true,
+      });
+    }
     return handleRouteError(error);
   }
 }

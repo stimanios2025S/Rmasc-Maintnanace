@@ -65,6 +65,60 @@ export async function GET(request: NextRequest) {
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
+        /**
+         * Le bon concerné, pour que la cloche puisse dire de quoi il s'agit
+         * sans ouvrir un écran : priorité (feu), immeuble, adresse, code
+         * d'accès et motif. Scopé par `userId` plus haut, donc ces détails ne
+         * sortent que vers le destinataire de la notification.
+         */
+        select: {
+          id: true,
+          userId: true,
+          title: true,
+          message: true,
+          type: true,
+          isRead: true,
+          linkUrl: true,
+          workOrderId: true,
+          createdAt: true,
+          workOrder: {
+            select: {
+              id: true,
+              priority: true,
+              status: true,
+              title: true,
+              description: true,
+              elevator: {
+                select: {
+                  elevatorCode: true,
+                  building: {
+                    select: {
+                      name: true,
+                      city: true,
+                      address: true,
+                      accessCode: true,
+                    },
+                  },
+                },
+              },
+              incident: {
+                select: {
+                  /**
+                   * L'identité et l'état de la panne, en plus de son motif :
+                   * la cloche du bureau peut dispatcher directement une panne
+                   * encore en attente, et il lui faut de quoi ouvrir le
+                   * sélecteur sans relire le tableau des incidents.
+                   */
+                  id: true,
+                  incidentNumber: true,
+                  status: true,
+                  notes: true,
+                  errorCode: { select: { code: true, title: true } },
+                },
+              },
+            },
+          },
+        },
       }),
     ]);
 

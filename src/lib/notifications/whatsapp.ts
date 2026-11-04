@@ -99,6 +99,15 @@ interface WhatsAppConfig {
   apiKey?: string;
   instance?: string;
   defaultCountryCode?: string;
+  /**
+   * Twilio (API Messages). Lu directement dans `process.env` plutôt que par
+   * `getEnv` : le schéma d'environnement valide les variables dont
+   * l'application dépend, et Twilio est un fournisseur optionnel — une
+   * variable absente ne doit pas faire échouer le démarrage.
+   */
+  twilioAccountSid?: string;
+  twilioAuthToken?: string;
+  twilioFrom?: string;
 }
 
 /**
@@ -118,16 +127,35 @@ function readConfig(): WhatsAppConfig {
       apiKey: env.EVOLUTION_API_KEY,
       instance: env.EVOLUTION_INSTANCE,
       defaultCountryCode: env.WHATSAPP_DEFAULT_COUNTRY_CODE,
+      twilioAccountSid: process.env.TWILIO_ACCOUNT_SID?.trim() || undefined,
+      twilioAuthToken: process.env.TWILIO_AUTH_TOKEN?.trim() || undefined,
+      twilioFrom: process.env.TWILIO_WHATSAPP_FROM?.trim() || undefined,
     };
   } catch {
-    return {};
+    return {
+      twilioAccountSid: process.env.TWILIO_ACCOUNT_SID?.trim() || undefined,
+      twilioAuthToken: process.env.TWILIO_AUTH_TOKEN?.trim() || undefined,
+      twilioFrom: process.env.TWILIO_WHATSAPP_FROM?.trim() || undefined,
+      defaultCountryCode:
+        process.env.WHATSAPP_DEFAULT_COUNTRY_CODE?.trim() || undefined,
+    };
   }
 }
 
-/** Vrai quand les trois variables qui font fonctionner l'envoi sont présentes. */
+function isTwilioConfigured(config: WhatsAppConfig): boolean {
+  return Boolean(
+    config.twilioAccountSid && config.twilioAuthToken && config.twilioFrom
+  );
+}
+
+function isEvolutionConfigured(config: WhatsAppConfig): boolean {
+  return Boolean(config.baseUrl && config.apiKey && config.instance);
+}
+
+/** Vrai quand au moins un fournisseur est prêt (Twilio prioritaire). */
 export function isWhatsAppConfigured(): boolean {
   const config = readConfig();
-  return Boolean(config.baseUrl && config.apiKey && config.instance);
+  return isTwilioConfigured(config) || isEvolutionConfigured(config);
 }
 
 /** Le numéro de l'astreinte, ou null si le déploiement n'en a pas choisi. */
@@ -201,42 +229,110 @@ async function readErrorDetail(response: Response): Promise<string> {
  * compensation côté responsable existe, et la faire passer pour une remise
  * garantie reviendrait à s'en passer.
  */
-export async function sendWhatsApp(
+/**
+ * Consigne le message qu'on n'a pas pu remettre.
+ *
+ * Le libellé et la forme sont ceux demandés par l'exploitation : un message
+ * non parti doit rester lisible dans les journaux, avec son corps complet, pour
+ * qu'on puisse le relire à voix haute au téléphone. Le numéro est masqué ; le
+ * corps, lui, contient le code d'accès du site, et c'est précisément ce qu'on
+ * veut pouvoir retrouver ici quand aucun fournisseur n'est branché.
+ */
+function logFallbackPayload(
   to: string | null | undefined,
+  text: string,
+  cause: string
+): void {
+  console.log("[WhatsApp Notification Sent]", {
+    to: to && to.trim() ? maskPhone(to) : null,
+    cause,
+    body: text,
+  });
+}
+
+/** Twilio d'abord quand il est configuré, Evolution sinon. */
+function providerOf(
+  config: WhatsAppConfig
+): "twilio" | "evolution" | null {
+  if (isTwilioConfigured(config)) return "twilio";
+  if (isEvolutionConfigured(config)) return "evolution";
+  return null;
+}
+
+async function sendViaTwilio(
+  config: WhatsAppConfig,
+  number: string,
   text: string
 ): Promise<WhatsAppResult> {
-  const config = readConfig();
-
-  if (!config.baseUrl || !config.apiKey || !config.instance) {
-    warnNotSent(to, text, "aucune instance Evolution API n'est configurée");
-    return { delivered: false, reason: "no-transport" };
-  }
-
-  if (!to || to.trim().length === 0) {
-    warnNotSent(to, text, "aucun numéro de téléphone enregistré");
-    return { delivered: false, reason: "no-recipient" };
-  }
-
-  const number = toWhatsAppNumber(to, config.defaultCountryCode);
-  if (!number) {
-    warnNotSent(
-      to,
-      text,
-      "numéro inutilisable : ni forme internationale, ni pays de rattachement " +
-        "déclaré (WHATSAPP_DEFAULT_COUNTRY_CODE)"
-    );
-    return { delivered: false, reason: "bad-number" };
-  }
+  const sid = config.twilioAccountSid ?? "";
+  const fromRaw = (config.twilioFrom ?? "").replace(/^whatsapp:/i, "").trim();
+  const from = `whatsapp:${
+    fromRaw.startsWith("+") ? fromRaw : `+${fromRaw.replace(/\D/g, "")}`
+  }`;
 
   try {
     const response = await fetch(
-      `${config.baseUrl}/message/sendText/${encodeURIComponent(config.instance)}`,
+      `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${sid}:${config.twilioAuthToken ?? ""}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        // `toWhatsAppNumber` renvoie des chiffres seuls ; Twilio attend
+        // l'E.164 avec son « + » et le préfixe `whatsapp:`.
+        body: new URLSearchParams({
+          From: from,
+          To: `whatsapp:+${number}`,
+          Body: text,
+        }).toString(),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        cache: "no-store",
+      }
+    );
+
+    if (!response.ok) {
+      const detail = await readErrorDetail(response);
+      console.error(
+        `[whatsapp] Twilio a refusé (${response.status}) pour ` +
+          `${maskPhone(number)} : ${detail}`
+      );
+      return {
+        delivered: false,
+        reason: "rejected",
+        status: response.status,
+        detail,
+      };
+    }
+
+    return { delivered: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[whatsapp] Twilio injoignable pour ${maskPhone(number)} : ${message}`
+    );
+    return { delivered: false, reason: "transport-error", detail: message };
+  }
+}
+
+async function sendViaEvolution(
+  config: WhatsAppConfig,
+  number: string,
+  text: string
+): Promise<WhatsAppResult> {
+  try {
+    const response = await fetch(
+      `${config.baseUrl}/message/sendText/${encodeURIComponent(
+        config.instance ?? ""
+      )}`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           // Evolution authentifie par en-tête, pas par jeton porteur.
-          apikey: config.apiKey,
+          apikey: config.apiKey ?? "",
         },
         body: JSON.stringify({ number, text }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -270,6 +366,52 @@ export async function sendWhatsApp(
   }
 }
 
+export async function sendWhatsApp(
+  to: string | null | undefined,
+  text: string
+): Promise<WhatsAppResult> {
+  const config = readConfig();
+  const provider = providerOf(config);
+
+  if (!provider) {
+    const cause =
+      "aucun fournisseur WhatsApp configuré (Twilio ou Evolution API)";
+    warnNotSent(to, text, cause);
+    logFallbackPayload(to, text, cause);
+    return { delivered: false, reason: "no-transport" };
+  }
+
+  if (!to || to.trim().length === 0) {
+    const cause = "aucun numéro de téléphone enregistré";
+    warnNotSent(to, text, cause);
+    logFallbackPayload(to, text, cause);
+    return { delivered: false, reason: "no-recipient" };
+  }
+
+  const number = toWhatsAppNumber(to, config.defaultCountryCode);
+  if (!number) {
+    const cause =
+      "numéro inutilisable : ni forme internationale, ni pays de rattachement " +
+      "déclaré (WHATSAPP_DEFAULT_COUNTRY_CODE)";
+    warnNotSent(to, text, cause);
+    logFallbackPayload(to, text, cause);
+    return { delivered: false, reason: "bad-number" };
+  }
+
+  const result =
+    provider === "twilio"
+      ? await sendViaTwilio(config, number, text)
+      : await sendViaEvolution(config, number, text);
+
+  // Un refus ou une panne laisse le corps du message dans les journaux : c'est
+  // la seule trace qui permette de prévenir le technicien par un autre canal.
+  if (!result.delivered) {
+    logFallbackPayload(number, text, result.reason ?? "transport-error");
+  }
+
+  return result;
+}
+
 /**
  * L'alerte d'astreinte au responsable.
  *
@@ -298,18 +440,25 @@ export function logWhatsAppTransport(): void {
   const config = readConfig();
   const recipient = adminPhoneNumber();
 
-  if (!config.baseUrl || !config.apiKey || !config.instance) {
+  const provider = providerOf(config);
+
+  if (!provider) {
     console.warn(
-      "[whatsapp] Notifications WhatsApp DÉSACTIVÉES : EVOLUTION_API_URL, " +
-        "EVOLUTION_API_KEY et EVOLUTION_INSTANCE ne sont pas toutes définies. " +
-        "Les messages sont journalisés, pas envoyés. Voir .env.example."
+      "[whatsapp] Notifications WhatsApp DÉSACTIVÉES : aucun fournisseur " +
+        "configuré (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / " +
+        "TWILIO_WHATSAPP_FROM, ou EVOLUTION_API_URL / EVOLUTION_API_KEY / " +
+        "EVOLUTION_INSTANCE). Les messages sont journalisés, pas envoyés. " +
+        "Voir .env.example."
     );
     return;
   }
 
   console.warn(
-    `[whatsapp] Evolution API configurée (instance « ${config.instance} ») — ` +
-      "les bons de travail affectés partent vers le téléphone du technicien."
+    provider === "twilio"
+      ? "[whatsapp] Twilio configuré — les bons de travail affectés partent " +
+          "vers le téléphone du technicien."
+      : `[whatsapp] Evolution API configurée (instance « ${config.instance} ») — ` +
+          "les bons de travail affectés partent vers le téléphone du technicien."
   );
 
   if (!recipient) {

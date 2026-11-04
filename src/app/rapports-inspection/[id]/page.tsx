@@ -312,7 +312,7 @@ export default function InspectionReportPage() {
             </dd>
           </div>
           <div>
-            <dt className="text-gray-500">Bon de travail</dt>
+            <dt className="text-gray-500">Intervention</dt>
             <dd className="font-mono text-gray-900">
               {report.workOrder.orderNumber}
             </dd>

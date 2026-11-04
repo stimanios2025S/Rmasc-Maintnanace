@@ -2,6 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db/prisma";
+import type { UserRole } from "@/types";
 
 /**
  * A structurally valid bcrypt hash (60 chars: `$2a$12$` + 22-char salt +
@@ -98,18 +99,57 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.role = user.role;
         token.id = user.id;
-        // Copied onto the token at sign-in and never refreshed, so an account
-        // whose type an administrator changes keeps its old portal until the
-        // token expires (24h) or the user signs out and back in. Accepted
-        // deliberately: the alternative is a database read on every request
-        // that touches the session, and `?? null` means an old token issued
-        // before this claim existed reads as contracted — the behaviour those
-        // sessions already had.
         token.clientType = user.clientType ?? null;
+        token.isActive = true;
+        return token;
       }
+
+      /**
+       * Un jeton existant est revérifié à chaque lecture de session.
+       *
+       * La stratégie est JWT : sans cette lecture, désactiver un compte ou
+       * changer son rôle ne prenait effet qu'à l'expiration du cookie, soit
+       * jusqu'à 24 h. Le prix est une requête par lecture de session ; c'est
+       * le compromis retenu pour que « désactivé » veuille dire désactivé.
+       */
+      const dbUser = token.id
+        ? await prisma.user.findUnique({
+            where: { id: token.id },
+            select: { isActive: true, role: true, clientType: true },
+          })
+        : null;
+
+      if (!dbUser || dbUser.isActive === false) {
+        token.isActive = false;
+        token.id = "";
+        token.role = "" as UserRole;
+        token.clientType = null;
+        // Expire le cookie : la requête suivante ne présentera plus ce jeton.
+        token.exp = 0;
+        return token;
+      }
+
+      token.isActive = true;
+      token.role = dbUser.role;
+      token.clientType = dbUser.clientType ?? null;
       return token;
     },
     async session({ session, token }) {
+      /**
+       * Une session invalidée reste un objet `Session` valide — le type
+       * augmenté exige `user` — mais sans identité exploitable : `id` et
+       * `role` sont vides, et `requireSession` refuse cet état.
+       */
+      if (token.isActive === false || !token.id || !token.role) {
+        if (session.user) {
+          session.user.id = "";
+          session.user.role = "" as UserRole;
+          session.user.clientType = null;
+        }
+        session.expires = new Date(0).toISOString();
+        return session;
+      }
+
       if (session.user) {
         session.user.role = token.role;
         session.user.id = token.id;

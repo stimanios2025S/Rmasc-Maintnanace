@@ -17,12 +17,20 @@
  * client : un seul compte, et rien d'autre.
  *
  * ADMIN UNIQUEMENT, comme le reste du module client.
+ *
+ * ELLE A UN REPLI DE DÉMONSTRATION
+ * Sans base, `GET /api/clients/:id` renvoie la fiche dérivée de `demoWorld()`
+ * — compte, immeubles, appareils et état des accès — avec `demo: true` et un
+ * statut 200. La liste des clients servait déjà une fixture ; une ligne
+ * cliquable qui menait à un 503 était le défaut que ce repli supprime.
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { handleRouteError, jsonOk, notFound } from "@/lib/api/http";
 import { requireRole } from "@/lib/api/guard";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoClientDetail } from "@/lib/demo/registers";
 
 type Params = { params: { id: string } };
 
@@ -72,6 +80,7 @@ export async function GET(request: NextRequest, { params }: Params) {
                 elevatorCode: true,
                 brand: true,
                 model: true,
+                installationLocation: true,
                 serialNumber: true,
                 motorType: true,
                 controllerType: true,
@@ -150,6 +159,31 @@ export async function GET(request: NextRequest, { params }: Params) {
       attachableTruncated: attachable.length === ATTACHABLE_LIMIT,
     });
   } catch (error) {
+    /**
+     * Sans PostgreSQL, la fiche répondait 503 et l'écran « Gérer le parc et
+     * l'accès » s'ouvrait sur une erreur — alors que la liste des clients, elle,
+     * servait déjà sa fixture. Une ligne cliquable qui mène à une panne est
+     * pire qu'une ligne absente.
+     *
+     * Le repli couvre les trois besoins de l'écran d'un seul objet : le compte,
+     * son parc complet (immeubles et appareils), et l'état de ses accès. Le
+     * marqueur `demo: true` est à la racine, comme dans les autres routes de
+     * démonstration : l'écran l'affiche sans avoir à le deviner.
+     *
+     * Un identifiant inconnu reste un 404 : la fixture ne fabrique pas un
+     * compte pour n'importe quelle URL.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("GET /api/clients/[id]");
+      const { searchParams } = new URL(request.url);
+      const detail = demoClientDetail(params.id, searchParams.get("q"));
+      if (!detail) {
+        return handleRouteError(
+          notFound(`Compte client introuvable : ${params.id}`)
+        );
+      }
+      return NextResponse.json({ data: detail, demo: true });
+    }
     return handleRouteError(error);
   }
 }

@@ -24,7 +24,7 @@
  * is already honoured by the sign-in path.
  */
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
@@ -38,6 +38,8 @@ import {
 import { requireRole } from "@/lib/api/guard";
 import { generatePassword } from "@/lib/auth/passwords";
 import { CLIENT_TYPES, SLA_TIERS } from "@/types";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoClientAccounts } from "@/lib/demo/registers";
 
 /** Matches the cost factor the seed uses, so both produce interchangeable hashes. */
 const BCRYPT_ROUNDS = 12;
@@ -157,18 +159,38 @@ const CreateClientSchema = z
   .strict();
 
 /**
- * Only the contract status is editable.
+ * Les deux champs de la fiche qui s'administrent : le type de contrat et
+ * l'activation du compte.
  *
- * It is the one field that decides which portal an account receives, so it is
- * the one an administrator is most likely to need to correct — and, unlike a
- * name or an e-mail, changing it cannot break how the customer signs in.
+ * Le premier décide du portail que le compte reçoit ; le second est
+ * l'interrupteur « Accès Portail Client » de la fiche. Ni un nom ni une adresse
+ * e-mail ne sont modifiables ici : changer l'un d'eux casse la façon dont le
+ * client se connecte, et ce n'est pas ce que l'écran demande.
  */
 const UpdateClientSchema = z
   .object({
     id: z.string().trim().min(1),
-    clientType: z.enum(CLIENT_TYPES),
+    /**
+     * Les deux champs sont facultatifs séparément, mais l'un des deux doit
+     * être présent : un PATCH vide n'est pas une erreur de saisie qu'on peut
+     * nommer, c'est un appel qui ne demande rien.
+     */
+    clientType: z.enum(CLIENT_TYPES).optional(),
+    /**
+     * Activer ou suspendre le compte.
+     *
+     * C'est le verbe de l'interrupteur de la fiche client. Il vivait déjà dans
+     * le modèle (`User.isActive`, honoré à la connexion) mais aucune route ne
+     * l'exposait : un administrateur n'avait, pour suspendre un accès, que la
+     * modification manuelle en base.
+     */
+    isActive: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.clientType !== undefined || value.isActive !== undefined,
+    { message: "Aucun champ à mettre à jour", path: ["isActive"] }
+  );
 
 // ─── Projections ────────────────────────────────────────────
 
@@ -190,6 +212,26 @@ const CLIENT_SELECT = {
   // and not only by a badge: a contracted client with no building is a data
   // problem worth seeing, and a non-contracted one never has any.
   _count: { select: { ownedBuildings: true, technicalSheets: true } },
+  /**
+   * Le parc du client, pour la vue d'ensemble de l'administration : quels
+   * immeubles, combien d'appareils, et dans quel état. Lu avec les comptes
+   * plutôt que par un appel par ligne — une liste de vingt clients ferait
+   * sinon vingt requêtes pour trois compteurs.
+   */
+  ownedBuildings: {
+    select: {
+      id: true,
+      name: true,
+      city: true,
+      contactPerson: true,
+      contactEmail: true,
+      contactPhone: true,
+      elevators: {
+        where: { isActive: true },
+        select: { status: true },
+      },
+    },
+  },
 } as const;
 
 // ─── GET ────────────────────────────────────────────────────
@@ -214,6 +256,24 @@ export async function GET(request: NextRequest) {
 
     return jsonOk({ clients, total: clients.length });
   } catch (error) {
+    /**
+     * Sans base, le sélecteur du formulaire de contrat se remplit depuis la
+     * fixture. Sans ce repli, la route répondait 503 et la liste déroulante
+     * « Choisir un client » restait vide sans qu'aucun message ne l'explique.
+     *
+     * Le filtre `clientType` est relu depuis la requête : il a été parsé dans
+     * le `try`, dont la portée ne couvre pas ce `catch`.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("GET /api/clients");
+      const { searchParams } = new URL(request.url);
+      const clientType = parseEnumParam(
+        searchParams,
+        "clientType",
+        CLIENT_TYPES
+      );
+      return NextResponse.json({ data: demoClientAccounts(clientType) });
+    }
     return handleRouteError(error);
   }
 }
@@ -344,7 +404,14 @@ export async function PATCH(request: NextRequest) {
 
     const client = await prisma.user.update({
       where: { id: parsed.id },
-      data: { clientType: parsed.clientType },
+      data: {
+        ...(parsed.clientType !== undefined
+          ? { clientType: parsed.clientType }
+          : {}),
+        ...(parsed.isActive !== undefined
+          ? { isActive: parsed.isActive }
+          : {}),
+      },
       select: CLIENT_SELECT,
     });
 

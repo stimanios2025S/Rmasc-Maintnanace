@@ -1,4 +1,5 @@
 import type { ElevatorStatus } from "@/types";
+import { TRAFFIC_LEVELS, type TrafficLevel } from "@/lib/ui/traffic";
 
 /**
  * Presentation tokens for an elevator's operational status.
@@ -6,6 +7,11 @@ import type { ElevatorStatus } from "@/types";
  * These used to be duplicated per screen, and the detail page had drifted to a
  * hardcoded green pill — a unit in CRITICAL_SHUTDOWN displayed the same green
  * badge as a healthy one. One definition, used everywhere, prevents that.
+ *
+ * Depuis la refonte UX, cette table ne choisit plus ses couleurs : elle les
+ * reçoit de `TRAFFIC_LEVELS`. Le vert/orange/rouge est désormais le même sur un
+ * ascenseur, un contrat et un incident — un utilisateur n'a qu'un code à
+ * apprendre.
  */
 export type StatusStyle = {
   /** Pill background + border. */
@@ -16,32 +22,24 @@ export type StatusStyle = {
   text: string;
 };
 
+function fromTraffic(level: TrafficLevel, dot?: string): StatusStyle {
+  const tone = TRAFFIC_LEVELS[level];
+  return {
+    bg: `${tone.bg} ${tone.border}`,
+    dot: dot ?? tone.dot,
+    text: tone.text,
+  };
+}
+
 export const ELEVATOR_STATUS_STYLES: Record<ElevatorStatus, StatusStyle> = {
-  OPERATIONAL: {
-    bg: "bg-green-50 border-green-200",
-    dot: "bg-green-500",
-    text: "text-green-700",
-  },
-  SERVICE_REQUIRED: {
-    bg: "bg-yellow-50 border-yellow-200",
-    dot: "bg-yellow-500",
-    text: "text-yellow-700",
-  },
-  ANOMALY_DETECTED: {
-    bg: "bg-orange-50 border-orange-200",
-    dot: "bg-orange-500",
-    text: "text-orange-700",
-  },
-  CRITICAL_SHUTDOWN: {
-    bg: "bg-red-50 border-red-200",
-    dot: "bg-red-500 animate-pulse",
-    text: "text-red-700",
-  },
-  OFFLINE: {
-    bg: "bg-gray-50 border-gray-200",
-    dot: "bg-gray-500",
-    text: "text-gray-700",
-  },
+  OPERATIONAL: fromTraffic("ok"),
+  SERVICE_REQUIRED: fromTraffic("warning"),
+  // Une anomalie est une dérive, pas un arrêt : orange, comme la vigilance.
+  ANOMALY_DETECTED: fromTraffic("warning"),
+  CRITICAL_SHUTDOWN: fromTraffic("danger", "bg-red-500 animate-pulse"),
+  // L'état d'une machine qui ne remonte rien n'est pas connu — gris, et la
+  // légende le dit, plutôt que de la peindre en vert ou en rouge.
+  OFFLINE: fromTraffic("neutral"),
 };
 
 /** Falls back to the OFFLINE tokens for any value the API does not recognise. */

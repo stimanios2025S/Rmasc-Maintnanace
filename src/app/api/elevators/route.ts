@@ -59,6 +59,13 @@ const CreateElevatorSchema = z
      */
     takeover: z.boolean().optional(),
     model: z.string().min(1, "Le modèle est obligatoire").max(100),
+    /**
+     * Où se trouve l'appareil dans son site : « Bâtiment A, 3e étage »,
+     * « Cage 2, local technique ». Facultatif — l'adresse de l'immeuble reste
+     * le lieu de repli — mais c'est ce complément qui rend l'adresse utile sur
+     * un site à plusieurs cages.
+     */
+    installationLocation: z.string().trim().max(300).optional(),
     serialNumber: z.string().max(100).optional(),
     installationDate: z.string().datetime().optional(),
     motorType: z.enum(MOTOR_TYPES),
@@ -68,6 +75,21 @@ const CreateElevatorSchema = z
       .max(10000),
     controllerType: z.enum(CONTROLLER_TYPES),
     floorsServed: z.number().int().positive().max(200),
+    /**
+     * Le relevé d'audit saisi au bureau, à la prise en charge.
+     *
+     * Consigné dans la description du bon d'inspection plutôt que dans une
+     * colonne à part : c'est le document que le technicien ouvre, et une
+     * remarque de sécurité qui vivrait sur un écran que le terrain ne consulte
+     * pas ne protégerait personne. Les photos suivent la même règle que
+     * partout ailleurs dans le produit — une URL vers le stockage du client,
+     * pas un téléversement que rien ne reçoit.
+     */
+    auditNotes: z.string().trim().max(2000).optional(),
+    auditPhotoUrls: z
+      .array(z.string().trim().url("Chaque photo doit être une URL valide."))
+      .max(8)
+      .optional(),
   })
   .strict()
   .refine((value) => !value.takeover || Boolean(value.originBrand?.trim()), {
@@ -80,13 +102,44 @@ export async function GET() {
   try {
     const session = await requireRole(...OPS_ROLES, "BUILDING_OWNER");
 
+    /**
+     * Le parc d'un technicien, c'est celui sur lequel il a des bons.
+     *
+     * Sans ce filtre, la liste complète lui était servie — codes, statuts et
+     * noms d'immeubles de toute la flotte — et la palette de recherche la
+     * proposait telle quelle. Le cloisonnement vit ici plutôt que dans
+     * l'écran : la palette ne décide pas qui voit quoi, elle affiche ce que la
+     * route lui donne.
+     */
+    const where =
+      session.user.role === "FIELD_TECHNICIAN"
+        ? {
+            ...elevatorScopeFor(session),
+            workOrders: { some: { assignedToId: session.user.id } },
+          }
+        : elevatorScopeFor(session);
+
     const elevators = await prisma.elevator.findMany({
       // A BUILDING_OWNER is scoped to its own portfolio. The fleet-wide list
       // it used to receive leaked every other customer's building name,
       // address and site contacts.
-      where: elevatorScopeFor(session),
+      where,
       include: {
-        building: { select: { id: true, name: true, address: true } },
+        building: {
+          select: {
+            id: true,
+            name: true,
+            address: true,
+            /**
+             * La ville et le code d'accès, pour la carte du registre. Le code
+             * est une donnée de site : la liste est déjà restreinte par la
+             * portée du rôle (un technicien ne lit que son parc, un client ses
+             * immeubles).
+             */
+            city: true,
+            accessCode: true,
+          },
+        },
         latestTelemetry: true,
         _count: {
           select: {
@@ -113,13 +166,28 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  /**
+   * Le corps validé, gardé pour le repli de démonstration.
+   *
+   * Seule une reprise est acquittée en mode démo : créer un appareil ordinaire
+   * sans base n'aurait aucun sens, alors qu'une reprise est un parcours
+   * d'interface que l'on veut pouvoir essayer sans PostgreSQL.
+   */
+  let requestedTakeover: {
+    takeover?: boolean;
+    elevatorCode: string;
+    originBrand?: string;
+    model: string;
+  } | null = null;
+
   try {
     const session = await requireRole(...MANAGEMENT_ROLES);
     const parsed = CreateElevatorSchema.parse(await readJson(request));
+    requestedTakeover = parsed;
 
     const building = await prisma.building.findFirst({
       where: { id: parsed.buildingId, isActive: true },
-      select: { id: true },
+      select: { id: true, address: true, city: true },
     });
     if (!building) {
       throw notFound(`Immeuble introuvable : ${parsed.buildingId}`);
@@ -142,6 +210,7 @@ export async function POST(request: NextRequest) {
         brand: parsed.brand,
         originBrand: parsed.originBrand?.trim() || null,
         model: parsed.model,
+        installationLocation: parsed.installationLocation?.trim() || null,
         serialNumber: parsed.serialNumber,
         installationDate: parsed.installationDate
           ? new Date(parsed.installationDate)
@@ -168,6 +237,29 @@ export async function POST(request: NextRequest) {
     let auditWorkOrder: { id: string; orderNumber: string } | null = null;
     if (parsed.takeover) {
       const brandLabel = parsed.originBrand?.trim() || elevator.brand;
+      /**
+       * Le relevé saisi au bureau rejoint le bon, pas une colonne isolée.
+       *
+       * Un bon est lu par le technicien qui monte sur site ; une remarque de
+       * sécurité stockée ailleurs que dans le document de la visite serait une
+       * consigne que personne n'a sous les yeux au moment où elle compte.
+       */
+      const auditSections = [
+        ...(parsed.auditNotes
+          ? [
+              "",
+              "Non-conformités et remarques de sécurité relevées :",
+              parsed.auditNotes,
+            ]
+          : []),
+        ...(parsed.auditPhotoUrls?.length
+          ? [
+              "",
+              "Photos du relevé :",
+              ...parsed.auditPhotoUrls.map((url) => `- ${url}`),
+            ]
+          : []),
+      ];
       try {
         const order = await createWorkOrderWithUniqueNumber(
           {
@@ -180,7 +272,15 @@ export async function POST(request: NextRequest) {
               "série, l'état de la gaine et des organes de sécurité, et consigner les",
               "réserves éventuelles. Le matricule RMASC n'est attribué qu'à la validation",
               "de cette visite.",
+              ...auditSections,
             ].join("\n"),
+            interventionAddress: [
+              building.address,
+              building.city,
+              parsed.installationLocation?.trim(),
+            ]
+              .filter(Boolean)
+              .join(", "),
             type: "INSPECTION",
             priority: "MEDIUM",
             status: "OPEN",
@@ -206,6 +306,27 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
+    if (requestedTakeover?.takeover && shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("POST /api/elevators (reprise)");
+      const now = Date.now();
+      return NextResponse.json(
+        {
+          data: {
+            id: `demo-elevator-${now}`,
+            elevatorCode: requestedTakeover.elevatorCode,
+            originBrand: requestedTakeover.originBrand?.trim() || null,
+            model: requestedTakeover.model,
+            rmascCode: null,
+          },
+          auditWorkOrder: {
+            id: `demo-inspection-${now}`,
+            orderNumber: `INSP-DEMO-${String(now).slice(-4)}`,
+          },
+          demo: true,
+        },
+        { status: 201 }
+      );
+    }
     return handleRouteError(error);
   }
 }

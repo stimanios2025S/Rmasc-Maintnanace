@@ -35,6 +35,7 @@ import {
   RULE,
   companyName,
   documentFileName,
+  drawDocumentFooter,
   drawDocumentHeader,
   drawRule,
   drawSectionTitle,
@@ -70,6 +71,9 @@ export interface QuoteDocument {
   need: string;
   notes: string | null;
   clientName: string;
+  /** L'adresse du client — siège ou facturation — quand son compte en porte une. */
+  clientAddress: string | null;
+  clientPhone: string | null;
   buildingName: string;
   buildingAddress: string;
   buildingCity: string;
@@ -129,6 +133,9 @@ export function renderQuotePdf(quote: QuoteDocument): Promise<Buffer> {
     const doc = new PDFDocument({
       size: "A4",
       margin: PAGE_MARGIN,
+      // Les pages restent en mémoire pour recevoir le pied de page après coup :
+      // sans ce tampon, seule la dernière page porterait les mentions.
+      bufferPages: true,
       info: {
         Title: `Devis ${quote.number}`,
         Author: companyName(),
@@ -153,46 +160,73 @@ export function renderQuotePdf(quote: QuoteDocument): Promise<Buffer> {
     // ─── En-tête ──────────────────────────────────────────────
     let y = drawDocumentHeader(doc, {
       title: "DEVIS",
-      lines: [
-        quote.number,
-        `Date : ${frenchDate(quote.issuedAt)}`,
-        `Validité de l'offre : ${quote.validityDays} jours`,
-      ],
+      lines: [quote.number],
     });
     y += 18;
 
-    // ─── Identité du client et du projet ──────────────────────
+    // ─── Identité du client, du site et références ────────────
     const columnWidth = (width - 24) / 2;
+    const rightColumnX = left + columnWidth + 24;
 
     doc.fillColor(MUTED).font("Helvetica-Bold").fontSize(8);
     doc.text("CLIENT", left, y, { width: columnWidth });
-    doc.text("PROJET / ADRESSE", left + columnWidth + 24, y, {
-      width: columnWidth,
-    });
+    doc.text("PROJET / SITE", rightColumnX, y, { width: columnWidth });
 
     doc.fillColor(INK).font("Helvetica-Bold").fontSize(11);
     doc.text(printable(quote.clientName), left, y + 14, { width: columnWidth });
-    doc.text(printable(quote.buildingName), left + columnWidth + 24, y + 14, {
+    doc.text(printable(quote.buildingName), rightColumnX, y + 14, {
       width: columnWidth,
     });
 
     doc.font("Helvetica").fontSize(9).fillColor(MUTED);
+    const clientLines = [quote.clientAddress, quote.clientPhone].filter(
+      (line): line is string => Boolean(line)
+    );
     const siteLines = [
       quote.buildingAddress,
       quote.buildingCity,
       quote.elevatorCode ? `Appareil ${quote.elevatorCode}` : null,
     ].filter((line): line is string => Boolean(line));
 
-    const clientHeight = doc.heightOfString("—", { width: columnWidth });
-    const siteHeight = doc.heightOfString(printable(siteLines.join("\n")), {
+    const clientText = clientLines.length > 0 ? clientLines.join("\n") : "—";
+    const siteText = siteLines.join("\n");
+
+    const clientHeight = doc.heightOfString(printable(clientText), {
+      width: columnWidth,
+    });
+    const siteHeight = doc.heightOfString(printable(siteText), {
       width: columnWidth,
     });
 
-    doc.text("—", left, y + 30, { width: columnWidth });
-    doc.text(printable(siteLines.join("\n")), left + columnWidth + 24, y + 30, {
+    doc.text(printable(clientText), left, y + 30, {
       width: columnWidth,
+      lineGap: 1,
     });
-    y += 30 + Math.max(clientHeight, siteHeight) + 18;
+    doc.text(printable(siteText), rightColumnX, y + 30, {
+      width: columnWidth,
+      lineGap: 1,
+    });
+    y += 30 + Math.max(clientHeight, siteHeight) + 14;
+
+    // ─── Références du devis ──────────────────────────────────
+    y = ensureRoom(y, 60);
+    drawSectionTitle(doc, "Références du devis", y);
+    y += 13;
+
+    const references = [
+      `Numéro : ${quote.number}`,
+      `Date d'émission : ${frenchDate(quote.issuedAt)}`,
+      quote.validUntil
+        ? `Date de validité : ${frenchDate(quote.validUntil)} (${quote.validityDays} jours)`
+        : `Validité : ${quote.validityDays} jours à compter de la remise`,
+    ];
+
+    doc.fillColor(MUTED).font("Helvetica").fontSize(9);
+    doc.text(printable(references.join("   ·   ")), left, y, {
+      width,
+      lineGap: 2,
+    });
+    y = doc.y + 16;
 
     // ─── Le besoin ────────────────────────────────────────────
     y = ensureRoom(y, 90);
@@ -392,7 +426,9 @@ export function renderQuotePdf(quote: QuoteDocument): Promise<Buffer> {
     doc.rect(left, y + 26, width * 0.55, 56).strokeColor(RULE).lineWidth(0.5).stroke();
 
     doc.fillColor(INK).font("Helvetica-Bold").fontSize(9.5);
-    doc.text("SARL RMASC", left + width * 0.6, y, { width: width * 0.4 });
+    doc.text(printable(companyName()), left + width * 0.6, y, {
+      width: width * 0.4,
+    });
     doc.fillColor(MUTED).font("Helvetica").fontSize(8);
     doc.text("La Direction", left + width * 0.6, y + 12, {
       width: width * 0.4,
@@ -438,6 +474,16 @@ export function renderQuotePdf(quote: QuoteDocument): Promise<Buffer> {
 
     // ─── Le tampon ────────────────────────────────────────────
     drawStamp(doc, y + 92);
+
+    // ─── Pied de page, sur chaque page ────────────────────────
+    //
+    // Après le contenu, page par page : coordonnées bancaires, mentions
+    // légales et pagination sont communes au document, pas à sa dernière page.
+    const range = doc.bufferedPageRange();
+    for (let index = 0; index < range.count; index++) {
+      doc.switchToPage(range.start + index);
+      drawDocumentFooter(doc, index + 1, range.count);
+    }
 
     doc.end();
   });

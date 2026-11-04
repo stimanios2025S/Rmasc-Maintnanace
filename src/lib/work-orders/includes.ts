@@ -34,7 +34,21 @@ export const WORK_ORDER_INCLUDE = {
     select: {
       id: true,
       elevatorCode: true,
-      building: { select: { name: true } },
+      building: {
+        select: {
+          name: true,
+          /**
+           * L'adresse et le code d'accès, pour la carte d'intervention.
+           *
+           * Le dispatcheur lit le code au téléphone et le technicien en a
+           * besoin sur place ; les deux passent par cette liste, dont la portée
+           * est déjà restreinte (le technicien ne lit que ses bons, le client
+           * que ses immeubles).
+           */
+          address: true,
+          accessCode: true,
+        },
+      },
     },
   },
   assignedTo: { select: { id: true, name: true, email: true } },

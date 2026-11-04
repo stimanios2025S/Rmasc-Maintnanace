@@ -71,6 +71,36 @@ function unwrapLeaflet(module: LeafletNamespace): LeafletNamespace {
   return candidate ?? module;
 }
 
+/**
+ * Un couple réellement plaçable, ou `null`.
+ *
+ * POURQUOI CE N'EST PAS UNE SIMPLE COERCITION
+ * `L.marker` lève sur un `LatLng` invalide — un `NaN`, une chaîne non
+ * numérique, une latitude hors bornes. Et il lève *au milieu de la boucle* :
+ * une seule ligne fautive abandonne tout le tracé, si bien que la carte
+ * n'affiche plus aucun point alors que la base en contient des dizaines. Le
+ * symptôme ressemble à « la carte ne marche plus », pas à « une coordonnée est
+ * mauvaise ».
+ *
+ * `Number()` couvre le cas d'un pilote qui rendrait des décimaux en chaîne ;
+ * les bornes sont celles de `readCoordinates`, donc la carte refuse exactement
+ * ce que la route aurait refusé.
+ */
+function validLatLng(
+  latitude: unknown,
+  longitude: unknown
+): [number, number] | null {
+  const lat = typeof latitude === "string" ? Number(latitude) : latitude;
+  const lng = typeof longitude === "string" ? Number(longitude) : longitude;
+
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90) return null;
+  if (lng < -180 || lng > 180) return null;
+
+  return [lat, lng];
+}
+
 // ─── Constants ──────────────────────────────────────────────
 
 /**
@@ -223,10 +253,27 @@ function faultTooltipHtml(fault: FleetMapFault): string {
     ? enumLabel(fault.source)
     : "Position d'origine non enregistrée";
 
+  const code = fault.errorCode
+    ? `${fault.errorCode.code} — ${fault.errorCode.title}`
+    : null;
+  const notes = fault.notes?.trim()
+    ? fault.notes.trim().slice(0, 160)
+    : null;
+
   return (
     `<div class="ep-map-tooltip__body" style="--ep-color:${faultColor(fault)}">` +
     `<div class="ep-map-tooltip__name">${escapeHtml(fault.incidentNumber)} · ${escapeHtml(fault.elevatorCode)}</div>` +
     `<div class="ep-map-tooltip__meta">${escapeHtml(fault.buildingName)} · ${escapeHtml(meta)}</div>` +
+    (code
+      ? `<div class="ep-map-tooltip__reason"><span class="ep-map-tooltip__swatch"></span>${escapeHtml(
+          code
+        )}</div>`
+      : "") +
+    (notes
+      ? `<div class="ep-map-tooltip__reason"><span class="ep-map-tooltip__swatch"></span>${escapeHtml(
+          notes
+        )}</div>`
+      : "") +
     `<div class="ep-map-tooltip__reason">` +
     `<span class="ep-map-tooltip__swatch"></span>Position : ${escapeHtml(origin)}` +
     `</div>` +
@@ -331,7 +378,27 @@ export interface FleetMapProps {
   faults?: FleetMapFault[];
   /** The site to highlight. Controlled by the caller. */
   selectedId?: string | null;
+  /**
+   * A point to fly to, independently of the selected site.
+   *
+   * A notification about a fault designates the exact spot the reporter's
+   * device recorded, which can be several hundred metres from the site's own
+   * pin. The site is still selected so its panel opens; this is what puts the
+   * fault itself under the reader's eyes.
+   *
+   * Flown to once per coordinate pair — a polling refresh passes the same
+   * object again and must not drag a map the reader has since moved.
+   */
+  focusPoint?: Coordinates | null;
   onSelect?: (siteId: string | null) => void;
+  /**
+   * Un clic sur une épingle de panne.
+   *
+   * Le site est sélectionné en même temps par `onSelect`, pour que le panneau
+   * latéral s'ouvre ; cet identifiant permet à l'appelant d'afficher, en plus,
+   * la fiche rouge de la panne et son bouton d'assignation rapide.
+   */
+  onFaultSelect?: (incidentId: string) => void;
   /**
    * Draw every site's check-in radius.
    *
@@ -374,7 +441,9 @@ export function FleetMap({
   faults = [],
   technicians = [],
   selectedId = null,
+  focusPoint = null,
   onSelect,
+  onFaultSelect,
   showGeofence = false,
   selfPosition = null,
   onMapClick,
@@ -404,6 +473,9 @@ export function FleetMap({
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
+  const onFaultSelectRef = useRef(onFaultSelect);
+  onFaultSelectRef.current = onFaultSelect;
+
   const onMapClickRef = useRef(onMapClick);
   onMapClickRef.current = onMapClick;
 
@@ -416,6 +488,15 @@ export function FleetMap({
 
   /** The last site we flew to, so a re-render does not re-fly. */
   const flownToRef = useRef<string | null>(null);
+
+  /**
+   * Le dernier point de panne atteint.
+   *
+   * Un rafraîchissement renvoie le même couple de coordonnées ; sans cette
+   * mémoire, `flyTo` rejouerait à chaque poll et arracherait la carte sous le
+   * lecteur. La clé est la position elle-même, pas l'identité d'un objet.
+   */
+  const flownToPointRef = useRef<string | null>(null);
 
   // ── Build the map ─────────────────────────────────────────
   useEffect(() => {
@@ -474,6 +555,7 @@ export function FleetMap({
       technicianLayerRef.current = null;
       hasFittedRef.current = false;
       flownToRef.current = null;
+      flownToPointRef.current = null;
       setReady(false);
     };
   }, []);
@@ -504,10 +586,15 @@ export function FleetMap({
     layer.clearLayers();
 
     for (const site of sites) {
+      // Une coordonnée invalide est ignorée, pas fatale : sans ce test,
+      // `L.marker` lèverait et la carte perdrait tous ses points.
+      const latLng = validLatLng(site.latitude, site.longitude);
+      if (!latLng) continue;
+
       const style = ATTENTION_STYLES[site.level];
       const selected = selectedId === site.id;
 
-      const marker = L.marker([site.latitude, site.longitude], {
+      const marker = L.marker(latLng, {
         icon: L.divIcon({
           html: markerHtml(site, selected),
           className: MARKER_CLASS,
@@ -534,7 +621,7 @@ export function FleetMap({
       marker.addTo(layer);
 
       if (showGeofence || selected) {
-        L.circle([site.latitude, site.longitude], {
+        L.circle(latLng, {
           radius: site.geofenceRadiusM,
           color: style.color,
           weight: selected ? 2 : 1,
@@ -547,11 +634,16 @@ export function FleetMap({
       }
     }
 
-    // Fit the whole fleet once, on the first draw that actually has sites.
-    if (!hasFittedRef.current && sites.length > 0) {
+    // Fit the whole fleet once, on the first draw that actually has sites
+    // placed on the map.
+    const bounds = sites
+      .map((site) => validLatLng(site.latitude, site.longitude))
+      .filter((point): point is [number, number] => point !== null);
+
+    if (!hasFittedRef.current && bounds.length > 0) {
       hasFittedRef.current = true;
       map.fitBounds(
-        L.latLngBounds(sites.map((s) => [s.latitude, s.longitude] as [number, number])),
+        L.latLngBounds(bounds),
         // Padding keeps the outermost pins off the container's edge, where the
         // zoom control and the attribution line sit.
         { padding: [56, 56], maxZoom: 15 }
@@ -572,6 +664,29 @@ export function FleetMap({
     }
   }, [ready, sites, selectedId, showGeofence]);
 
+  // ── Fly to the point a notification designated ───────────
+  //
+  // Declared after the sites effect on purpose: when a notification opens the
+  // map, the site is selected (and the sites effect flies to it) before this
+  // effect moves the view to the exact fault position. React runs effects in
+  // declaration order, so the more precise destination wins.
+  const focusKey = focusPoint
+    ? `${focusPoint.latitude.toFixed(6)},${focusPoint.longitude.toFixed(6)}`
+    : null;
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map || !focusPoint || !focusKey) return;
+    if (flownToPointRef.current === focusKey) return;
+
+    flownToPointRef.current = focusKey;
+    map.flyTo(
+      [focusPoint.latitude, focusPoint.longitude],
+      Math.max(map.getZoom(), SITE_ZOOM),
+      { duration: 0.7 }
+    );
+  }, [ready, focusPoint, focusKey]);
+
   // ── Draw the viewer's own position ────────────────────────
   useEffect(() => {
     const L = leafletRef.current;
@@ -581,7 +696,13 @@ export function FleetMap({
     layer.clearLayers();
     if (!selfPosition) return;
 
-    L.marker([selfPosition.latitude, selfPosition.longitude], {
+    const selfLatLng = validLatLng(
+      selfPosition.latitude,
+      selfPosition.longitude
+    );
+    if (!selfLatLng) return;
+
+    L.marker(selfLatLng, {
       icon: L.divIcon({
         html: '<div class="ep-map-marker__you"></div>',
         className: MARKER_CLASS,
@@ -603,7 +724,13 @@ export function FleetMap({
     layer.clearLayers();
     if (!draftPosition) return;
 
-    L.marker([draftPosition.latitude, draftPosition.longitude], {
+    const draftLatLng = validLatLng(
+      draftPosition.latitude,
+      draftPosition.longitude
+    );
+    if (!draftLatLng) return;
+
+    L.marker(draftLatLng, {
       icon: L.divIcon({
         html: '<div class="ep-map-marker__draft"></div>',
         className: MARKER_CLASS,
@@ -637,6 +764,9 @@ export function FleetMap({
     const selectable = new Set(sites.map((site) => site.id));
 
     for (const fault of faults) {
+      const latLng = validLatLng(fault.latitude, fault.longitude);
+      if (!latLng) continue;
+
       const clickable = selectable.has(fault.buildingId);
 
       /**
@@ -653,7 +783,7 @@ export function FleetMap({
        * looking at an open fault is asking where the work is, and hiding the
        * answer behind a display setting would be the wrong default.
        */
-      L.circle([fault.latitude, fault.longitude], {
+      L.circle(latLng, {
         radius: fault.interventionRadiusM,
         color: faultColor(fault),
         weight: 1.5,
@@ -665,7 +795,7 @@ export function FleetMap({
         interactive: false,
       }).addTo(layer);
 
-      const marker = L.marker([fault.latitude, fault.longitude], {
+      const marker = L.marker(latLng, {
         icon: L.divIcon({
           html: faultMarkerHtml(fault),
           className: MARKER_CLASS,
@@ -692,6 +822,7 @@ export function FleetMap({
           // and, in placement mode, drop a pin on the same spot.
           L.DomEvent.stopPropagation(event);
           onSelectRef.current?.(fault.buildingId);
+          onFaultSelectRef.current?.(fault.incidentId);
         });
       }
 
@@ -709,7 +840,10 @@ export function FleetMap({
     if (technicians.length === 0) return;
 
     for (const technician of technicians) {
-      const marker = L.marker([technician.latitude, technician.longitude], {
+      const latLng = validLatLng(technician.latitude, technician.longitude);
+      if (!latLng) continue;
+
+      const marker = L.marker(latLng, {
         icon: L.divIcon({
           html: technicianMarkerHtml(technician),
           className: MARKER_CLASS,

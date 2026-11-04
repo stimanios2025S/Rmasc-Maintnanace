@@ -17,6 +17,12 @@
  * RÉSERVÉ AUX RÔLES DE GESTION
  * Comme la transmission elle-même : consulter le stock n'est pas un geste du
  * terrain, et l'écran qui s'en sert est celui du bureau.
+ *
+ * EN DÉMONSTRATION, UN CATALOGUE FICTIF
+ * Sans les trois variables Magasin, aucun article réel ne peut être lu. La route
+ * sert alors les articles de `lib/stock/demo.ts` et le marque `demo: true` :
+ * l'écran reste utilisable, et rien ne laisse croire que ces articles existent
+ * dans le stock réel.
  */
 
 import {
@@ -29,6 +35,11 @@ import {
   fetchStockArticles,
   stockConfigRefusal,
 } from "@/lib/stock/client";
+import {
+  isStockDemoMode,
+  STOCK_DEMO_ARTICLES,
+  STOCK_DEMO_NOTICE,
+} from "@/lib/stock/demo";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +49,23 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     await requireRole(...MANAGEMENT_ROLES);
+
+    /**
+     * En démonstration, le catalogue fictif remplace la lecture réelle — et
+     * n'échoue donc jamais. C'est ce qui permet au sélecteur de l'écran de se
+     * remplir avant même que l'instance du magasin existe.
+     *
+     * `demo: true` accompagne la réponse : l'écran distingue le catalogue
+     * fictif d'un vrai, et le bandeau le dit à l'utilisateur.
+     */
+    if (isStockDemoMode()) {
+      return jsonOk({
+        articles: STOCK_DEMO_ARTICLES,
+        total: STOCK_DEMO_ARTICLES.length,
+        demo: true,
+        message: STOCK_DEMO_NOTICE,
+      });
+    }
 
     const refusal = stockConfigRefusal();
     if (refusal) throw badRequest(refusal);

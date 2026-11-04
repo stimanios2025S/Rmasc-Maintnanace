@@ -19,6 +19,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { handleRouteError } from "@/lib/api/http";
 import { MANAGEMENT_ROLES, requireRole } from "@/lib/api/guard";
+import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
+import { demoTakeovers } from "@/lib/demo/registers";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +40,13 @@ export async function GET() {
         rmascCode: true,
         status: true,
         createdAt: true,
+        // L'état des lieux initial : ce que la fiche d'audit relit sans ouvrir
+        // l'appareil.
+        installationDate: true,
+        motorType: true,
+        controllerType: true,
+        maxPayloadKg: true,
+        floorsServed: true,
         building: { select: { id: true, name: true, city: true } },
         workOrders: {
           where: { type: "INSPECTION" },
@@ -48,6 +57,12 @@ export async function GET() {
             status: true,
             createdAt: true,
             completedAt: true,
+            /**
+             * Le relevé de non-conformités vit dans le bon d'inspection — voir
+             * `POST /api/elevators`. L'écran d'audit le relit d'ici plutôt que
+             * d'ouvrir chaque bon.
+             */
+            description: true,
           },
         },
       },
@@ -56,6 +71,20 @@ export async function GET() {
 
     return NextResponse.json({ data: rows, total: rows.length });
   } catch (error) {
+    /**
+     * Sans base, le registre sert la fixture : trois reprises, une par étape.
+     * Sans ce repli, l'écran répondait 503 et le formulaire « Enregistrer une
+     * reprise » n'avait aucun immeuble où s'accrocher.
+     */
+    if (shouldServeDemoData(error)) {
+      warnDemoFallbackOnce("GET /api/elevators/takeovers");
+      const rows = demoTakeovers();
+      return NextResponse.json({
+        data: rows,
+        total: rows.length,
+        demo: true,
+      });
+    }
     return handleRouteError(error);
   }
 }

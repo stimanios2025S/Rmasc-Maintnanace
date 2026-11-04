@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc">
+  <title id="title">Schéma technique d'un ascenseur, vue de palier</title>
+  <desc id="desc">Planche technique montrant l'afficheur d'étage, la porte palière et le panneau d'appel.</desc>
+
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e4ebf5" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="doorFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f4f8fd"/>
+    </linearGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#0f1b2d" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      .mono { font-family: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace; }
+      .sans { font-family: "Segoe UI", Arial, sans-serif; }
+      .label { font-size: 13px; font-weight: 700; letter-spacing: 2.2px; fill: #5b708c; }
+      .caption { font-size: 12px; font-weight: 600; letter-spacing: 1.4px; fill: #7b8ca3; }
+      .dim { font-size: 12px; font-weight: 600; letter-spacing: 1.1px; fill: #7b8ca3; }
+      .leader { stroke: #a9b8cb; stroke-width: 1.2; stroke-dasharray: 4 4; fill: none; }
+      .mark { fill: #ffffff; stroke: #5b708c; stroke-width: 1.4; }
+      .markText { font-size: 12px; font-weight: 700; fill: #40516e; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="900" fill="#f7f9fd"/>
+  <rect width="1200" height="900" fill="url(#grid)"/>
+  <rect x="20" y="20" width="1160" height="860" rx="10" fill="none" stroke="#dbe4ef" stroke-width="1.5"/>
+
+  <!-- Cartouche -->
+  <text x="64" y="72" class="sans label">SCHÉMA TECHNIQUE</text>
+  <text x="64" y="96" class="sans caption">ASCENSEUR · VUE DE PALIER</text>
+  <line x1="64" y1="112" x2="300" y2="112" stroke="#1d4ed8" stroke-width="3"/>
+  <text x="1136" y="72" text-anchor="end" class="mono dim">PLANCHE 01 / 01</text>
+  <text x="1136" y="96" text-anchor="end" class="mono dim">RMASC · SN-MPT-01-4821</text>
+
+  <!-- Dimension verticale -->
+  <g>
+    <line x1="250" y1="180" x2="250" y2="820" stroke="#b8c6d8" stroke-width="1"/>
+    <line x1="242" y1="180" x2="258" y2="180" stroke="#b8c6d8" stroke-width="1"/>
+    <line x1="242" y1="820" x2="258" y2="820" stroke="#b8c6d8" stroke-width="1"/>
+    <path d="m246 190 4-8 4 8M246 810l4 8 4-8" fill="none" stroke="#b8c6d8" stroke-width="1.4"/>
+    <text x="238" y="506" text-anchor="middle" transform="rotate(-90 238 506)" class="mono dim">2 100 mm</text>
+  </g>
+
+  <!-- Cadre / gaine -->
+  <rect x="300" y="170" width="500" height="650" rx="16" fill="#ffffff" stroke="#5b708c" stroke-width="3" filter="url(#softShadow)"/>
+  <line x1="300" y1="292" x2="800" y2="292" stroke="#5b708c" stroke-width="2"/>
+
+  <!-- Afficheur d'étage -->
+  <rect x="470" y="208" width="160" height="50" rx="8" fill="#dbe7fb" stroke="#5b708c" stroke-width="2"/>
+  <text x="550" y="242" text-anchor="middle" class="mono" font-size="28" font-weight="700" fill="#1d4ed8">3</text>
+  <path d="M444 233l10-9 10 9" fill="none" stroke="#5b708c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M656 233l10 9 10-9" fill="none" stroke="#5b708c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Porte palière -->
+  <rect x="378" y="350" width="344" height="402" rx="4" fill="url(#doorFill)" stroke="#5b708c" stroke-width="2"/>
+  <line x1="550" y1="350" x2="550" y2="752" stroke="#5b708c" stroke-width="2"/>
+  <line x1="541" y1="374" x2="541" y2="728" stroke="#c8d5e4" stroke-width="1.2"/>
+  <line x1="559" y1="374" x2="559" y2="728" stroke="#c8d5e4" stroke-width="1.2"/>
+  <rect x="378" y="752" width="344" height="10" fill="#eef3fa" stroke="#5b708c" stroke-width="1.5"/>
+
+  <!-- Panneau d'appel -->
+  <rect x="862" y="380" width="112" height="252" rx="12" fill="#ffffff" stroke="#5b708c" stroke-width="2"/>
+  <circle cx="918" cy="426" r="18" fill="#f2f6fc" stroke="#5b708c" stroke-width="1.6"/>
+  <path d="m910 430 8-9 8 9" fill="none" stroke="#40516e" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="918" cy="480" r="18" fill="#f2f6fc" stroke="#5b708c" stroke-width="1.6"/>
+  <path d="m910 476 8 9 8-9" fill="none" stroke="#40516e" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="890" y1="520" x2="946" y2="520" stroke="#c8d5e4" stroke-width="1"/>
+  <line x1="890" y1="532" x2="946" y2="532" stroke="#c8d5e4" stroke-width="1"/>
+  <line x1="890" y1="544" x2="946" y2="544" stroke="#c8d5e4" stroke-width="1"/>
+  <line x1="890" y1="556" x2="946" y2="556" stroke="#c8d5e4" stroke-width="1"/>
+  <text x="918" y="602" text-anchor="middle" class="sans caption" font-size="10">APPEL</text>
+
+  <!-- Repères et lignes de rappel -->
+  <g>
+    <line x1="300" y1="233" x2="190" y2="233" class="leader"/>
+    <circle cx="170" cy="233" r="13" class="mark"/>
+    <text x="170" y="237" text-anchor="middle" class="mono markText">1</text>
+    <text x="64" y="218" class="sans label" font-size="11">AFFICHEUR</text>
+    <text x="64" y="252" class="sans caption">Signal de position</text>
+  </g>
+
+  <g>
+    <line x1="378" y1="470" x2="190" y2="470" class="leader"/>
+    <circle cx="170" cy="470" r="13" class="mark"/>
+    <text x="170" y="474" text-anchor="middle" class="mono markText">2</text>
+    <text x="64" y="455" class="sans label" font-size="11">PORTE PALIÈRE</text>
+    <text x="64" y="489" class="sans caption">Ouverture 900 mm</text>
+  </g>
+
+  <g>
+    <line x1="974" y1="480" x2="1046" y2="480" class="leader"/>
+    <circle cx="1066" cy="480" r="13" class="mark"/>
+    <text x="1066" y="484" text-anchor="middle" class="mono markText">3</text>
+    <text x="1046" y="455" text-anchor="end" class="sans label" font-size="11">PANNEAU D'APPEL</text>
+    <text x="1046" y="489" text-anchor="end" class="sans caption">Appel / alarme</text>
+  </g>
+
+  <!-- Cote porte -->
+  <g>
+    <line x1="378" y1="792" x2="378" y2="812" stroke="#b8c6d8" stroke-width="1"/>
+    <line x1="722" y1="792" x2="722" y2="812" stroke="#b8c6d8" stroke-width="1"/>
+    <line x1="392" y1="802" x2="708" y2="802" stroke="#b8c6d8" stroke-width="1"/>
+    <text x="550" y="832" text-anchor="middle" class="mono dim">900 mm</text>
+  </g>
+
+  <!-- Pied de planche -->
+  <line x1="64" y1="850" x2="1136" y2="850" stroke="#dbe4ef" stroke-width="1"/>
+  <text x="64" y="874" class="sans caption">RMASC · MAINTENANCE ASCENSEURS</text>
+  <text x="1136" y="874" text-anchor="end" class="mono dim">DOCUMENT DE DÉMONSTRATION</text>
+</svg>

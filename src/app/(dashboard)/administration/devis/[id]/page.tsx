@@ -68,7 +68,7 @@ interface QuoteDetail {
   validityDays: number;
   need: string;
   notes: string | null;
-  client: { id: string; name: string } | null;
+  client: { id: string; name: string; address?: string | null; phone?: string | null } | null;
   building: { id: string; name: string; city: string };
   elevator: { id: string; elevatorCode: string } | null;
   lines: {
@@ -81,6 +81,18 @@ interface QuoteDetail {
     unitPrice: unknown;
   }[];
   totals: { totalHt: number; vatAmount: number; totalTtc: number };
+}
+
+interface CompanyProfile {
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  legalIds: { label: string; value: string }[];
+  bank: string | null;
+  rib: string | null;
+  footerMentions: string[];
+  logoUrl: string | null;
 }
 
 const STATUS_BADGE: Record<QuoteStatus, string> = {
@@ -122,6 +134,7 @@ export default function QuotePricingPage() {
   const router = useRouter();
 
   const [quote, setQuote] = useState<QuoteDetail | null>(null);
+  const [company, setCompany] = useState<CompanyProfile | null>(null);
   const [lines, setLines] = useState<LineRow[]>([]);
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(true);
@@ -159,6 +172,28 @@ export default function QuotePricingPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * L'en-tête et le pied du document viennent de la même configuration que le
+   * PDF (`/api/company`). Un échec de cette lecture ne bloque pas le chiffrage :
+   * le document s'affiche sans lettre, comme il s'imprimerait sans logo.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/company", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled && json?.data) setCompany(json.data as CompanyProfile);
+      } catch {
+        // Silencieux : voir ci-dessus.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const editable = quote?.status === "REQUESTED";
 
@@ -269,6 +304,22 @@ export default function QuotePricingPage() {
     return <ErrorState message={error || "Devis introuvable"} onRetry={load} />;
   }
 
+  const companyContact = company
+    ? [company.address, company.phone, company.email]
+        .filter((line): line is string => Boolean(line))
+        .join("  ·  ")
+    : "";
+
+  const companyLegal = company
+    ? company.legalIds.map((id) => `${id.label} : ${id.value}`).join("  ·  ")
+    : "";
+
+  const validUntil = quote.sentAt
+    ? new Date(
+        new Date(quote.sentAt).getTime() + quote.validityDays * 86_400_000
+      )
+    : null;
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
       <Link
@@ -281,6 +332,53 @@ export default function QuotePricingPage() {
 
       {/* ── En-tête ───────────────────────────────────────────── */}
       <Card className="p-5">
+        {/* La lettre de l'entreprise, identique au PDF : logo, coordonnées,
+            identifiants légaux, puis les références du devis. */}
+        {company && (
+          <div className="mb-4 flex flex-wrap items-start gap-4 border-b border-gray-200 pb-4 dark:border-gray-800">
+            {company.logoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- logo local, dimensions fixes
+              <img
+                src={company.logoUrl}
+                alt={`Logo ${company.name}`}
+                className="h-16 w-16 shrink-0 rounded-lg bg-white object-contain"
+              />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-lg font-bold text-gray-900 dark:text-white">
+                {company.name}
+              </p>
+              {companyContact && (
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {companyContact}
+                </p>
+              )}
+              {companyLegal && (
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {companyLegal}
+                </p>
+              )}
+            </div>
+            <div className="text-right text-xs text-gray-500 dark:text-gray-400">
+              <p>
+                Devis{" "}
+                <span className="font-mono font-semibold text-gray-900 dark:text-white">
+                  {quote.number}
+                </span>
+              </p>
+              <p className="mt-0.5">
+                Émis le{" "}
+                {format(new Date(quote.createdAt), "d MMMM yyyy", { locale: fr })}
+              </p>
+              <p className="mt-0.5">
+                {validUntil
+                  ? `Valable jusqu'au ${format(validUntil, "d MMMM yyyy", { locale: fr })}`
+                  : `Validité : ${quote.validityDays} jours`}
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="font-mono text-xs text-gray-500 dark:text-gray-400">
@@ -293,6 +391,13 @@ export default function QuotePricingPage() {
               {quote.client?.name ?? "Sans compte client"}
               {quote.elevator ? ` · ${quote.elevator.elevatorCode}` : ""}
             </p>
+            {(quote.client?.address || quote.client?.phone) && (
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {[quote.client?.address, quote.client?.phone]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -632,6 +737,67 @@ export default function QuotePricingPage() {
             enregistrée à nouveau.
           </p>
         )}
+      </Card>
+
+      {/* ── Conditions, banque et signature ───────────────────── */}
+      <Card className="p-5">
+        <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+          Conditions, coordonnées bancaires et signature
+        </h2>
+
+        <div className="mt-3 space-y-1 text-sm text-gray-700 dark:text-gray-300">
+          <p>
+            Conditions de règlement : 50 % à la commande, solde à la livraison.
+          </p>
+          <p>Garantie : selon la nature des équipements fournis.</p>
+          <p>
+            Devis valable {quote.validityDays} jours à compter de sa remise au
+            client.
+          </p>
+        </div>
+
+        {(company?.bank || company?.rib) && (
+          <div className="mt-4 rounded-lg bg-gray-50 p-3 dark:bg-gray-800/50">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              Coordonnées bancaires
+            </p>
+            <p className="mt-1 text-sm text-gray-800 dark:text-gray-200">
+              {[
+                company?.bank ? `Banque : ${company.bank}` : null,
+                company?.rib ? `RIB : ${company.rib}` : null,
+              ]
+                .filter(Boolean)
+                .join("  ·  ")}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl border border-dashed border-gray-300 p-4 dark:border-gray-700">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">
+              Bon pour accord et confirmation
+            </p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              Nom, date, signature et cachet du client
+            </p>
+            <div className="mt-12 border-b border-gray-300 dark:border-gray-700" />
+          </div>
+          <div className="rounded-xl border border-dashed border-gray-300 p-4 dark:border-gray-700">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">
+              {company?.name ?? "L'entreprise"}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              La Direction
+            </p>
+            <div className="mt-12 border-b border-gray-300 dark:border-gray-700" />
+          </div>
+        </div>
+
+        {company?.footerMentions?.length ? (
+          <p className="mt-4 border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+            {company.footerMentions.join("  ·  ")}
+          </p>
+        ) : null}
       </Card>
     </div>
   );

@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Printer, RefreshCw } from "lucide-react";
+import { FileCheck, Printer, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import {
@@ -17,6 +18,10 @@ import {
 import { INSPECTION_CHECK_RESULTS, REPORT_KINDS } from "@/types";
 import type { InspectionCheckResult } from "@/types";
 import type { InspectionReportRegisterRow } from "@/lib/registers/shapes";
+import {
+  SectionTabs,
+  INTERVENTION_TABS,
+} from "@/components/layout/section-tabs";
 import { enumLabel } from "@/lib/ui/enum-labels";
 
 /**
@@ -80,6 +85,17 @@ const KIND_OPTIONS = REPORT_KINDS.map((kind) => ({
 const PAGE_SIZE = 100;
 
 export default function RapportsInspectionPage() {
+  const { data: session } = useSession();
+  const role = session?.user?.role;
+  /**
+   * Un responsable peut lire le roster complet ; un technicien de terrain n'y
+   * a pas accès (`/api/technicians` est réservé aux rôles de gestion), et le
+   * filtre doit alors rester sur la liste que la route des rapports lui rend —
+   * c'est-à-dire lui-même.
+   */
+  const canListAllTechnicians =
+    role === "ADMIN" || role === "MAINTENANCE_MANAGER";
+
   const [kind, setKind] = useState("");
   const [result, setResult] = useState("");
   const [technicianId, setTechnicianId] = useState("");
@@ -93,6 +109,7 @@ export default function RapportsInspectionPage() {
   const [technicians, setTechnicians] = useState<{ id: string; name: string }[]>(
     []
   );
+  const [roster, setRoster] = useState<{ id: string; name: string }[]>([]);
   const [buildings, setBuildings] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -136,6 +153,48 @@ export default function RapportsInspectionPage() {
     };
   }, []);
 
+  /**
+   * Le roster complet, pour que le filtre nomme toute l'équipe.
+   *
+   * La route des rapports ne renvoyait que les techniciens ayant déjà signé un
+   * rapport — un menu vide au premier chargement, et un sélecteur qui ne
+   * pouvait pas filtrer sur quelqu'un dont on attend justement le rapport. Le
+   * roster de `/api/technicians` est chargé à part pour les rôles de gestion ;
+   * un technicien de terrain garde la liste restreinte que le serveur lui rend.
+   */
+  useEffect(() => {
+    if (!canListAllTechnicians) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/technicians?all=1", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (cancelled || !Array.isArray(json.data)) return;
+        setRoster(
+          json.data
+            .filter(
+              (row: { id?: unknown; name?: unknown }) =>
+                typeof row.id === "string" && typeof row.name === "string"
+            )
+            .map((row: { id: string; name: string }) => ({
+              id: row.id,
+              name: row.name,
+            }))
+        );
+      } catch {
+        // Le filtre retombe sur la liste des rapports ; l'écran reste lisible.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canListAllTechnicians]);
+
+  const technicianOptions = roster.length > 0 ? roster : technicians;
+
   const params = useMemo(() => {
     const search = new URLSearchParams();
     if (kind) search.set("kind", kind);
@@ -158,7 +217,9 @@ export default function RapportsInspectionPage() {
       query.set("limit", String(PAGE_SIZE));
 
       try {
-        const res = await fetch(`/api/inspection-reports?${query.toString()}`);
+        const res = await fetch(`/api/inspection-reports?${query.toString()}`, {
+          cache: "no-store",
+        });
         if (!res.ok) {
           throw new Error(
             `L'API des rapports a répondu ${res.status}`
@@ -220,6 +281,11 @@ export default function RapportsInspectionPage() {
 
   return (
     <div className="space-y-6">
+      <SectionTabs
+        tabs={INTERVENTION_TABS}
+        ariaLabel="Interventions et maintenance"
+      />
+
       <Card className="p-5">
         <div className="space-y-4">
           <FilterRow label="Période">
@@ -250,7 +316,7 @@ export default function RapportsInspectionPage() {
               value={technicianId}
               onChange={setTechnicianId}
               allLabel="Tous les techniciens"
-              options={technicians.map((technician) => ({
+              options={technicianOptions.map((technician) => ({
                 value: technician.id,
                 label: technician.name ?? technician.id,
               }))}
@@ -325,11 +391,21 @@ export default function RapportsInspectionPage() {
 
       {rows.length === 0 ? (
         <EmptyState
-          title="Aucun rapport dans ce filtre"
-          hint={
+          icon={FileCheck}
+          title="Aucun rapport d'inspection dans ce filtre"
+          description={
             hasFilters
-              ? "Élargissez la période ou effacez les filtres."
-              : "Un rapport se dépose depuis le portail technicien, à la fin d'une intervention."
+              ? "Élargissez la période ou effacez les filtres pour retrouver les rapports existants."
+              : "Un rapport se dépose depuis l'espace technicien, à la fin d'une intervention. Une visite planifiée en produit un automatiquement."
+          }
+          action={
+            hasFilters
+              ? undefined
+              : {
+                  label: "Voir les interventions",
+                  href: "/bons-de-travail",
+                  variant: "secondary",
+                }
           }
         />
       ) : (

@@ -5,30 +5,29 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Activity, Eye, EyeOff, LogIn } from "lucide-react";
 
+/**
+ * Les deux raccourcis demandés, et seulement ceux-là.
+ *
+ * Ils restent sous la garde `NODE_ENV === "development"` plus bas : ces boutons
+ * appellent `signIn` avec le mot de passe de démonstration, et une page de
+ * connexion publique qui distribue un accès administrateur est exactement ce
+ * que ce panneau avait un jour produit. En développement, il rend un vrai
+ * service ; dans un lot de production, le code n'existe pas.
+ */
 const QUICK_ACCESS = [
   {
-    role: "Administrateur",
+    role: "Admin",
     email: "admin@elevatorpulse.com",
+    dot: "🔴",
     color:
-      "bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-300",
+      "border-red-500/40 bg-red-500/10 text-red-100 hover:bg-red-500/20",
   },
   {
-    role: "Responsable maintenance",
-    email: "manager@elevatorpulse.com",
-    color:
-      "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-300",
-  },
-  {
-    role: "Technicien de terrain",
+    role: "Technicien",
     email: "tech1@elevatorpulse.com",
+    dot: "🟢",
     color:
-      "bg-green-50 border-green-200 text-green-700 hover:bg-green-100 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300",
-  },
-  {
-    role: "Propriétaire d'immeuble",
-    email: "owner@metroplaza.com",
-    color:
-      "bg-orange-50 border-orange-200 text-orange-700 hover:bg-orange-100 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-300",
+      "border-green-500/40 bg-green-500/10 text-green-100 hover:bg-green-500/20",
   },
 ];
 
@@ -138,33 +137,60 @@ function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="relative flex min-h-[100svh] items-center justify-center overflow-hidden bg-slate-950 p-4">
+      {/*
+        Arrière-plan animé : le visuel 3D de l'ascenseur, en dérive lente.
+        Aucun GIF ni vidéo n'est livré dans `public/` ; ce fond animé en CSS
+        remplit le même rôle sans dépendre d'un média externe, et il est
+        immobile pour qui a demandé moins d'animations.
+      */}
+      <style>{`
+        @keyframes loginDrift {
+          from { transform: scale(1.05) translate3d(-1.2%, -0.8%, 0); }
+          to   { transform: scale(1.14) translate3d(1.2%, 0.8%, 0); }
+        }
+        .login-bg { animation: loginDrift 26s ease-in-out infinite alternate; }
+        @media (prefers-reduced-motion: reduce) {
+          .login-bg { animation: none; }
+        }
+      `}</style>
+
+      <div
+        className="login-bg absolute -inset-[6%] bg-cover bg-center"
+        style={{ backgroundImage: "url('/qr-appareil/preview-hero-3d.png')" }}
+        aria-hidden="true"
+      />
+      <div
+        className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+        aria-hidden="true"
+      />
+
+      <div className="relative z-10 w-full max-w-md">
         {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-600/25">
-            <Activity className="w-9 h-9 text-white" />
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-600/30">
+            <Activity className="h-9 w-9 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-2xl font-bold text-white">
             Maintenance RMASC
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="mt-1 text-sm text-slate-400">
             Plateforme de maintenance prédictive
           </p>
         </div>
 
-        {/* Login Card */}
-        <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-xl p-8">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">
+        {/* Carte en verre fumé */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-8 shadow-2xl backdrop-blur-xl">
+          <h2 className="mb-6 text-lg font-semibold text-white">
             Connectez-vous à votre compte
           </h2>
 
           {error && (
             <div
               role="alert"
-              className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4"
+              className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 p-3"
             >
-              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+              <p className="text-sm text-red-200">{error}</p>
             </div>
           )}
 
@@ -172,7 +198,7 @@ function LoginForm() {
             <div>
               <label
                 htmlFor="email"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+                className="mb-1.5 block text-sm font-medium text-slate-300"
               >
                 Adresse e-mail
               </label>
@@ -202,7 +228,7 @@ function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="vous@entreprise.com"
-                className="w-full px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
             </div>
@@ -210,7 +236,7 @@ function LoginForm() {
             <div>
               <label
                 htmlFor="password"
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+                className="mb-1.5 block text-sm font-medium text-slate-300"
               >
                 Mot de passe
               </label>
@@ -228,7 +254,7 @@ function LoginForm() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-10"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-4 py-2.5 pr-10 text-sm text-white placeholder:text-slate-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 />
                 <button
@@ -239,7 +265,7 @@ function LoginForm() {
                       ? "Masquer le mot de passe"
                       : "Afficher le mot de passe"
                   }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
                 >
                   {showPassword ? (
                     <EyeOff className="w-4 h-4" />
@@ -283,21 +309,23 @@ function LoginForm() {
           faite derrière lui.
 
           `process.env.NODE_ENV` est remplacé par sa valeur à la construction.
-          Dans un lot de production la condition devient `"production" !==
-          "production"`, et le panneau disparaît du JavaScript livré : il n'est
-          pas masqué, il n'existe pas. Le masquer n'aurait pas suffi — les
-          identifiants seraient restés lisibles dans le contenu de la page.
+          Dans un lot de production la condition devient `"production" ===
+          "development"`, donc `false`, et le panneau disparaît du JavaScript
+          livré : il n'est pas masqué, il n'existe pas. Le masquer n'aurait pas
+          suffi — les identifiants seraient restés lisibles dans le contenu de
+          la page. La garde est désormais strictement `"development"` : un
+          environnement `test` ou tout autre valeur ne l'ouvre pas non plus.
 
           Le panneau reste tel quel en développement, où il rend un vrai
           service : sans base de données, il n'existe aucun compte à qui se
           connecter.
         */}
-        {process.env.NODE_ENV !== "production" && (
-          <div className="mt-6 bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
-            <p className="text-xs text-gray-500 text-center mb-3 font-medium uppercase tracking-wider">
-              Accès démo rapide — connexion immédiate en un appui
+        {process.env.NODE_ENV === "development" && (
+          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl backdrop-blur-xl">
+            <p className="mb-3 text-center text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+              Accès démo — connexion en un appui
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-3">
               {QUICK_ACCESS.map((item) => {
                 const busy = demoLoading === item.email;
                 return (
@@ -306,19 +334,23 @@ function LoginForm() {
                     type="button"
                     disabled={busy || isLoading}
                     onClick={() => quickLogin(item.email)}
-                    className={`px-3 py-2 text-xs font-medium rounded-lg border transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-wait ${item.color}`}
+                    className={`flex flex-col items-center justify-center gap-1 rounded-xl border px-3 py-3 text-sm font-bold transition-colors disabled:cursor-wait disabled:opacity-60 ${item.color}`}
                   >
-                    {busy && (
-                      <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                    )}
-                    {busy ? "Connexion…" : `Se connecter en tant que ${item.role}`}
+                    <span className="flex items-center gap-1.5">
+                      {busy ? (
+                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      ) : (
+                        <span aria-hidden="true">{item.dot}</span>
+                      )}
+                      {busy ? "Connexion…" : item.role}
+                    </span>
+                    <span className="max-w-full truncate text-[10px] font-normal opacity-70">
+                      {item.email}
+                    </span>
                   </button>
                 );
               })}
             </div>
-            <p className="text-[10px] text-gray-400 text-center mt-2">
-              Mot de passe de démonstration pour tous les comptes : password123
-            </p>
           </div>
         )}
       </div>

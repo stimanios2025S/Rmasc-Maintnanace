@@ -103,7 +103,7 @@ current map — screens that exist, with the route that reaches them.
 | **Contracts & SLA** | `/administration/contrats`, `/administration/contrats/[id]`, `/client` | Registry, state machine, tacit renewal + expiry alerts, client coverage |
 | **Parts** | `/administration/pieces` | Part requests: validate → order → fit |
 | **Storekeeper** | `/administration/magasinier` | Reception desk; transmits a validated need to the central store |
-| **Clients** | `/administration/clients`, `/administration/clients/[id]` | Accounts, buildings, generated access |
+| **Clients** | `/administration/clients`, `/administration/clients/[id]` | Client portfolio, contracted fleet, contracts & documents, equipment, intervention and part-replacement archive |
 | **Access requests** | `/administration/clients/demandes` | QR access requests: approve → account created, building attached, invitation |
 | **Takeovers** | `/administration/ascenseurs` | Third-party unit intake, audit work order, RMASC code + QR |
 | **Personnel** | `/administration/personnel` | Staff accounts and credentials |
@@ -337,7 +337,7 @@ including the three technician accounts and their dispatch statuses:
 
 ```
     Tech 1:  tech1@elevatorpulse.com   (AVAILABLE)
-    Tech 2:  tech2@elevatorpulse.com   (ON_JOB)
+    Tech 2:  yacine@elevatorpulse.com  (ON_JOB)
     Tech 3:  tech3@elevatorpulse.com  (ON_LEAVE — not dispatchable)
 ```
 
@@ -382,8 +382,9 @@ alerting and emergency work order generation can be observed.
 |------|-------|----------|
 | Admin | admin@elevatorpulse.com | password123 |
 | Maintenance Manager | manager@elevatorpulse.com | password123 |
-| Field Technician | tech1@elevatorpulse.com | password123 |
-| Building Owner | owner@metroplaza.com | password123 |
+| Field Technician | yacine@elevatorpulse.com | password123 |
+| Building Owner | client@elevatorpulse.com | password123 |
+| Building Owner (hors contrat) | nadia.boumediene@lesoliviers.dz | password123 |
 
 > These are seed credentials for local development only. Change or remove them
 > before any deployment.

@@ -12,8 +12,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { handleRouteError } from "@/lib/api/http";
-import { requireRole, OPS_ROLES } from "@/lib/api/guard";
+import { requireRole } from "@/lib/api/guard";
 import type { Prisma } from "@prisma/client";
+import { effectiveStatus } from "@/lib/contracts/status";
+import {
+  evaluateThreshold,
+  loadThresholds,
+  payloadThresholds,
+} from "@/lib/iot/thresholds";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoDashboard } from "@/lib/demo/responses";
 
@@ -23,7 +29,16 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const session = await requireRole(...OPS_ROLES, "BUILDING_OWNER");
+    /**
+     * Vue de bureau : les agrégats couvrent tout le parc. Un technicien est
+     * redirigé hors de `/tableau-de-bord` par le middleware ; cette garde ferme
+     * l'appel direct à la route.
+     */
+    const session = await requireRole(
+      "ADMIN",
+      "MAINTENANCE_MANAGER",
+      "BUILDING_OWNER"
+    );
 
     // Scope every query in this handler through one filter.
     const buildingScope: Prisma.BuildingWhereInput =
@@ -46,11 +61,21 @@ export async function GET() {
       emergencyWorkOrders,
       recentAlerts,
       recentWorkOrders,
+      contracts,
+      snapshotRows,
+      blockedCriticalParts,
     ] = await Promise.all([
         prisma.building.count({ where: buildingScope }),
         prisma.elevator.findMany({
           where: elevatorScope,
-          select: { id: true, status: true, overallHealth: true },
+          select: {
+            id: true,
+            status: true,
+            overallHealth: true,
+            // Lu pour la charge de cabine : la surcharge se juge par rapport à
+            // la capacité nominale de l'appareil, pas contre un seuil absolu.
+            maxPayloadKg: true,
+          },
         }),
         prisma.workOrder.count({
           where: {
@@ -101,6 +126,71 @@ export async function GET() {
             elevator: { select: { elevatorCode: true } },
           },
         }),
+        /**
+         * Les contrats en cours, pour le compteur « immeubles sous contrat ».
+         *
+         * `effectiveStatus` est appliqué plus bas plutôt qu'en base : un
+         * contrat `ACTIVE` dont la date est passée ne couvre plus rien, et un
+         * filtre SQL sur le seul statut annoncerait un immeuble couvert que la
+         * page des contrats déclare échu. La règle est celle de
+         * `src/lib/contracts/status.ts`, la même que lit le badge de couverture.
+         */
+        prisma.contract.findMany({
+          where: {
+            status: { in: ["ACTIVE", "SUSPENDED"] },
+            buildings: { some: { building: buildingScope } },
+          },
+          select: {
+            status: true,
+            renewalMode: true,
+            startsAt: true,
+            endsAt: true,
+            buildings: { select: { buildingId: true } },
+          },
+        }),
+        /**
+         * Le dernier relevé de chaque appareil, pour le centre de télémétrie.
+         *
+         * `TelemetrySnapshot` porte exactement une ligne par appareil — c'est
+         * sa clé unique — donc pas de fenêtre glissante ni de doublons : le
+         * panneau lit l'état courant, l'historique reste dans le graphique.
+         */
+        prisma.telemetrySnapshot.findMany({
+          where: { elevator: elevatorScope },
+          select: {
+            elevatorId: true,
+            lastUpdated: true,
+            motorVibrationMmS: true,
+            motorTemperatureC: true,
+            cabinLoadKg: true,
+            elevator: {
+              select: {
+                elevatorCode: true,
+                status: true,
+                maxPayloadKg: true,
+                building: { select: { name: true } },
+              },
+            },
+          },
+        }),
+        /**
+         * Les interventions prioritaires bloquées par une pièce.
+         *
+         * Une urgence rouge qui attend une pièce n'est pas visible sur le
+         * tableau : elle a un technicien, un statut normal, et pourtant elle
+         * n'avancera pas. C'est la seule alerte de ce panneau qui ne se déduit
+         * d'aucun compteur, et c'est pourquoi elle a sa propre requête.
+         */
+        prisma.workOrder.count({
+          where: {
+            ...workOrderScope,
+            priority: { in: ["EMERGENCY", "CRITICAL"] },
+            status: { in: ["OPEN", "ASSIGNED", "IN_PROGRESS", "ON_HOLD"] },
+            partRequirements: {
+              some: { status: { in: ["PENDING_STOCK_CHECK", "ORDER_REQUIRED"] } },
+            },
+          },
+        }),
       ]);
 
     const countByStatus = (status: string) =>
@@ -114,6 +204,21 @@ export async function GET() {
               10
           ) / 10
         : 0;
+
+    /**
+     * Combien d'immeubles sont réellement couverts aujourd'hui.
+     *
+     * Distinct des brouillons et des contrats échus : c'est la question que
+     * pose la carte « Parc global », et y répondre par le nombre d'immeubles
+     * existants serait un chiffre qui ne veut rien dire pour un dispatcheur.
+     */
+    const now = new Date();
+    const coveredBuildings = new Set<string>();
+    for (const contract of contracts) {
+      if (effectiveStatus(contract, now) !== "ACTIVE") continue;
+      for (const link of contract.buildings) coveredBuildings.add(link.buildingId);
+    }
+    const buildingsUnderContract = coveredBuildings.size;
 
     const buildings = await prisma.building.findMany({
       where: buildingScope,
@@ -192,11 +297,70 @@ export async function GET() {
       };
     }
 
+    /**
+     * L'état courant des capteurs, appareil par appareil.
+     *
+     * Les seuils sont ceux que l'exploitant a réglés (`ThresholdRule`), lus
+     * par le même module que l'ingestion — un panneau qui afficherait un
+     * voyant vert sur une valeur que l'ingestion vient d'alerter serait pire
+     * que pas de panneau du tout. La charge de cabine fait exception et se
+     * juge contre la capacité nominale de chaque machine, comme à l'ingestion.
+     */
+    const thresholds = await loadThresholds();
+    const sensorSnapshot = snapshotRows
+      .map((row) => {
+        const candidates = [
+          {
+            definition: thresholds.get("motor_temperature_c") ?? null,
+            value: row.motorTemperatureC,
+          },
+          {
+            definition: thresholds.get("motor_vibration_mm_s") ?? null,
+            value: row.motorVibrationMmS,
+          },
+          {
+            definition: payloadThresholds(row.elevator.maxPayloadKg),
+            value: row.cabinLoadKg,
+          },
+        ];
+
+        const readings = candidates.flatMap(({ definition, value }) => {
+          if (!definition || value === null) return [];
+          const breach = evaluateThreshold(definition, value);
+          return [
+            {
+              metricName: definition.metricName,
+              title: definition.title,
+              unit: definition.unit,
+              value,
+              level:
+                breach === null
+                  ? "ok"
+                  : breach.severity === "CRITICAL"
+                    ? "critical"
+                    : "warning",
+            },
+          ];
+        });
+
+        return {
+          elevatorId: row.elevatorId,
+          elevatorCode: row.elevator.elevatorCode,
+          buildingName: row.elevator.building.name,
+          status: row.elevator.status,
+          lastUpdated: row.lastUpdated,
+          readings,
+        };
+      })
+      .sort((a, b) => a.elevatorCode.localeCompare(b.elevatorCode));
+
     return NextResponse.json({
       data: {
         telemetryFeed,
+        sensorSnapshot,
         stats: {
           totalBuildings,
+          buildingsUnderContract,
           totalElevators: elevators.length,
           operationalCount: countByStatus("OPERATIONAL"),
           serviceRequiredCount: countByStatus("SERVICE_REQUIRED"),
@@ -205,6 +369,8 @@ export async function GET() {
           offlineCount: countByStatus("OFFLINE"),
           openWorkOrders,
           emergencyWorkOrders,
+          /** Urgences bloquées par une pièce manquante (stock ou commande). */
+          blockedCriticalParts,
           avgHealth,
         },
         statusBreakdown: [

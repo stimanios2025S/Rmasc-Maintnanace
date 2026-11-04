@@ -1,21 +1,16 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Activity,
-  Building2,
-  Search,
-  ChevronRight,
-  Thermometer,
-  Clock,
-} from "lucide-react";
+import { Activity, Search } from "lucide-react";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
-import { ContractSlaBadge } from "@/components/contracts/contract-sla-badge";
+import { TrafficLegend } from "@/components/ui/traffic";
 import { contractForBuilding } from "@/lib/contracts/coverage";
 import type { CoverageContract } from "@/lib/contracts/coverage";
 import { formatEnum } from "@/lib/utils";
-import { elevatorStatusStyle } from "@/lib/ui/status-styles";
+import { SectionTabs, PARC_TABS } from "@/components/layout/section-tabs";
+import { ElevatorCard } from "@/components/fleet/elevator-card";
+import type { ElevatorData } from "@/components/fleet/elevator-card";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -27,10 +22,12 @@ interface ElevatorRow {
   status: string;
   overallHealth: number;
   operatingHours: number;
-  building: { id: string; name: string; address: string };
+  building: { id: string; name: string; address: string; city: string; accessCode: string | null };
   latestTelemetry: {
     motorTemperatureC: number | null;
     motorVibrationMmS: number | null;
+    doorSpeedMs: number | null;
+    operatingHours: number | null;
   } | null;
   _count: { workOrders: number; alerts: number };
 }
@@ -73,6 +70,7 @@ function plural(count: number, suffix = "s"): string {
 }
 
 export default function ElevatorsPage() {
+  const router = useRouter();
   const [elevators, setElevators] = useState<ElevatorRow[]>([]);
   /**
    * La couverture contractuelle, lue à part.
@@ -93,6 +91,24 @@ export default function ElevatorsPage() {
   const [filter, setFilter] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  /**
+   * Le filtre passé par la recherche globale.
+   *
+   * La palette oriente un résultat « immeuble » vers `/ascenseurs?q=<nom>`.
+   * Le paramètre est lu dans `window.location` plutôt que par
+   * `useSearchParams` : ce dernier exige une frontière Suspense pour le rendu
+   * statique, et cette page n'a aucune raison d'en ajouter une pour préremplir
+   * un champ.
+   */
+  useEffect(() => {
+    try {
+      const initial = new URLSearchParams(window.location.search).get("q");
+      if (initial) setSearch(initial);
+    } catch {
+      // Pas de paramètre : la liste s'ouvre sans filtre.
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +173,8 @@ export default function ElevatorsPage() {
 
   return (
     <div className="space-y-6">
+      <SectionTabs tabs={PARC_TABS} ariaLabel="Parc ascenseurs" />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
@@ -199,133 +217,78 @@ export default function ElevatorsPage() {
         </div>
       </div>
 
+      {/* Le code couleur, expliqué une fois pour tout l'écran. */}
+      <TrafficLegend className="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-800 dark:bg-gray-900" />
+
       {/* Elevator Cards */}
       {filtered.length === 0 ? (
         <EmptyState
+          icon={Activity}
           title={
             elevators.length === 0
               ? "Aucun ascenseur enregistré"
               : "Aucun ascenseur ne correspond à vos filtres"
           }
-          hint={
+          description={
             elevators.length === 0
-              ? "Enregistrez des ascenseurs via POST /api/elevators, puis lancez le simulateur IoT."
-              : "Essayez d'effacer la recherche ou de choisir un autre statut."
+              ? "Le parc se remplit depuis la fiche d'un immeuble ou à la reprise d'un appareil. Une fois l'appareil enregistré, sa télémétrie et ses interventions s'affichent ici."
+              : "Effacez la recherche ou choisissez un autre état. Les appareils en service apparaissent en vert, ceux à surveiller en orange, les arrêts critiques en rouge."
+          }
+          action={
+            elevators.length === 0
+              ? {
+                  label: "Enregistrer un appareil",
+                  href: "/administration/ascenseurs",
+                }
+              : undefined
           }
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((el) => {
-            const statusStyle = elevatorStatusStyle(el.status);
             const contract = contractForBuilding(contracts, el.building.id);
+            const cardStatus: ElevatorData["status"] =
+              el.status === "CRITICAL_SHUTDOWN" || el.status === "OFFLINE"
+                ? "CRITICAL"
+                : el.status === "SERVICE_REQUIRED" ||
+                    el.status === "ANOMALY_DETECTED"
+                  ? "WARNING"
+                  : "OPERATIONAL";
+
+            const openDetails = () => router.push(`/ascenseurs/${el.id}`);
+            const openIntervention = () =>
+              router.push(`/bons-de-travail?elevatorId=${el.id}`);
+
             return (
-              <Link
+              <ElevatorCard
                 key={el.id}
-                href={`/ascenseurs/${el.id}`}
-                className="group bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 hover:shadow-lg hover:border-blue-200 dark:hover:border-blue-800 transition-all"
-              >
-                {/* Header */}
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="font-mono text-sm font-semibold text-gray-900 dark:text-white">
-                      {el.elevatorCode}
-                    </h3>
-                    <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
-                      <Building2 className="w-3 h-3" />
-                      {el.building.name}
-                    </p>
-                  </div>
-                  <span
-                    className={`px-2 py-1 text-[10px] font-bold rounded-full border ${statusStyle.bg} ${statusStyle.text}`}
-                  >
-                    <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${statusStyle.dot}`} />
-                    {STATUS_LABELS[el.status] ?? formatEnum(el.status)}
-                  </span>
-                </div>
-
-                {/* Model Info + couverture contractuelle */}
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <p className="text-xs text-gray-500">
-                    {BRAND_LABELS[el.brand] ?? el.brand} {el.model}
-                  </p>
-                  {/*
-                    Le palier vient du contrat qui couvre l'immeuble, pas de
-                    l'étiquette statique du site. Un appareil hors contrat le
-                    dit au lieu d'afficher une promesse éteinte.
-                  */}
-                  {coverageLoaded ? (
-                    <ContractSlaBadge contract={contract} size="sm" />
-                  ) : (
-                    <span className="text-[10px] text-gray-400">
-                      couverture indisponible
-                    </span>
-                  )}
-                  {el._count.alerts > 0 && (
-                    <span className="text-xs text-red-500 font-medium">
-                      • {el._count.alerts} alerte
-                      {plural(el._count.alerts)} ouverte
-                      {plural(el._count.alerts)}
-                    </span>
-                  )}
-                </div>
-
-                {/* Health Bar */}
-                <div className="mb-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-gray-500">Santé</span>
-                    <span className="text-xs font-bold text-gray-900 dark:text-white">
-                      {el.overallHealth}%
-                    </span>
-                  </div>
-                  <div className="h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${
-                        el.overallHealth > 70
-                          ? "bg-green-500"
-                          : el.overallHealth > 40
-                          ? "bg-yellow-500"
-                          : "bg-red-500"
-                      }`}
-                      style={{ width: `${el.overallHealth}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Quick Metrics */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="text-center p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                    <Thermometer className="w-3.5 h-3.5 mx-auto text-red-400 mb-1" />
-                    <p className="text-xs font-bold text-gray-900 dark:text-white">
-                      {el.latestTelemetry?.motorTemperatureC != null
-                        ? `${el.latestTelemetry.motorTemperatureC}°C`
-                        : "—"}
-                    </p>
-                  </div>
-                  <div className="text-center p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                    <Activity className="w-3.5 h-3.5 mx-auto text-blue-400 mb-1" />
-                    <p className="text-xs font-bold text-gray-900 dark:text-white">
-                      {el.latestTelemetry?.motorVibrationMmS ?? "—"}
-                    </p>
-                    <p className="text-[9px] text-gray-400">mm/s</p>
-                  </div>
-                  <div className="text-center p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                    <Clock className="w-3.5 h-3.5 mx-auto text-gray-400 mb-1" />
-                    <p className="text-xs font-bold text-gray-900 dark:text-white">
-                      {(el.operatingHours / 1000).toLocaleString("fr-FR", {
-                        minimumFractionDigits: 1,
-                        maximumFractionDigits: 1,
-                      })}
-                      k
-                    </p>
-                    <p className="text-[9px] text-gray-400">heures</p>
-                  </div>
-                </div>
-
-                {/* Footer */}
-                <div className="mt-3 flex items-center justify-end text-xs text-blue-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                  Voir le détail <ChevronRight className="w-3 h-3 ml-1" />
-                </div>
-              </Link>
+                elevator={{
+                  id: el.elevatorCode,
+                  buildingName: el.building.name,
+                  city: el.building.city,
+                  accessCode: el.building.accessCode,
+                  brandModel: `${BRAND_LABELS[el.brand] ?? formatEnum(el.brand)} ${el.model}`,
+                  underContract: coverageLoaded && contract != null,
+                  healthScore: el.overallHealth,
+                  status: cardStatus,
+                  telemetry: {
+                    temperature: el.latestTelemetry?.motorTemperatureC ?? null,
+                    speed: el.latestTelemetry?.doorSpeedMs ?? null,
+                    /**
+                     * Les heures viennent du relevé, pas de la colonne
+                     * cumulée de l'appareil : une machine dont la télémétrie
+                     * est muette affichait `0 k h`, un chiffre qui ressemble à
+                     * une mesure et n'en est pas une.
+                     */
+                    operatingHours:
+                      el.latestTelemetry?.operatingHours != null
+                        ? Math.round(el.latestTelemetry.operatingHours / 100) / 10
+                        : null,
+                  },
+                }}
+                onViewDetails={openDetails}
+                onCreateWorkOrder={openIntervention}
+              />
             );
           })}
         </div>

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
+import { StatusLED } from "@/components/ui/status-led";
 import { CredentialsPanel } from "@/components/admin/credentials-panel";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import {
@@ -83,7 +84,9 @@ interface StaffMember {
 type StateFilter =
   | "all"
   | "active"
+  | "available"
   | "on-job"
+  | "on-break"
   | "on-leave"
   | "off-duty"
   | "inactive";
@@ -100,9 +103,19 @@ const STATE_FILTERS: {
     query: (p) => p.set("active", "true"),
   },
   {
+    key: "available",
+    label: "Disponibles",
+    query: (p) => p.set("status", "AVAILABLE"),
+  },
+  {
     key: "on-job",
     label: "En intervention",
     query: (p) => p.set("status", "ON_JOB"),
+  },
+  {
+    key: "on-break",
+    label: "En pause",
+    query: (p) => p.set("status", "ON_BREAK"),
   },
   {
     key: "on-leave",
@@ -121,14 +134,24 @@ const STATE_FILTERS: {
   },
 ];
 
-const STATUS_STYLES: Record<TechnicianStatus, string> = {
-  AVAILABLE:
-    "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
-  ON_JOB: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
-  ON_LEAVE:
-    "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  OFF_DUTY: "bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-};
+/**
+ * Le baromètre : un état, un filtre, une LED.
+ *
+ * L'ordre est celui de la journée d'un technicien — disponible, en
+ * intervention, en pause, en congé, hors service — et non l'ordre de
+ * l'énumération. Chaque carte est un bouton : elle applique le même filtre que
+ * l'onglet correspondant, sans en dupliquer la règle.
+ */
+const BAROMETER: readonly {
+  status: TechnicianStatus;
+  state: StateFilter;
+}[] = [
+  { status: "AVAILABLE", state: "available" },
+  { status: "ON_JOB", state: "on-job" },
+  { status: "ON_BREAK", state: "on-break" },
+  { status: "ON_LEAVE", state: "on-leave" },
+  { status: "OFF_DUTY", state: "off-duty" },
+];
 
 const ROLE_STYLES: Record<StaffRole, string> = {
   ADMIN: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
@@ -236,6 +259,64 @@ export default function PersonnelPage() {
     }),
     [members]
   );
+
+  /**
+   * Le baromètre compte toute l'équipe, pas la vue filtrée.
+   *
+   * Sans cette lecture séparée, cliquer sur « Disponibles » ramènerait toutes
+   * les autres cartes à zéro : le baromètre mesurerait alors le filtre au lieu
+   * du parc. Il interroge donc `/api/personnel` sans paramètre, et ne retient
+   * que les techniciens actifs — les rôles de bureau n'ont pas de
+   * disponibilité qui veuille dire quelque chose.
+   */
+  const [statusCounts, setStatusCounts] = useState<
+    Record<TechnicianStatus, number>
+  >({
+    AVAILABLE: 0,
+    ON_JOB: 0,
+    ON_LEAVE: 0,
+    OFF_DUTY: 0,
+    ON_BREAK: 0,
+  });
+
+  const loadCounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/personnel");
+      if (!res.ok) return;
+      const json = await res.json();
+      const all: StaffMember[] = Array.isArray(json.data?.members)
+        ? json.data.members
+        : [];
+
+      const next: Record<TechnicianStatus, number> = {
+        AVAILABLE: 0,
+        ON_JOB: 0,
+        ON_LEAVE: 0,
+        OFF_DUTY: 0,
+        ON_BREAK: 0,
+      };
+
+      for (const member of all) {
+        if (member.role !== "FIELD_TECHNICIAN" || !member.isActive) continue;
+        next[member.status] = (next[member.status] ?? 0) + 1;
+      }
+
+      setStatusCounts(next);
+    } catch {
+      // Le baromètre garde les derniers chiffres connus ; le reste de l'écran
+      // signale déjà l'échec de la lecture principale.
+    }
+  }, []);
+
+  // Rafraîchissement en direct : la liste et le baromètre toutes les 25 s.
+  useEffect(() => {
+    void loadCounts();
+    const id = window.setInterval(() => {
+      void load({ silent: true });
+      void loadCounts();
+    }, 25_000);
+    return () => window.clearInterval(id);
+  }, [load, loadCounts]);
 
   function closeForm() {
     setEditing(null);
@@ -389,6 +470,56 @@ export default function PersonnelPage() {
         />
       )}
 
+      {/* ── Baromètre de disponibilité ─────────────────────── */}
+      <section aria-labelledby="barometer-heading">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2
+              id="barometer-heading"
+              className="text-lg font-semibold text-gray-900 dark:text-white"
+            >
+              Baromètre de disponibilité
+            </h2>
+            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+              Cliquez sur un état pour filtrer la liste. Actualisation
+              automatique toutes les 25 s.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+            Temps réel
+          </span>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {BAROMETER.map((item) => {
+            const active = state === item.state;
+            return (
+              <button
+                key={item.status}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setState(item.state)}
+                className={`rounded-2xl border p-4 text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  active
+                    ? "border-blue-500 bg-white ring-2 ring-blue-500/30 dark:bg-gray-900"
+                    : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700"
+                }`}
+              >
+                <StatusLED status={item.status} />
+                <p className="mt-3 text-3xl font-bold tabular-nums text-gray-900 dark:text-white">
+                  {statusCounts[item.status] ?? 0}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  technicien{(statusCounts[item.status] ?? 0) > 1 ? "s" : ""}{" "}
+                  actif{(statusCounts[item.status] ?? 0) > 1 ? "s" : ""}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -524,8 +655,14 @@ export default function PersonnelPage() {
       {members.length === 0 ? (
         <Card className="p-6">
           <EmptyState
+            icon={UserPlus}
             title="Aucun compte dans ce filtre"
-            hint="Changez de rôle ou d'état, ou ouvrez un compte avec « Nouveau salarié »."
+            description="Changez de rôle ou d'état, ou ouvrez un compte. Un compte de salarié porte le rôle qui décide de ce qu'il peut voir et faire."
+            action={{
+              label: "Nouveau salarié",
+              icon: UserPlus,
+              onClick: openCreate,
+            }}
           />
         </Card>
       ) : (
@@ -557,13 +694,14 @@ export default function PersonnelPage() {
                       {enumLabel(member.role)}
                     </span>
 
-                    {member.isActive ? (
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_STYLES[member.status]}`}
-                      >
-                        {enumLabel(member.status)}
-                      </span>
-                    ) : (
+                    {/* Le témoin LED porte l'état ; le badge « inactif » reste
+                        séparé, parce qu'un compte désactivé et une
+                        disponibilité sont deux faits différents. */}
+                    {member.role === "FIELD_TECHNICIAN" && (
+                      <StatusLED status={member.status} />
+                    )}
+
+                    {!member.isActive && (
                       <span className="inline-flex items-center gap-1 rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:bg-gray-800 dark:text-gray-400">
                         <CircleX className="h-3 w-3" aria-hidden="true" />
                         Compte inactif

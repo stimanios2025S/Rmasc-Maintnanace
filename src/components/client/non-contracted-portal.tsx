@@ -7,14 +7,18 @@ import { fr } from "date-fns/locale";
 import {
   ArrowRight,
   CheckCircle2,
+  Download,
   FileSpreadsheet,
   Loader2,
   Phone,
+  Receipt,
   RefreshCw,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState } from "@/components/ui/states";
 import { InterventionActions } from "@/components/client/intervention-actions";
+import { ClientQuotesCard } from "@/components/client/quotes-card";
+import { formatDzd } from "@/lib/ui/money";
 
 /**
  * The portal for a client we hold no maintenance contract with.
@@ -23,19 +27,27 @@ import { InterventionActions } from "@/components/client/intervention-actions";
  * The contracted portal is built around equipment we already know about: the
  * emergency button escalates a fault on a named elevator, and the wizard walks
  * through that unit's error codes. None of that can exist here — a
- * non-contracted client has no building, no elevator and no error-code history
- * in the system, because that is precisely what "no contract" means.
+ * non-contracted client usually has no building, no elevator and no error-code
+ * history in the system, because that is precisely what "no contract" means.
  *
  * So this portal does the one thing that is possible and useful: it collects
  * the « Fiche Technique ». That form is the first contact, and completing it is
  * how the relationship starts.
  *
+ * WHAT IT ADDS WHEN THE SITE IS KNOWN
+ * A non-contracted building can still exist in the system — a syndic we work
+ * with without a contract, billed per intervention. When that account has
+ * invoices, they are listed here: they are the only document such a client
+ * receives, and hiding them behind a portal that offers a blank form would
+ * leave the bill reachable only by post.
+ *
  * WHAT IT DELIBERATELY DOES NOT DO
  * There is no fault reporting. An incident in this system must point at an
  * elevator (`IncidentReport.elevatorId` is required), so a report filed from
- * this account could not be stored without inventing equipment. The card at
- * the bottom says so plainly and sends the person to the phone instead, which
- * is honest and takes one line — better than a form that fails on submit.
+ * an account with no equipment could not be stored without inventing it. The
+ * card at the bottom says so plainly and sends the person to the phone
+ * instead, which is honest and takes one line — better than a form that fails
+ * on submit.
  */
 
 interface SheetRow {
@@ -46,8 +58,18 @@ interface SheetRow {
   createdAt: string;
 }
 
+interface InvoiceRow {
+  id: string;
+  number: string;
+  issuedAt: string;
+  amount: string | number;
+  orderTitle: string;
+  buildingName: string;
+}
+
 export function NonContractedPortal() {
   const [sheets, setSheets] = useState<SheetRow[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,10 +77,23 @@ export function NonContractedPortal() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/technical-sheets");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const payload = await res.json();
+      const [sheetRes, invoiceRes] = await Promise.all([
+        fetch("/api/technical-sheets"),
+        // Une facture d'intervention existe aussi sans contrat : c'est même
+        // le seul document que ce client reçoit. Sa lecture échoue à part
+        // pour ne pas vider l'écran des fiches techniques.
+        fetch("/api/invoices?limit=20").catch(() => null),
+      ]);
+      if (!sheetRes.ok) throw new Error(`HTTP ${sheetRes.status}`);
+      const payload = await sheetRes.json();
       setSheets(payload?.data?.sheets ?? []);
+
+      if (invoiceRes?.ok) {
+        const invoicePayload = await invoiceRes.json().catch(() => null);
+        setInvoices(Array.isArray(invoicePayload?.data) ? invoicePayload.data : []);
+      } else {
+        setInvoices([]);
+      }
     } catch {
       setError("Impossible de charger vos fiches techniques.");
     } finally {
@@ -198,6 +233,64 @@ export function NonContractedPortal() {
           </ul>
         )}
       </Card>
+
+      {/* Une offre à décider n'a pas besoin d'un contrat pour exister : c'est
+          même le seul document commercial que ce compte reçoit. La carte reste
+          absente tant qu'il n'y a aucun devis, pour ne pas allonger l'écran
+          d'un prospect qui n'a encore rien demandé. */}
+      <ClientQuotesCard hideWhenEmpty />
+
+      {/* Les factures d'intervention. Le portail ne les affichait pas parce
+          qu'un compte sans contrat n'avait jusqu'ici ni immeuble ni appareil ;
+          depuis qu'un site peut lui être rattaché, la facture à l'acte est le
+          document qu'il vient chercher. La carte reste absente tant qu'il n'y
+          a rien à payer : un prospect sans site garde son écran d'origine. */}
+      {invoices.length > 0 && (
+        <Card className="p-5">
+          <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900 dark:text-white">
+            <Receipt className="h-5 w-5 text-gray-400" aria-hidden="true" />
+            Mes factures
+          </h2>
+          <ul className="mt-4 divide-y divide-gray-100 dark:divide-gray-800">
+            {invoices.map((invoice) => (
+              <li
+                key={invoice.id}
+                className="flex flex-wrap items-center justify-between gap-3 py-3"
+              >
+                <div className="min-w-0">
+                  <p className="font-mono text-sm font-medium text-gray-900 dark:text-white">
+                    {invoice.number}
+                  </p>
+                  <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-300">
+                    {invoice.orderTitle}
+                  </p>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {invoice.buildingName} ·{" "}
+                    {new Date(invoice.issuedAt).toLocaleDateString("fr-FR", {
+                      day: "2-digit",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-semibold tabular-nums text-gray-900 dark:text-white">
+                    {formatDzd(invoice.amount) ?? "—"}
+                  </span>
+                  <a
+                    href={`/api/invoices/${invoice.id}/pdf`}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    Télécharger
+                  </a>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {/* Said plainly rather than left as an absent button. Someone whose lift
           has stopped will look for the red button they have heard about, and

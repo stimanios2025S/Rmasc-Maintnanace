@@ -57,6 +57,8 @@ export function IncidentWizard({
     null
   );
   const [error, setError] = useState<string | null>(null);
+  /** Vrai quand le serveur a acquitté en mode démonstration, sans écrire. */
+  const [demoNotice, setDemoNotice] = useState(false);
 
   // Asked for as soon as the wizard appears, and never waited on. By the time
   // an occupant has chosen an elevator and read a code's steps the answer has
@@ -135,6 +137,7 @@ export function IncidentWizard({
 
     setSubmitting(outcome);
     setError(null);
+    setDemoNotice(false);
 
     // Whatever the capture has produced so far — never awaited, so a slow or
     // refused fix cannot hold up a report about a stopped lift.
@@ -156,15 +159,28 @@ export function IncidentWizard({
         }),
       });
 
+      const payload = await res.json().catch(() => null);
+
       if (!res.ok) {
-        const payload = await res.json().catch(() => null);
         throw new Error(payload?.error ?? "L'envoi a échoué.");
       }
 
+      /**
+       * Un acquittement de démonstration n'est pas un enregistrement.
+       *
+       * La route le signale par `demo: true` lorsqu'aucune base n'est joignable
+       * (voir `src/app/api/incidents/route.ts`). Le dire à l'écran vaut mieux
+       * qu'un « merci, un technicien arrive » qui ne serait suivi de rien.
+       */
+      const isDemo = payload?.demo === true;
+      setDemoNotice(isDemo);
+
       speak(
-        outcome === "resolved"
-          ? "Merci. Votre signalement est enregistré comme résolu."
-          : "Merci. Un technicien va être envoyé."
+        isDemo
+          ? "Mode démonstration. Le signalement n'a pas été enregistré."
+          : outcome === "resolved"
+            ? "Merci. Votre signalement est enregistré comme résolu."
+            : "Merci. Un technicien va être envoyé."
       );
 
       // Back to the start, ready for the next problem.
@@ -426,6 +442,17 @@ export function IncidentWizard({
             </p>
           )}
         </div>
+      )}
+
+      {demoNotice && (
+        <p
+          role="status"
+          className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+        >
+          Mode démonstration : le signalement a été acquitté, mais il n&apos;a
+          pas été enregistré en base. Démarrez PostgreSQL pour que les
+          signalements soient conservés.
+        </p>
       )}
 
       {error && (
