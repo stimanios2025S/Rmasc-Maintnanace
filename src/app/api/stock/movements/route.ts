@@ -10,12 +10,24 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
-import { handleRouteError, parsePagination } from "@/lib/api/http";
+import {
+  handleRouteError,
+  parseEnumParam,
+  parsePagination,
+} from "@/lib/api/http";
 import { MANAGEMENT_ROLES, requireRole } from "@/lib/api/guard";
 import { shouldServeDemoData } from "@/lib/demo/mode";
 
 export const dynamic = "force-dynamic";
+
+const MOVEMENT_TYPES = [
+  "ENTRY",
+  "EXIT",
+  "RESERVATION",
+  "ADJUSTMENT",
+] as const;
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,8 +39,34 @@ export async function GET(request: NextRequest) {
     });
     const stockItemId =
       request.nextUrl.searchParams.get("stockItemId") || undefined;
+    const type = parseEnumParam(
+      request.nextUrl.searchParams,
+      "type",
+      MOVEMENT_TYPES
+    );
+    const query = request.nextUrl.searchParams.get("q")?.trim() || undefined;
 
-    const where = stockItemId ? { stockItemId } : {};
+    /**
+     * Les filtres se composent par intersection : un type et une recherche
+     * textuelle doivent pouvoir être appliqués ensemble. La recherche porte
+     * sur la référence et la désignation de l'article, pas sur le motif libre
+     * — un motif est une phrase, et une recherche plein texte dessus rendrait
+     * des résultats que l'utilisateur ne peut pas expliquer.
+     */
+    const where: Prisma.StockMovementWhereInput = {
+      ...(stockItemId ? { stockItemId } : {}),
+      ...(type ? { type } : {}),
+      ...(query
+        ? {
+            stockItem: {
+              OR: [
+                { reference: { contains: query, mode: "insensitive" } },
+                { name: { contains: query, mode: "insensitive" } },
+              ],
+            },
+          }
+        : {}),
+    };
 
     const [rows, total] = await Promise.all([
       prisma.stockMovement.findMany({

@@ -920,6 +920,21 @@ model WorkOrder {
   /// Metres from the site centre, rounded. NULL when either end is unknown.
   checkInDistanceM Int?             @map("check_in_distance_m")
 
+  /// When the technician pressed « Pointer la fin » — they have left the site.
+  ///
+  /// The other end of `arrivedAt`, and a column of its own for the same
+  /// reason: the duration of the labour is what the office bills and what a
+  /// customer disputes, and it must be the time actually spent on site, not
+  /// the time between arrival and the office getting round to approving the
+  /// report. `completedAt` is that second, later moment; deriving a labour
+  /// duration from it would count the approval queue as work.
+  ///
+  /// NULL means the technician has not clocked out, which is the normal state
+  /// for every order in progress. A check-out is refused without an arrival,
+  /// so the two are never inverted, and it is idempotent: a second tap gets a
+  /// 409 carrying the first time rather than a new, later one.
+  departedAt      DateTime?         @map("departed_at")
+
   /// Where the fault was reported from — the client's answer to "where is it",
   /// not the technician's answer to "where am I".
   ///

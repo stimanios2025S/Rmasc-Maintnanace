@@ -1,0 +1,1405 @@
+<title>Audit Administration RMASC</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap">
+<style>
+  /* Plan : acier & sécurité — gris froid légèrement verdi, accent orange de
+     signalisation, sémantique vert/ambre/rouge distincte de l'accent.
+     Document d'audit : une colonne de lecture, des tableaux de preuve,
+     des cartes de module compactes, aucune décoration gratuite. */
+  :root {
+    --bg: #f1f3f0;
+    --surface: #ffffff;
+    --surface-2: #f7f8f5;
+    --surface-3: #ecefe9;
+    --ink: #12191d;
+    --ink-2: #2c383e;
+    --muted: #5d6a70;
+    --faint: #8b979c;
+    --line: #dbe1dd;
+    --line-strong: #c3ccc6;
+    --accent: #b94a12;
+    --accent-ink: #8f380d;
+    --accent-soft: #fbeade;
+    --ok: #176b43;
+    --ok-soft: #e2f2e8;
+    --warn: #855200;
+    --warn-soft: #fcf0d5;
+    --bad: #9c241b;
+    --bad-soft: #fbe8e5;
+    --info: #235a79;
+    --info-soft: #e5eff5;
+    --shadow: 0 1px 0 rgba(18, 25, 29, 0.04), 0 12px 34px rgba(18, 25, 29, 0.055);
+    --radius: 12px;
+    --max: 1120px;
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c1114;
+      --surface: #141b1f;
+      --surface-2: #192227;
+      --surface-3: #202b31;
+      --ink: #e9eff0;
+      --ink-2: #cbd6d8;
+      --muted: #9dabb0;
+      --faint: #74858b;
+      --line: #27343a;
+      --line-strong: #38474e;
+      --accent: #ff8c52;
+      --accent-ink: #ffb187;
+      --accent-soft: #382116;
+      --ok: #6fd39e;
+      --ok-soft: #123327;
+      --warn: #f0b45c;
+      --warn-soft: #332512;
+      --bad: #ff8f84;
+      --bad-soft: #3a1a17;
+      --info: #90c6ea;
+      --info-soft: #142c3b;
+      --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 18px 44px rgba(0, 0, 0, 0.35);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0c1114;
+    --surface: #141b1f;
+    --surface-2: #192227;
+    --surface-3: #202b31;
+    --ink: #e9eff0;
+    --ink-2: #cbd6d8;
+    --muted: #9dabb0;
+    --faint: #74858b;
+    --line: #27343a;
+    --line-strong: #38474e;
+    --accent: #ff8c52;
+    --accent-ink: #ffb187;
+    --accent-soft: #382116;
+    --ok: #6fd39e;
+    --ok-soft: #123327;
+    --warn: #f0b45c;
+    --warn-soft: #332512;
+    --bad: #ff8f84;
+    --bad-soft: #3a1a17;
+    --info: #90c6ea;
+    --info-soft: #142c3b;
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 18px 44px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 0 64px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Source Sans 3", "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: var(--max);
+    margin: 0 auto;
+  }
+
+  h1, h2, h3, .display {
+    font-family: "Archivo", "Segoe UI", sans-serif;
+    text-wrap: balance;
+    letter-spacing: -0.02em;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(2rem, 4.6vw, 3.2rem);
+    line-height: 1.05;
+    font-weight: 700;
+    max-width: 22ch;
+  }
+
+  h2 {
+    margin: 0 0 16px;
+    font-size: clamp(1.25rem, 2.2vw, 1.55rem);
+    line-height: 1.2;
+    font-weight: 600;
+  }
+
+  h3 {
+    margin: 0 0 10px;
+    font-size: 1.02rem;
+    line-height: 1.3;
+    font-weight: 600;
+  }
+
+  p { margin: 0 0 12px; }
+  p:last-child { margin-bottom: 0; }
+
+  code, .mono {
+    font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+    font-size: 0.84em;
+    font-variant-ligatures: none;
+  }
+
+  code {
+    padding: 0.1em 0.32em;
+    border-radius: 5px;
+    background: var(--surface-3);
+    color: var(--ink-2);
+    overflow-wrap: anywhere;
+  }
+
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  /* ── Masthead ─────────────────────────────────────────── */
+  .masthead {
+    padding: 52px 0 28px;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+  }
+
+  .eyebrow::before {
+    content: "";
+    width: 22px;
+    height: 2px;
+    background: var(--accent);
+  }
+
+  .lede {
+    max-width: 68ch;
+    margin-top: 18px;
+    font-size: 1.08rem;
+    color: var(--ink-2);
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    margin-top: 22px;
+  }
+
+  .meta {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 5px 9px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--surface);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  .meta strong {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+  }
+
+  /* ── Verdict ──────────────────────────────────────────── */
+  .verdict {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    gap: 1px;
+    margin: 28px 0 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--line-strong);
+    box-shadow: var(--shadow);
+  }
+
+  .verdict-main {
+    padding: 24px;
+    background: var(--surface);
+  }
+
+  .verdict-side {
+    padding: 24px;
+    background: var(--surface-2);
+  }
+
+  .verdict h2 {
+    margin: 10px 0 8px;
+    font-size: 1.24rem;
+  }
+
+  .verdict p { color: var(--ink-2); font-size: 14.5px; }
+
+  .counts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .count {
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface);
+  }
+
+  .count b {
+    display: block;
+    font-family: "Archivo", sans-serif;
+    font-size: 1.65rem;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .count span {
+    display: block;
+    margin-top: 3px;
+    font-size: 11.5px;
+    line-height: 1.3;
+    color: var(--muted);
+  }
+
+  /* ── Pills ────────────────────────────────────────────── */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .pill::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .pill.ok { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 22%, transparent); }
+  .pill.warn { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 22%, transparent); }
+  .pill.bad { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 22%, transparent); }
+  .pill.info { color: var(--info); background: var(--info-soft); border-color: color-mix(in srgb, var(--info) 22%, transparent); }
+
+  /* ── Sections ─────────────────────────────────────────── */
+  .section {
+    padding: 38px 0 8px;
+    border-top: 1px solid var(--line);
+    margin-top: 30px;
+  }
+
+  .section:first-of-type { border-top: 0; }
+
+  .section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px 20px;
+    margin-bottom: 18px;
+  }
+
+  .section-head .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+  }
+
+  .section-head p {
+    max-width: 46ch;
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: right;
+  }
+
+  .note {
+    margin-top: 18px;
+    padding: 13px 15px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    font-size: 13.5px;
+    color: var(--ink-2);
+  }
+
+  .note strong { color: var(--ink); }
+
+  /* ── Tables ───────────────────────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    margin: 14px 0 20px;
+  }
+
+  table {
+    width: 100%;
+    min-width: 620px;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+
+  thead th {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line-strong);
+    background: var(--surface-2);
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    color: var(--ink-2);
+  }
+
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+
+  td strong { color: var(--ink); font-weight: 600; }
+  td .mono { color: var(--muted); font-size: 11.5px; }
+
+  /* ── Module cards ─────────────────────────────────────── */
+  .modules {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .module {
+    display: flex;
+    flex-direction: column;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    min-width: 0;
+  }
+
+  .module-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .module h3 { margin: 0; font-size: 1.06rem; }
+
+  .module > p {
+    margin: 0 0 10px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+
+  .module ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 7px;
+  }
+
+  .module li {
+    position: relative;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+
+  .module li::before {
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 600;
+    font-size: 12px;
+  }
+
+  .module li.yes::before { content: "✓"; color: var(--ok); }
+  .module li.no::before { content: "×"; color: var(--bad); }
+  .module li.part::before { content: "!"; color: var(--warn); }
+
+  .module .evidence {
+    margin-top: auto;
+    padding-top: 12px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--faint);
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Two-column panels ───────────────────────────────── */
+  .columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .panel {
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    min-width: 0;
+  }
+
+  .panel h3 { margin-bottom: 12px; }
+
+  .checklist {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 9px;
+  }
+
+  .checklist li {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 9px;
+    font-size: 13.5px;
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+
+  .checklist .mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border-radius: 5px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .mark.ok { color: var(--ok); background: var(--ok-soft); }
+  .mark.warn { color: var(--warn); background: var(--warn-soft); }
+  .mark.bad { color: var(--bad); background: var(--bad-soft); }
+
+  /* ── Findings ─────────────────────────────────────────── */
+  .findings {
+    display: grid;
+    gap: 10px;
+  }
+
+  .finding {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-strong);
+    border-radius: 0 9px 9px 0;
+    background: var(--surface);
+  }
+
+  .finding.critical { border-left-color: var(--bad); }
+  .finding.high { border-left-color: var(--accent); }
+  .finding.medium { border-left-color: var(--warn); }
+
+  .severity {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+
+  .critical .severity { color: var(--bad); }
+  .high .severity { color: var(--accent-ink); }
+  .medium .severity { color: var(--warn); }
+
+  .finding h3 { margin: 0 0 4px; font-size: 14.5px; }
+  .finding p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+  .finding .fix {
+    display: block;
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .finding .fix strong { color: var(--ink-2); }
+
+  /* ── Priorities ───────────────────────────────────────── */
+  .priorities {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: priority;
+    display: grid;
+    gap: 12px;
+  }
+
+  .priorities li {
+    counter-increment: priority;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .priorities li::before {
+    content: counter(priority);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-family: "Archivo", sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .priorities h3 { margin: 0 0 4px; font-size: 14.5px; }
+  .priorities p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+  .priorities .why {
+    display: block;
+    margin-top: 6px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  /* ── Opening checklist ───────────────────────────────── */
+  .open-checks {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 18px;
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .open-checks li {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 8px;
+    font-size: 13.5px;
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+
+  .open-checks li::before {
+    content: "";
+    width: 13px;
+    height: 13px;
+    margin-top: 3px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 3px;
+    background: var(--surface);
+  }
+
+  /* ── Footer ───────────────────────────────────────────── */
+  footer {
+    margin-top: 40px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line-strong);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  footer p { margin: 0 0 6px; }
+
+  .foot-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 24px;
+    justify-content: space-between;
+  }
+
+  @media (max-width: 820px) {
+    .verdict { grid-template-columns: 1fr; }
+    .modules { grid-template-columns: 1fr; }
+    .columns { grid-template-columns: 1fr; }
+    .section-head p { text-align: left; }
+    .open-checks { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 520px) {
+    .masthead { padding-top: 34px; }
+    .verdict-main, .verdict-side { padding: 18px; }
+    .counts { grid-template-columns: 1fr 1fr; }
+    .finding { grid-template-columns: 1fr; gap: 6px; }
+    .priorities li { grid-template-columns: 28px minmax(0, 1fr); padding: 14px; }
+    .priorities li::before { width: 26px; height: 26px; font-size: 13px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Audit pré-production · 4 novembre 2026</div>
+    <h1>Administration RMASC : bilan avant mise en production</h1>
+    <p class="lede">
+      Revue statique et technique de la partie administration / GMAO :
+      huit rubriques métier, les layouts, les routes API, le schéma Prisma,
+      la configuration d'exploitation et l'état réel du dépôt.
+    </p>
+    <div class="meta-row">
+      <span class="meta"><strong>Périmètre</strong> administration, parc, stock, finance, comptes</span>
+      <span class="meta"><strong>HEAD</strong> 58abd4c</span>
+      <span class="meta"><strong>Production</strong> 9ed71d9</span>
+      <span class="meta"><strong>Build local</strong> 4 nov. 09:16</span>
+    </div>
+  </header>
+
+  <section class="verdict" aria-labelledby="verdict-title">
+    <div class="verdict-main">
+      <span class="pill bad">Go conditionnel</span>
+      <h2 id="verdict-title">La plateforme est fonctionnelle, mais pas encore prononçable en l'état.</h2>
+      <p>
+        Les huit rubriques demandées existent et lisent la base réelle : aucun
+        écran d'administration n'est servi par des données fictives en
+        production. Trois blocages empêchent cependant une ouverture sereine :
+        la géolocalisation est désactivée par un en-tête de sécurité, la
+        révocation des sessions est inopérante avec la stratégie JWT, et l'état
+        audité n'est ni commité ni déployé.
+      </p>
+      <p>
+        Le reste relève de la complétude : pas de migration Prisma, pas de
+        tests automatisés, identifiants de démonstration encore réactivables,
+        et plusieurs fonctions métier volontairement minimales (paiements,
+        mouvements de stock, pièces jointes).
+      </p>
+    </div>
+    <div class="verdict-side">
+      <div class="counts">
+        <div class="count"><b>8</b><span>rubriques auditées</span></div>
+        <div class="count"><b>3</b><span>pleinement fonctionnelles</span></div>
+        <div class="count"><b>5</b><span>partielles, à compléter</span></div>
+        <div class="count"><b>0</b><span>module en mock en production</span></div>
+      </div>
+      <p class="note" style="margin-top:14px">
+        <strong>41 routes</strong> possèdent un repli de démonstration, mais
+        <code>DEMO_DATA</code> et <code>OPEN_ACCESS</code> sont forcés à
+        <code>false</code> dès que <code>NODE_ENV=production</code>.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="synthese-title">
+    <div class="section-head">
+      <div>
+        <div class="kicker">Synthèse</div>
+        <h2 id="synthese-title">Vue d'ensemble des huit rubriques</h2>
+      </div>
+      <p>État constaté dans le code, pas dans la documentation.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Rubrique</th>
+            <th>État</th>
+            <th>Source de données</th>
+            <th>Écart principal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Tableau de bord</strong></td>
+            <td><span class="pill ok">100 %</span></td>
+            <td>PostgreSQL, agrégats réels</td>
+            <td>Pas de flux « activité récente » pour le personnel ; les listes récentes sont renvoyées mais non rendues.</td>
+          </tr>
+          <tr>
+            <td><strong>Interventions &amp; dispatching</strong></td>
+            <td><span class="pill warn">Partiel</span></td>
+            <td>PostgreSQL</td>
+            <td>Géolocalisation navigateur bloquée par <code>Permissions-Policy</code> ; pointage manuel encore possible.</td>
+          </tr>
+          <tr>
+            <td><strong>Parc &amp; audits de reprise</strong></td>
+            <td><span class="pill ok">100 %</span></td>
+            <td>PostgreSQL</td>
+            <td>Aucun écart fonctionnel constaté sur le processus WO-AUD et le contournement admin.</td>
+          </tr>
+          <tr>
+            <td><strong>Fiches techniques</strong></td>
+            <td><span class="pill warn">Partiel</span></td>
+            <td>PostgreSQL</td>
+            <td>Identité du client et adresse figées après création ; pas de suppression ni de pièce jointe.</td>
+          </tr>
+          <tr>
+            <td><strong>Stock &amp; magasin</strong></td>
+            <td><span class="pill warn">Partiel</span></td>
+            <td>PostgreSQL + magasin central</td>
+            <td>Pas d'édition, de suppression ni d'historique de mouvements ; liaison magasin jamais exercée.</td>
+          </tr>
+          <tr>
+            <td><strong>Devis &amp; facturation</strong></td>
+            <td><span class="pill warn">Partiel</span></td>
+            <td>PostgreSQL</td>
+            <td>Paiement binaire (émise / réglée / annulée), pas de règlement partiel ni de journal d'encaissement.</td>
+          </tr>
+          <tr>
+            <td><strong>Équipe &amp; clients</strong></td>
+            <td><span class="pill warn">Sécurité</span></td>
+            <td>PostgreSQL</td>
+            <td>Gestion complète, mais la désactivation et le reset de mot de passe ne révoquent pas les JWT en cours.</td>
+          </tr>
+          <tr>
+            <td><strong>Notifications</strong></td>
+            <td><span class="pill ok">100 %</span></td>
+            <td>PostgreSQL</td>
+            <td>Polling 60 s, pas de temps réel ; suffisant pour le volume actuel.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="note">
+      <strong>Lecture des statuts.</strong> « 100 % » signifie « connecté à la
+      base réelle et couvrant le parcours demandé », pas « garanti sans
+      limite ». Les tests automatisés restent insuffisants et les intégrations
+      externes (WhatsApp, magasin central) ne sont pas prouvées de bout en bout.
+    </p>
+  </section>
+
+  <section class="section" aria-labelledby="modules-title">
+    <div class="section-head">
+      <div>
+        <div class="kicker">1 · Modules</div>
+        <h2 id="modules-title">État détaillé des modules d'administration</h2>
+      </div>
+      <p>Ce qui fonctionne, ce qui manque, et où le vérifier.</p>
+    </div>
+
+    <div class="modules">
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Tableau de bord</h3>
+          <span class="pill ok">100 %</span>
+        </div>
+        <p>KPIs parc, santé, charge, alertes, graphiques, télémétrie et carte.</p>
+        <ul>
+          <li class="yes"><code>/api/dashboard</code> agrège la base réelle et cloisonne un propriétaire sur ses immeubles.</li>
+          <li class="yes">Quatre indicateurs, répartition des états, santé par immeuble, télémétrie et capteurs.</li>
+          <li class="yes">Rafraîchissement toutes les 30 s, sans repasser par le squelette de chargement.</li>
+          <li class="part">Pas de liste « activité récente » pour le personnel : les urgences passent par la bande <em>IncomingFaults</em>, la télémétrie et la carte.</li>
+          <li class="part"><code>recentAlerts</code> et <code>recentWorkOrders</code> sont renvoyés par l'API mais seuls la vue client les affiche.</li>
+        </ul>
+        <div class="evidence">api/dashboard/route.ts:37 · tableau-de-bord/page.tsx:230,259 · client-overview.tsx:91</div>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Interventions &amp; dispatching</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Création, adresse exacte, affectation, pointage et suivi.</p>
+        <ul>
+          <li class="yes">Création via <code>POST /api/work-orders</code>, adresse d'intervention obligatoire, transitions de statut contrôlées.</li>
+          <li class="yes">Affectation manuelle ou automatique du technicien le moins chargé, en transaction sérialisable.</li>
+          <li class="yes">Pointage d'arrivée idempotent, géofence côté serveur, notification au client.</li>
+          <li class="no">Le navigateur ne peut pas fournir de position : <code>Permissions-Policy: geolocation=()</code> désactive <code>watchPosition</code> et <code>getCurrentPosition</code>.</li>
+          <li class="part">Conséquence : pointage possible sans coordonnées, mais pas de contrôle de distance automatique ni de position live sur la carte.</li>
+        </ul>
+        <div class="evidence">next.config.js:101 · technicien/page.tsx:510 · geo/device-position.ts:95 · work-orders/[id]/check-in/route.ts:93</div>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Parc &amp; audits de reprise</h3>
+          <span class="pill ok">100 %</span>
+        </div>
+        <p>Processus WO-AUD, blocage de l'étape 3, contournement administrateur.</p>
+        <ul>
+          <li class="yes">Reprise d'appareil tiers : fiche d'état des lieux en trois étapes, bon <code>INSPECTION</code> créé automatiquement.</li>
+          <li class="yes">Validation impossible tant qu'un bon d'audit est ouvert, avec le numéro du bon dans le message.</li>
+          <li class="yes">« Forcer l'intégration au parc » réservé à l'admin, clôture les bons ouverts et attribue le matricule <code>ASC-AAAA-NNNN</code>.</li>
+          <li class="yes">QR généré à la validation, page publique <code>/scan/[id]</code>.</li>
+          <li class="part">Si la création du bon échoue après celle de l'appareil, la fiche reste créée : défaut signalé, pas bloquant.</li>
+        </ul>
+        <div class="evidence">elevators/[id]/takeover/route.ts:67 · ascenseurs/page.tsx:1081 · elevators/route.ts:237</div>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Fiches techniques</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Clients hors contrat, création manuelle, complétion des données techniques.</p>
+        <ul>
+          <li class="yes">Création manuelle réservée à l'admin : client, immeuble, adresse, téléphone.</li>
+          <li class="yes">Édition des champs optionnels et de deux mesures obligatoires (charge, niveaux) par les rôles OPS.</li>
+          <li class="yes">Le client sans contrat peut déposer sa propre fiche via <code>/client/fiche-technique</code>.</li>
+          <li class="no">Nom du client et adresse non modifiables après création ; aucune suppression ; aucun upload de pièce jointe.</li>
+          <li class="part">Le commentaire d'en-tête de la page dit encore « read-only » alors que l'édition existe : documentation à corriger.</li>
+        </ul>
+        <div class="evidence">technical-sheets/manual/route.ts:78 · [id]/route.ts:75 · technical-sheets/fields.ts:298 · fiches-techniques/page.tsx:62</div>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Stock &amp; magasin</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Catalogue, demandes de pièces, seuils critiques et décrémentation.</p>
+        <ul>
+          <li class="yes">Réserve physique lue et créée via <code>/api/stock</code> ; badge « Stock critique » sous le seuil.</li>
+          <li class="yes">Demandes de pièces : réserver, commander, refuser avec motif, rejouer une décision sans double décrément.</li>
+          <li class="yes">Décrémentation atomique à la réservation et à la pose, avec verrou <code>quantity &gt;= demandé</code>.</li>
+          <li class="no">Pas de <code>PATCH</code> ni <code>DELETE</code> sur un article ; pas d'historique de mouvements.</li>
+          <li class="no">La liaison au magasin central n'a jamais été exercée en réel : signature HMAC vérifiée contre le contrat écrit, pas contre le serveur.</li>
+        </ul>
+        <div class="evidence">api/stock/route.ts:41,85 · parts-replacement/route.ts:467,593 · stock/eligibility.ts · PASSATION.md:191</div>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Devis &amp; facturation</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Devis, décision client, facture, PDF et statut de règlement.</p>
+        <ul>
+          <li class="yes">Devis : création, lignes chiffrées, envoi, acceptation/refus, PDF, règles de transition explicites.</li>
+          <li class="yes">Facture émise depuis un bon clôturé, numérotation annuelle, PDF figé, export CSV, filtres et facettes.</li>
+          <li class="yes">Statut <em>Émise / Réglée / Annulée</em> posé depuis le registre, avec date et auteur.</li>
+          <li class="no">Pas de règlement partiel, pas de journal d'encaissement, pas de TVA : le montant est unique et binaire.</li>
+          <li class="part">Mentions légales incomplètes : seul <code>INVOICE_COMPANY_NAME</code> est renseigné localement.</li>
+        </ul>
+        <div class="evidence">quotes/route.ts:117 · quotes/status.ts · invoices/route.ts:406 · factures/page.tsx:506 · schema.prisma:1169</div>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Équipe &amp; clients</h3>
+          <span class="pill warn">Sécurité</span>
+        </div>
+        <p>Comptes, rôles, statuts, accès client et garde-fous.</p>
+        <ul>
+          <li class="yes">Personnel : création, édition, désactivation, rôles, spécialités, reset de mot de passe généré.</li>
+          <li class="yes">Clients : création, type contractuel, activation, rattachement/détachement d'immeubles, invitation.</li>
+          <li class="yes">Le dernier administrateur actif ne peut pas être rétrogradé ni désactivé.</li>
+          <li class="yes">Demandes d'accès QR : approbation, création du compte et rattachement de l'immeuble en une transaction.</li>
+          <li class="no">La révocation de session ne fonctionne pas : la stratégie est JWT, donc <code>prisma.session.deleteMany</code> ne supprime aucune ligne.</li>
+        </ul>
+        <div class="evidence">personnel/route.ts:92 · personnel/[id]/route.ts:99,165 · auth/options.ts:93 · clients/[id]/password/route.ts:60</div>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Notifications &amp; carte</h3>
+          <span class="pill ok">100 %</span>
+        </div>
+        <p>Cloche, pastille rouge, panne client et redirection cartographique.</p>
+        <ul>
+          <li class="yes">Cloche personnelle, compteur non lu, marquage lu unitaire ou global, aucune lecture croisée entre comptes.</li>
+          <li class="yes">Notification à l'escalade d'une panne et à la résolution par le client, avec lien <code>/carte?site=…&amp;elevator=…&amp;incident=…</code>.</li>
+          <li class="yes">Dispatch en un clic depuis la cloche, vers le même sélecteur que le tableau des incidents.</li>
+          <li class="yes">La carte centre le site, ouvre la fiche de panne et sélectionne l'appareil depuis l'URL.</li>
+          <li class="part">Rafraîchissement par polling 60 s ; pas de websocket.</li>
+        </ul>
+        <div class="evidence">notifications/route.ts:51,147 · notification-bell.tsx:179,481 · incidents/route.ts:484 · carte/page.tsx:196</div>
+      </article>
+
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="ux-title">
+    <div class="section-head">
+      <div>
+        <div class="kicker">2 · UI / UX</div>
+        <h2 id="ux-title">Arrière-plan animé et sidebar</h2>
+      </div>
+      <p>Lisibilité, verre dépoli, comportement mobile.</p>
+    </div>
+
+    <div class="columns">
+      <div class="panel">
+        <h3>Arrière-plan GIF</h3>
+        <ul class="checklist">
+          <li><span class="mark ok">✓</span><span><strong>Intégré sur six layouts</strong> : <code>(dashboard)</code>, <code>ascenseurs</code>, <code>bons-de-travail</code>, <code>carte</code>, <code>fiches-techniques</code>, <code>technicien</code>.</span></li>
+          <li><span class="mark ok">✓</span><span>Trois couches fixes : fond ardoise, GIF en <code>cover</code>, voile clair <code>white/60</code> ou sombre <code>slate-950/70</code> avec un flou de 2 px.</span></li>
+          <li><span class="mark ok">✓</span><span>Les cartes, tableaux et textes gardent un fond opaque : la lisibilité ne dépend pas du GIF.</span></li>
+          <li><span class="mark warn">!</span><span><strong>Asset de 640 × 360, 101 Ko</strong>, agrandi sur grand écran. Prévoir une version 1920 × 1080 avant la vitrine commerciale.</span></li>
+          <li><span class="mark bad">×</span><span><strong>Fichier non suivi par Git</strong> : <code>public/bg-animated.gif</code>, <code>bg-fallback.png</code> et <code>public/brand/</code> sont en <code>??</code>. Un déploiement par clone les omettra.</span></li>
+          <li><span class="mark warn">!</span><span>Aucun contrôle <code>prefers-reduced-motion</code> sur le GIF : le mouvement reste permanent pour qui l'a désactivé.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Sidebar glassmorphism</h3>
+        <ul class="checklist">
+          <li><span class="mark ok">✓</span><span><code>bg-white/75</code> / <code>dark:bg-slate-950/75</code> + <code>backdrop-blur-md</code>, bordures translucides.</span></li>
+          <li><span class="mark ok">✓</span><span>Onglet actif : fond <code>bg-blue-500/10</code>, texte bleu et bordure gauche ; zone profil séparée.</span></li>
+          <li><span class="mark ok">✓</span><span>En-tête également en <code>backdrop-blur-md</code> ; menu repliable de 250 px à 64 px.</span></li>
+          <li><span class="mark bad">×</span><span><strong>Pas de tiroir mobile.</strong> La sidebar reste ouverte par défaut à 250 px, sans point de rupture <code>md:</code> : sur un écran de 400 px, il reste environ 150 px au contenu.</span></li>
+          <li><span class="mark warn">!</span><span>Trois couches de <code>backdrop-blur</code> (fond, sidebar, header) : à vérifier sur mobile ancien.</span></li>
+          <li><span class="mark warn">!</span><span><code>transition-all duration-300</code> sans garde <code>prefers-reduced-motion</code> (seule l'animation de la carte en a une).</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="security-title">
+    <div class="section-head">
+      <div>
+        <div class="kicker">3 · Sécurité, base &amp; performance</div>
+        <h2 id="security-title">Contrôles techniques</h2>
+      </div>
+      <p>Ce qui est prouvé, ce qui reste ouvert.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Contrôle</th>
+            <th>Résultat</th>
+            <th>Preuve</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>TypeScript</strong></td>
+            <td><span class="pill ok">OK</span></td>
+            <td><code>tsc --noEmit</code> n'a pas pu être relancé dans cette session ; <code>tsconfig.tsbuildinfo</code> ne contient aucun diagnostic et le build du 4 nov. 09:16 est présent, sans <code>ignoreBuildErrors</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>Build production</strong></td>
+            <td><span class="pill ok">OK</span></td>
+            <td><code>.next/BUILD_ID</code>, manifestes et pages serveur générés à 09:16 ; toutes les pages d'administration sont présentes.</td>
+          </tr>
+          <tr>
+            <td><strong>Schéma Prisma</strong></td>
+            <td><span class="pill ok">Valide</span></td>
+            <td>2012 lignes, 46 index, 23 contraintes uniques de champ, 5 contraintes uniques composites, 24 cascades.</td>
+          </tr>
+          <tr>
+            <td><strong>Migrations Prisma</strong></td>
+            <td><span class="pill bad">Absentes</span></td>
+            <td><code>prisma/migrations/</code> n'existe pas ; le déploiement se fait par <code>db push</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>Contrôle d'accès</strong></td>
+            <td><span class="pill ok">Solide</span></td>
+            <td>Middleware par page + <code>requireRole</code> par route + <code>buildingScopeFor</code> / <code>elevatorScopeFor</code> pour les clients.</td>
+          </tr>
+          <tr>
+            <td><strong>Mots de passe</strong></td>
+            <td><span class="pill ok">Solide</span></td>
+            <td>bcrypt 12 tours, mots de passe générés de 14 caractères, comparaison factice pour l'énumération de comptes.</td>
+          </tr>
+          <tr>
+            <td><strong>Santé</strong></td>
+            <td><span class="pill ok">OK</span></td>
+            <td><code>/api/health</code> teste PostgreSQL avec un timeout de 3 s et renvoie 503 en panne.</td>
+          </tr>
+          <tr>
+            <td><strong>Erreurs API</strong></td>
+            <td><span class="pill ok">OK</span></td>
+            <td>Taxonomie commune, Zod en 400, base injoignable en 503, aucun détail interne renvoyé au client.</td>
+          </tr>
+          <tr>
+            <td><strong>Tests / CI</strong></td>
+            <td><span class="pill bad">Absents</span></td>
+            <td>Aucun fichier de test, aucun workflow <code>.github</code> ; seul <code>contracts:check</code> (179 cas) existe.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:24px">Failles et risques à traiter</h3>
+    <div class="findings">
+
+      <div class="finding critical">
+        <div class="severity">Critique</div>
+        <div>
+          <h3>La révocation de session ne révoque rien</h3>
+          <p>La stratégie NextAuth est <code>jwt</code>. Désactiver un compte ou réinitialiser un mot de passe appelle <code>prisma.session.deleteMany</code>, mais aucune ligne de session n'existe : le cookie JWT reste valide jusqu'à 24 h.</p>
+          <span class="fix"><strong>Correctif :</strong> passer en sessions base, ou ajouter un numéro de version de jeton / une vérification <code>isActive</code> dans le callback <code>jwt</code>.</span>
+        </div>
+      </div>
+
+      <div class="finding critical">
+        <div class="severity">Critique</div>
+        <div>
+          <h3>Le rôle reste figé dans le jeton</h3>
+          <p><code>token.role</code> est copié à la connexion et jamais rafraîchi. Un administrateur rétrogradé conserve ses droits jusqu'à l'expiration du jeton, soit jusqu'à 24 h.</p>
+          <span class="fix"><strong>Correctif :</strong> relire le rôle en base à chaque requête sensible, ou réduire la durée de vie et forcer la reconnexion après changement de rôle.</span>
+        </div>
+      </div>
+
+      <div class="finding critical">
+        <div class="severity">Critique</div>
+        <div>
+          <h3>La géolocalisation est interdite par l'en-tête de sécurité</h3>
+          <p><code>Permissions-Policy: camera=(), microphone=(), geolocation=()</code> s'applique à toutes les pages. Le portail technicien appelle <code>watchPosition</code> : la position est refusée, donc pas de contrôle de distance ni de suivi live.</p>
+          <span class="fix"><strong>Correctif :</strong> remplacer par <code>geolocation=(self)</code> et, si le scan caméra doit être utilisé, <code>camera=(self)</code>. Tester sur un téléphone réel.</span>
+        </div>
+      </div>
+
+      <div class="finding high">
+        <div class="severity">Élevé</div>
+        <div>
+          <h3>Les identifiants de démonstration sont réactivables</h3>
+          <p><code>prisma/seed.ts</code> crée tous les comptes avec <code>password123</code>, et <code>scripts/diagnose-auth.ts --fix</code> les remet sans garde d'environnement.</p>
+          <span class="fix"><strong>Correctif :</strong> ne jamais lancer le seed sur la base de production, retirer ou verrouiller le script <code>--fix</code>, et faire tourner les comptes de démonstration.</span>
+        </div>
+      </div>
+
+      <div class="finding high">
+        <div class="severity">Élevé</div>
+        <div>
+          <h3>Aucune migration versionnée</h3>
+          <p>Le schéma évolue par <code>prisma db push</code>. Sans historique, aucun retour arrière fiable et aucune revue de l'impact d'un changement.</p>
+          <span class="fix"><strong>Correctif :</strong> créer un baseline <code>prisma migrate dev --name init</code>, le versionner, puis déployer avec <code>prisma migrate deploy</code>.</span>
+        </div>
+      </div>
+
+      <div class="finding high">
+        <div class="severity">Élevé</div>
+        <div>
+          <h3>Le jeton d'ingestion IoT est facultatif</h3>
+          <p>Sans <code>IOT_INGEST_TOKEN</code>, <code>POST /api/telemetry</code> accepte des écritures non authentifiées. Le serveur avertit au démarrage, mais ne refuse pas.</p>
+          <span class="fix"><strong>Correctif :</strong> rendre le jeton obligatoire en production ou refuser la route si le secret est absent.</span>
+        </div>
+      </div>
+
+      <div class="finding high">
+        <div class="severity">Élevé</div>
+        <div>
+          <h3>L'état audité n'est ni commité ni déployé</h3>
+          <p>La production tourne <code>9ed71d9</code>, HEAD est <code>58abd4c</code> (17 commits d'avance), et l'arbre de travail contient 108 fichiers suivis modifiés, 14 860 insertions et plusieurs assets non suivis.</p>
+          <span class="fix"><strong>Correctif :</strong> commiter l'état recetté, créer une étiquette de version, et déployer exactement ce commit.</span>
+        </div>
+      </div>
+
+      <div class="finding medium">
+        <div class="severity">Moyen</div>
+        <div>
+          <h3>Pas de limitation des tentatives de connexion</h3>
+          <p>Aucun compteur d'échecs, aucun verrouillage temporaire, aucun délai progressif sur <code>/connexion</code>.</p>
+          <span class="fix"><strong>Correctif :</strong> limiter par adresse et par compte, avec un délai après quelques échecs.</span>
+        </div>
+      </div>
+
+      <div class="finding medium">
+        <div class="severity">Moyen</div>
+        <div>
+          <h3>Pas de Content-Security-Policy</h3>
+          <p>Le choix est documenté dans <code>next.config.js</code> : Next injecte des scripts inline, une CSP utile demanderait des nonces par requête. En l'état, aucune politique n'est appliquée.</p>
+          <span class="fix"><strong>Correctif :</strong> ajouter une CSP à nonces dans le middleware, ou au minimum <code>frame-ancestors 'none'</code> et <code>object-src 'none'</code>.</span>
+        </div>
+      </div>
+
+      <div class="finding medium">
+        <div class="severity">Moyen</div>
+        <div>
+          <h3>Le formulaire public de demande d'accès n'est pas limité</h3>
+          <p><code>POST /api/access-requests</code> est public et sans limitation de débit. Le doublon n'est refusé que pour un même appareil et une même adresse encore en attente.</p>
+          <span class="fix"><strong>Correctif :</strong> ajouter une limitation par adresse IP, comme celle qui existe déjà sur le signalement de panne QR.</span>
+        </div>
+      </div>
+
+      <div class="finding medium">
+        <div class="severity">Moyen</div>
+        <div>
+          <h3><code>/administration</code> renvoie une 404</h3>
+          <p>Aucun <code>page.tsx</code> à la racine du dossier. Or <code>/admin</code> y redirige, et le middleware protège cette adresse comme si elle existait.</p>
+          <span class="fix"><strong>Correctif :</strong> ajouter une page d'index qui redirige vers <code>/administration/finance</code> ou <code>/administration/utilisateurs</code>.</span>
+        </div>
+      </div>
+
+    </div>
+
+    <h3 style="margin-top:26px">Performance et fluidité</h3>
+    <div class="columns">
+      <div class="panel">
+        <h3>Poids des bundles</h3>
+        <ul class="checklist">
+          <li><span class="mark warn">!</span><span><strong>399 Ko</strong> pour le chunk qui contient Recharts ; <strong>145 Ko</strong> pour Leaflet, chargé dynamiquement (bon point).</span></li>
+          <li><span class="mark warn">!</span><span>Le tableau de bord importe Recharts statiquement et ouvre la carte par défaut : les deux univers sont chargés au premier écran.</span></li>
+          <li><span class="mark ok">✓</span><span>Leaflet est bien isolé derrière <code>await import("leaflet")</code>, donc hors du bundle initial de la carte.</span></li>
+          <li><span class="mark warn">!</span><span>Aucun <code>dynamic()</code> pour les graphiques : une piste simple est de charger Recharts à la demande.</span></li>
+          <li><span class="mark ok">✓</span><span>Les squelettes de chargement et les états d'erreur évitent les écrans vides.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Charge et rafraîchissement</h3>
+        <ul class="checklist">
+          <li><span class="mark warn">!</span><span>Tableau de bord toutes les <strong>30 s</strong> ; notifications, alertes et carte toutes les <strong>60 s</strong>.</span></li>
+          <li><span class="mark warn">!</span><span><code>/api/map/fleet</code> renvoie tout le parc en une réponse, sans pagination : à valider avec la taille réelle du parc.</span></li>
+          <li><span class="mark ok">✓</span><span>Les requêtes du tableau de bord sont agrégées en <code>Promise.all</code>, sans boucle N+1 visible.</span></li>
+          <li><span class="mark warn">!</span><span>Trois couches de flou et une transition de 300 ms : coût GPU à mesurer sur mobile ancien.</span></li>
+          <li><span class="mark ok">✓</span><span>Le pool Prisma est un singleton par processus, avec un seul processus PM2.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="checklist-title">
+    <div class="section-head">
+      <div>
+        <div class="kicker">4 · Avant mise en production</div>
+        <h2 id="checklist-title">Checklist d'ouverture</h2>
+      </div>
+      <p>Seeds, environnement, priorités, vérifications.</p>
+    </div>
+
+    <h3>Scripts de seed et d'exploitation</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Script</th>
+            <th>Décision</th>
+            <th>Raison</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>prisma/seed.ts</code></td>
+            <td><span class="pill bad">Ne jamais exécuter en production</span></td>
+            <td>Comptes de démonstration et mot de passe commun <code>password123</code>.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/seed-stock.ts</code></td>
+            <td><span class="pill bad">Développement uniquement</span></td>
+            <td>Catalogue fictif et demandes <code>DP-DEMO-*</code> sur des bons ouverts.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/diagnose-auth.ts --fix</code></td>
+            <td><span class="pill bad">Retirer ou verrouiller</span></td>
+            <td>Remet <code>password123</code> sur les comptes de démonstration, sans garde d'environnement.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/rotate-demo-passwords.ts</code></td>
+            <td><span class="pill warn">Exécuter une fois, puis archiver</span></td>
+            <td>Rotation de sécurité des comptes de démonstration.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/contracts-rollover.ts</code></td>
+            <td><span class="pill ok">Conserver et planifier</span></td>
+            <td>Reconduction tacite et alertes d'échéance ; à brancher en cron ou via l'API.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/contracts-check.ts</code></td>
+            <td><span class="pill ok">Conserver, brancher en CI</span></td>
+            <td>179 cas de règles pures sur les contrats.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/backfill-incident-positions.ts</code></td>
+            <td><span class="pill warn">Runbook ponctuel</span></td>
+            <td>Réparation de données, pas une tâche récurrente.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/simulate-iot.ts</code></td>
+            <td><span class="pill bad">Hors image de production</span></td>
+            <td>Simulateur de télémétrie pour le développement.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/e2e-scenarios.ts</code>, <code>stock-e2e.ts</code>, <code>pdf-golden.ts</code>, <code>__e2e-discover.ts</code>, <code>make-background-gif.mjs</code></td>
+            <td><span class="pill bad">Hors image de production</span></td>
+            <td>Outils de test, de contrôle PDF et de génération d'assets.</td>
+          </tr>
+          <tr>
+            <td><code>scripts/stock-check.ts</code></td>
+            <td><span class="pill warn">Diagnostic ponctuel</span></td>
+            <td>Contrôle de liaison au magasin central, en lecture seule.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Variables d'environnement requises</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Variable</th>
+            <th>État local</th>
+            <th>Exigence production</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>NODE_ENV</code></td><td><span class="pill ok">Défini</span></td><td><code>production</code>, posé par PM2.</td></tr>
+          <tr><td><code>DATABASE_URL</code></td><td><span class="pill ok">Défini</span></td><td>Obligatoire, PostgreSQL uniquement.</td></tr>
+          <tr><td><code>NEXTAUTH_URL</code></td><td><span class="pill ok">Défini</span></td><td>URL publique réelle, sinon les redirections de connexion cassent.</td></tr>
+          <tr><td><code>NEXTAUTH_SECRET</code></td><td><span class="pill ok">Défini</span></td><td>Obligatoire, 16 caractères minimum ; 32 recommandés.</td></tr>
+          <tr><td><code>IOT_INGEST_TOKEN</code></td><td><span class="pill ok">Défini</span></td><td>Fortement requis : sans lui, la télémétrie accepte des écritures anonymes.</td></tr>
+          <tr><td><code>ADMIN_PHONE_NUMBER</code></td><td><span class="pill bad">Absent</span></td><td>Requis pour l'alerte WhatsApp d'escalade ; sinon aucun canal hors application.</td></tr>
+          <tr><td><code>EVOLUTION_API_URL</code>, <code>EVOLUTION_API_KEY</code>, <code>EVOLUTION_INSTANCE</code></td><td><span class="pill bad">Absents</span></td><td>Les trois ensemble, ou aucun : deux sur trois est une configuration qui ment.</td></tr>
+          <tr><td><code>TWILIO_ACCOUNT_SID</code>, <code>TWILIO_AUTH_TOKEN</code>, <code>TWILIO_WHATSAPP_FROM</code></td><td><span class="pill bad">Absents</span></td><td>Variante prioritaire à Evolution, si retenue.</td></tr>
+          <tr><td><code>WHATSAPP_DEFAULT_COUNTRY_CODE</code></td><td><span class="pill bad">Absent</span></td><td>Nécessaire pour les numéros écrits au format local.</td></tr>
+          <tr><td><code>STOCK_API_URL</code>, <code>STOCK_API_KEY</code>, <code>STOCK_API_SECRET</code></td><td><span class="pill bad">Absents</span></td><td>Requis pour la liaison réelle au magasin central ; sinon mode démonstration en développement, aucun bouton en production.</td></tr>
+          <tr><td><code>INVOICE_COMPANY_NAME</code></td><td><span class="pill ok">Défini</span></td><td>Nom imprimé sur les documents.</td></tr>
+          <tr><td><code>INVOICE_COMPANY_ADDRESS</code>, <code>_PHONE</code>, <code>_EMAIL</code>, <code>_RC</code>, <code>_NIF</code>, <code>_NIS</code>, <code>_AI</code>, <code>_BANK</code>, <code>_RIB</code>, <code>_MENTIONS</code></td><td><span class="pill bad">Incomplet</span></td><td>Identité légale complète avant d'envoyer une facture réelle.</td></tr>
+          <tr><td><code>INVOICE_LOGO_PATH</code>, <code>INVOICE_STAMP_PATH</code></td><td><span class="pill bad">Absents</span></td><td>Logo et cachet ; les assets <code>public/brand/</code> ne sont pas suivis par Git.</td></tr>
+          <tr><td><code>CONTRACTS_CRON_TOKEN</code></td><td><span class="pill bad">Absent</span></td><td>Requis si un planificateur HTTP appelle la reconduction sans session.</td></tr>
+          <tr><td><code>OPEN_ACCESS</code>, <code>DEMO_DATA</code></td><td><span class="pill warn"><code>DEMO_DATA=true</code></span></td><td>Forcés à <code>false</code> en production, mais à poser explicitement à <code>false</code> dans le <code>.env</code> déployé.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:24px">Top 5 des priorités avant ouverture</h3>
+    <ol class="priorities">
+      <li>
+        <div>
+          <h3>Débloquer la géolocalisation et la caméra</h3>
+          <p>Remplacer <code>geolocation=()</code> par <code>geolocation=(self)</code> et <code>camera=(self)</code> si le scan caméra doit servir, puis tester pointage, suivi et placement de site sur un téléphone réel.</p>
+          <span class="why">Sans cela, la promesse « dispatch géolocalisé » n'est pas tenue, même si le pointage manuel continue de fonctionner.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Corriger la révocation des sessions et le rôle figé</h3>
+          <p>Choisir une révocation réelle : sessions en base, version de jeton, ou vérification <code>isActive</code> et du rôle à chaque requête sensible. Tester la désactivation d'un compte et un changement de rôle en moins de 24 h.</p>
+          <span class="why">Aujourd'hui, un salarié désactivé ou rétrogradé conserve ses droits jusqu'à l'expiration du jeton.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Figer et déployer l'état audité</h3>
+          <p>Committer les 108 fichiers modifiés, créer un baseline <code>prisma migrate</code>, suivre les assets (<code>bg-animated.gif</code>, logo, cachet, page QR), puis déployer le commit recetté et non un état de travail.</p>
+          <span class="why">La production est 17 commits en retard et l'arbre local contient 14 860 insertions non versionnées.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Neutraliser les identifiants de démonstration et compléter l'environnement</h3>
+          <p>Ne pas lancer <code>seed.ts</code> en production, verrouiller <code>diagnose-auth.ts --fix</code>, faire tourner les comptes, renseigner le jeton IoT, l'identité légale des factures, le canal WhatsApp et, si retenu, la liaison magasin.</p>
+          <span class="why">Un document sans RC ni NIF est un document incomplet ; un compte de démo est une porte d'entrée.</span>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Installer une CI et une recette minimale</h3>
+          <p>Exécuter <code>tsc</code>, le build, ESLint et <code>contracts-check</code> à chaque changement ; ajouter des scénarios API sur les rôles, les transitions, le stock et les factures, puis un test de charge à la taille réelle du parc.</p>
+          <span class="why">Aucun test automatisé n'existe aujourd'hui en dehors du harnais contrats.</span>
+        </div>
+      </li>
+    </ol>
+
+    <h3 style="margin-top:26px">Vérifications à cocher avant l'ouverture</h3>
+    <ul class="open-checks">
+      <li>Typecheck et build verts dans une CI, sur le commit déployé.</li>
+      <li>Baseline Prisma versionné, puis <code>migrate deploy</code> sur la base cible.</li>
+      <li><code>DEMO_DATA=false</code> et <code>OPEN_ACCESS=false</code> dans le <code>.env</code> serveur.</li>
+      <li><code>IOT_INGEST_TOKEN</code> généré et configuré sur la passerelle.</li>
+      <li>Aucun seed de démonstration exécuté sur la base de production.</li>
+      <li>Pointage GPS et suivi technicien testés sur un téléphone réel.</li>
+      <li>Désactivation d'un compte vérifiée : l'ancien jeton ne passe plus.</li>
+      <li>Changement de rôle vérifié : les droits suivent immédiatement.</li>
+      <li>Identité légale des factures, logo et cachet renseignés et imprimés.</li>
+      <li>Liaison magasin central exercée sur une demande réelle ou annulée.</li>
+      <li>Batch de reconduction planifié et testé en <code>dryRun</code>.</li>
+      <li>Sauvegarde et restauration de la base testées.</li>
+      <li>Test de charge à la taille réelle du parc (carte, dashboard, registres).</li>
+      <li>Sidebar testée à 400 px et corrigée par un tiroir mobile.</li>
+      <li><code>/administration</code> et <code>/admin</code> ne renvoient plus 404.</li>
+      <li>Assets <code>bg-animated.gif</code>, <code>public/brand/</code> et page QR suivis par Git.</li>
+      <li>Sonde <code>/api/health</code> branchée sur la supervision.</li>
+      <li>Limitation des tentatives de connexion et du formulaire public en place.</li>
+    </ul>
+  </section>
+
+  <section class="section" aria-labelledby="limits-title">
+    <div class="section-head">
+      <div>
+        <div class="kicker">Méthode &amp; limites</div>
+        <h2 id="limits-title">Ce que cet audit couvre, et ce qu'il ne couvre pas</h2>
+      </div>
+    </div>
+
+    <div class="columns">
+      <div class="panel">
+        <h3>Périmètre vérifié</h3>
+        <ul class="checklist">
+          <li><span class="mark ok">✓</span><span>Lecture des pages, composants et routes API de la partie administration.</span></li>
+          <li><span class="mark ok">✓</span><span>Schéma Prisma, contraintes, index, cascades et absence de migrations.</span></li>
+          <li><span class="mark ok">✓</span><span>Middleware, garde de rôle, cloisonnement par immeuble, politique d'environnement.</span></li>
+          <li><span class="mark ok">✓</span><span>Build de production présent, diagnostics TypeScript, poids des chunks et stratégie de polling.</span></li>
+          <li><span class="mark ok">✓</span><span>État Git : commits, fichiers modifiés, assets non suivis, écart avec la production.</span></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>À planifier</h3>
+        <ul class="checklist">
+          <li><span class="mark warn">!</span><span>Recette métier sur une base anonymisée et un parc représentatif.</span></li>
+          <li><span class="mark warn">!</span><span>Test de charge et test d'intrusion.</span></li>
+          <li><span class="mark warn">!</span><span>Validation réelle des intégrations WhatsApp et magasin central.</span></li>
+          <li><span class="mark warn">!</span><span>Essai de sauvegarde, restauration et supervision 24/7.</span></li>
+          <li><span class="mark warn">!</span><span>Vérification sur téléphone réel du GPS, du scan et du tiroir mobile.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="note">
+      <strong>Sur le typecheck.</strong> La commande <code>npx tsc --noEmit</code>
+      n'a pas pu être relancée dans cette session (le classificateur de commandes
+      est tombé par intermittence). La preuve retenue est indirecte mais solide :
+      aucun diagnostic dans <code>tsconfig.tsbuildinfo</code>, et un build Next.js
+      du 4 novembre à 09:16 sans <code>ignoreBuildErrors</code>. À reconfirmer en
+      CI sur le commit déployé.
+    </p>
+  </section>
+
+  <footer>
+    <div class="foot-grid">
+      <p><strong>Audit Administration RMASC</strong> — rapport interne pré-production, 4 novembre 2026.</p>
+      <p>HEAD <code>58abd4c</code> · production <code>9ed71d9</code> · 108 fichiers modifiés</p>
+    </div>
+    <p>
+      Sources : code source, schéma Prisma, routes API, composants de layout,
+      scripts d'exploitation, documentation du dépôt, manifestes de build et
+      état Git. Les statuts décrivent le périmètre fonctionnel constaté, pas une
+      garantie de service.
+    </p>
+  </footer>
+
+</div>

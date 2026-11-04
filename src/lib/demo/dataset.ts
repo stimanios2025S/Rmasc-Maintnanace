@@ -1167,6 +1167,15 @@ function build(): DemoWorld {
        * timestamp.
        */
       arrivedAt: w.status === "IN_PROGRESS" ? iso(4 * 60 * MINUTE) : null,
+      /**
+       * La sortie du site suit le dépôt du rapport : le technicien termine,
+       * pointe sa fin et remet le compte rendu dans la foulée. Un bon encore
+       * en cours n'en a pas — il est toujours dans le bâtiment.
+       */
+      departedAt:
+        w.reportSubmittedHoursAgo == null
+          ? null
+          : iso(w.reportSubmittedHoursAgo * 60 * MINUTE),
       // The device's own report at that moment: a point ~20 m from the site
       // centre, which is what a phone in a lobby sends. Null on every other
       // order, because a check-in that never happened has no position.

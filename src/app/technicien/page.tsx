@@ -23,6 +23,9 @@ import {
   ArrowRight,
   CheckCheck,
   KeyRound,
+  CloudOff,
+  LogOut,
+  RefreshCw,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
@@ -35,13 +38,29 @@ import {
   CompletionReportForm,
   completionActionLabel,
 } from "@/components/technician/completion-report-form";
-import type { CompletionReport } from "@/components/technician/completion-report-form";
+import type {
+  CompletionReport,
+  CompletionReportDraft,
+} from "@/components/technician/completion-report-form";
 import { IncidentDialog } from "@/components/technician/incident-dialog";
 import { MessagesDialog } from "@/components/technician/messages-dialog";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { evaluateGeofence, formatDistance } from "@/lib/geo/geofence";
 import type { Coordinates } from "@/lib/geo/geofence";
+import {
+  clearDraft,
+  pruneDrafts,
+  readDraft,
+  saveDraft,
+} from "@/lib/offline/drafts";
+import {
+  enqueue,
+  flushOutbox,
+  isConnectivityFailure,
+  outboxCount,
+  type OutboxInspection,
+} from "@/lib/offline/outbox";
 
 /**
  * How often this device tells the office where it is.
@@ -77,6 +96,13 @@ interface ActiveJob {
   arrivedAt: string | null;
   /** The optional note captured at check-in — access details, a keyholder. */
   checkInNotes: string | null;
+  /**
+   * When the technician clocked out of the site, or null.
+   *
+   * The other end of the labour interval. Absent means the job is still open
+   * on site — including after a refresh, which is why the server sends it.
+   */
+  departedAt: string | null;
   notes: string | null;
   partsReplaced: Array<{ name: string; partNumber?: string; qty: number }> | null;
   /**
@@ -276,6 +302,27 @@ function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "T";
   return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase();
+}
+
+/**
+ * La durée entre deux pointages, lisible par un humain.
+ *
+ * `endIso` absent signifie « en cours » : la durée court jusqu'à maintenant.
+ * Le résultat est volontairement arrondi à la minute — une main-d'œuvre
+ * facturée à la seconde donnerait une fausse impression de précision, le
+ * pointage lui-même étant à la main de l'opérateur.
+ */
+function formatSpan(startIso: string | null, endIso: string | null): string {
+  if (!startIso) return "—";
+  const start = new Date(startIso).getTime();
+  const end = endIso ? new Date(endIso).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return "—";
+  }
+  const minutes = Math.round((end - start) / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return hours > 0 ? `${hours} h ${String(remainder).padStart(2, "0")}` : `${remainder} min`;
 }
 
 function StepHeader({
@@ -486,6 +533,20 @@ export default function TechnicianPage() {
   >({});
 
   /**
+   * Connectivité et file d'attente locale.
+   *
+   * `online` n'est qu'un indice : `navigator.onLine` dit qu'une interface
+   * réseau existe, pas qu'Internet répond. Le vrai signal est l'échec d'un
+   * `fetch`, et c'est lui qui met une écriture en file. L'état sert à
+   * l'affichage, pas à la décision.
+   */
+  const [online, setOnline] = useState(true);
+  /** Nombre d'écritures conservées sur l'appareil, en attente de réseau. */
+  const [pendingWrites, setPendingWrites] = useState(0);
+  /** Ce qui vient d'être mis en file, ou synchronisé. */
+  const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
+
+  /**
    * The device's last known position, or null while there is not one.
    *
    * Watched rather than read once. The portal is opened in the van and looked
@@ -661,6 +722,84 @@ export default function TechnicianPage() {
         }
         return next;
       });
+
+      /**
+       * Puis les brouillons locaux, qui écrasent le serveur.
+       *
+       * L'ordre est délibéré : ce que le technicien a tapé sur cet appareil et
+       * qui n'est pas encore parti est plus récent que ce que le serveur
+       * connaît. Le brouillon est supprimé dès que le rapport part, donc un
+       * brouillon présent ici est bien du travail non envoyé.
+       */
+      const drafts = new Map(
+        activeJobs.map((j) => {
+          const draft = readDraft(j.id);
+          return [j.id, draft] as const;
+        })
+      );
+
+      setChecklist((prev) => {
+        const next = { ...prev };
+        for (const j of activeJobs) {
+          const draft = drafts.get(j.id);
+          const expected = checklistFor(j).length;
+          if (
+            draft?.checklist &&
+            Array.isArray(draft.checklist) &&
+            draft.checklist.length === expected
+          ) {
+            next[j.id] = draft.checklist as CheckState[];
+          }
+        }
+        return next;
+      });
+
+      setPhotos((prev) => {
+        const next = { ...prev };
+        for (const j of activeJobs) {
+          const draft = drafts.get(j.id);
+          if (draft?.photos && typeof draft.photos === "object") {
+            next[j.id] = { ...(next[j.id] ?? {}), ...draft.photos };
+          }
+        }
+        return next;
+      });
+
+      setNotes((prev) => {
+        const next = { ...prev };
+        for (const j of activeJobs) {
+          const draft = drafts.get(j.id);
+          if (typeof draft?.notes === "string") next[j.id] = draft.notes;
+        }
+        return next;
+      });
+
+      setArrivalNotes((prev) => {
+        const next = { ...prev };
+        for (const j of activeJobs) {
+          const draft = drafts.get(j.id);
+          if (typeof draft?.arrivalNote === "string") {
+            next[j.id] = draft.arrivalNote;
+          }
+        }
+        return next;
+      });
+
+      setSignatures((prev) => {
+        const next = { ...prev };
+        for (const j of activeJobs) {
+          const draft = drafts.get(j.id);
+          if (draft?.signature && typeof draft.signature === "object") {
+            next[j.id] = draft.signature as SignatureValue;
+          }
+        }
+        return next;
+      });
+
+      // Les bons clos ne reviennent pas dans `active` : leurs brouillons
+      // n'ont plus d'objet et sont retirés.
+      pruneDrafts(activeJobs.map((j) => j.id));
+      setPendingWrites(outboxCount());
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Échec du chargement des affectations"
@@ -670,9 +809,83 @@ export default function TechnicianPage() {
     }
   }, []);
 
+  /**
+   * Rejoue la file maintenant — au retour du réseau, au démarrage, ou sur le
+   * bouton « Synchroniser ». Le même chemin dans les trois cas : une seule
+   * façon de dire ce qui est parti et ce qui reste.
+   */
+  const syncNow = useCallback(async () => {
+    const result = await flushOutbox();
+    setPendingWrites(result.remaining);
+    if (result.failures.length > 0) {
+      setError(result.failures.join(" · "));
+    }
+    if (result.sent > 0) {
+      setOfflineNotice(
+        `${result.sent} écriture${result.sent > 1 ? "s" : ""} synchronisée${
+          result.sent > 1 ? "s" : ""
+        } depuis cet appareil.`
+      );
+      await load();
+    }
+  }, [load]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * La reconnexion rejoue ce qui attendait sur l'appareil.
+   *
+   * Le rejeu est silencieux quand la file est vide. Un refus définitif du
+   * serveur (rapport déjà déposé sur un autre appareil, bon réaffecté) est
+   * affiché : le technicien doit savoir que sa saisie n'est pas passée, et
+   * pourquoi, plutôt que de la voir disparaître.
+   */
+  useEffect(() => {
+    if (typeof navigator !== "undefined") setOnline(navigator.onLine);
+    setPendingWrites(outboxCount());
+
+    const handleOnline = () => {
+      setOnline(true);
+      void syncNow();
+    };
+    const handleOffline = () => setOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    // Une reconnexion peut avoir eu lieu pendant que l'application était
+    // fermée : la file est rejouée au démarrage, pas seulement à l'événement.
+    void syncNow();
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [syncNow]);
+
+  /**
+   * Écrit les saisies en cours sur l'appareil, avec un court délai.
+   *
+   * 400 ms : assez pour ne pas écrire à chaque frappe d'une note, assez court
+   * pour qu'une coupure qui suit un appui ne perde rien d'utile. Les URL de
+   * photos sont stockées, pas les images — elles vivent déjà ailleurs.
+   */
+  useEffect(() => {
+    if (jobs.length === 0) return;
+    const id = setTimeout(() => {
+      for (const job of jobs) {
+        saveDraft(job.id, {
+          checklist: checklist[job.id] ?? undefined,
+          notes: notes[job.id],
+          photos: photos[job.id],
+          arrivalNote: arrivalNotes[job.id],
+          signature: signatures[job.id] ?? undefined,
+        });
+      }
+    }, 400);
+    return () => clearTimeout(id);
+  }, [jobs, checklist, notes, photos, arrivalNotes, signatures]);
 
   const cycleCheck = (job: ActiveJob, index: number) => {
     setChecklist((prev) => {
@@ -785,25 +998,27 @@ export default function TechnicianPage() {
         job !== undefined &&
         (job.siteLatitude === null || job.siteLongitude === null);
 
+      /**
+       * The position is sent whenever there is one, and omitted otherwise.
+       *
+       * The server decides what a missing coordinate means, and allows it —
+       * so a refused permission or a failed fix in a basement never costs a
+       * technician their check-in. Both keys are spread conditionally rather
+       * than sent as `null`, because the route's schema is strict and an
+       * explicit null would be a validation error.
+       */
+      const body: Record<string, unknown> = {
+        ...(notes ? { notes } : {}),
+        ...(includePosition && position
+          ? { latitude: position.latitude, longitude: position.longitude }
+          : {}),
+        ...(wantsPlacement ? { usePositionAsSiteLocation: true } : {}),
+      };
+
       const res = await fetch(`/api/work-orders/${jobId}/check-in`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        /**
-         * The position is sent whenever there is one, and omitted otherwise.
-         *
-         * The server decides what a missing coordinate means, and allows it —
-         * so a refused permission or a failed fix in a basement never costs a
-         * technician their check-in. Both keys are spread conditionally rather
-         * than sent as `null`, because the route's schema is strict and an
-         * explicit null would be a validation error.
-         */
-        body: JSON.stringify({
-          ...(notes ? { notes } : {}),
-          ...(includePosition && position
-            ? { latitude: position.latitude, longitude: position.longitude }
-            : {}),
-          ...(wantsPlacement ? { usePositionAsSiteLocation: true } : {}),
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -817,7 +1032,84 @@ export default function TechnicianPage() {
       setArrivalNoteFor(null);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Le pointage a échoué");
+      /**
+       * Pas de réseau devant la porte : l'arrivée part en file locale.
+       *
+       * L'alternative — afficher une erreur — ferait redescendre le technicien
+       * pour retrouver du réseau et re-pointer, alors que le fait, lui, est
+       * certain. La position et la note voyagent avec l'écriture, telles
+       * qu'elles ont été saisies.
+       */
+      if (isConnectivityFailure(e)) {
+        const notes = (arrivalNotes[jobId] ?? "").trim();
+        const job = jobs.find((j) => j.id === jobId);
+        /**
+         * « Sans GPS » reste sans GPS au rejeu : le technicien a écarté une
+         * lecture qu'il jugeait fausse, et la file ne la réintroduit pas.
+         */
+        const queuePosition = position !== null && !options?.skipGps;
+        enqueue({
+          kind: "check-in",
+          workOrderId: jobId,
+          label: `Arrivée ${job?.orderNumber ?? jobId}`,
+          body: {
+            ...(notes ? { notes } : {}),
+            ...(queuePosition && position
+              ? { latitude: position.latitude, longitude: position.longitude }
+              : {}),
+          },
+        });
+        setPendingWrites(outboxCount());
+        setOfflineNotice(
+          "Arrivée enregistrée sur cet appareil. Elle sera transmise dès le retour du réseau."
+        );
+        setArrivalNoteFor(null);
+      } else {
+        setError(e instanceof Error ? e.message : "Le pointage a échoué");
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /**
+   * « Pointer la fin » — le technicien quitte le site.
+   *
+   * Enregistre l'heure de sortie et la durée de main-d'œuvre calculée depuis
+   * l'arrivée. Hors-ligne, le geste part en file : la durée sera calculée par
+   * le serveur au moment du rejeu, à partir de l'arrivée déjà connue — c'est
+   * une approximation de quelques minutes, pas un chiffre inventé.
+   */
+  const checkOut = async (jobId: string) => {
+    setBusyId(jobId);
+    setError("");
+    try {
+      const res = await fetch(`/api/work-orders/${jobId}/check-out`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error ?? "Le pointage de fin a échoué");
+      }
+      setOfflineNotice("Fin d'intervention pointée.");
+      await load();
+    } catch (e) {
+      if (isConnectivityFailure(e)) {
+        const job = jobs.find((j) => j.id === jobId);
+        enqueue({
+          kind: "check-out",
+          workOrderId: jobId,
+          label: `Fin d'intervention ${job?.orderNumber ?? jobId}`,
+        });
+        setPendingWrites(outboxCount());
+        setOfflineNotice(
+          "Fin d'intervention enregistrée sur cet appareil. Elle sera transmise dès le retour du réseau."
+        );
+      } else {
+        setError(
+          e instanceof Error ? e.message : "Le pointage de fin a échoué"
+        );
+      }
     } finally {
       setBusyId(null);
     }
@@ -861,27 +1153,58 @@ export default function TechnicianPage() {
 
     setBusyId(job.id);
     setReportError("");
-    try {
-      if (!job.inspection) {
-        const jobPhotos = photos[job.id] ?? {};
-        const signature = signatures[job.id] ?? null;
 
+    const jobPhotos = photos[job.id] ?? {};
+    const signature = signatures[job.id] ?? null;
+
+    /**
+     * Les deux écritures, préparées avant l'envoi.
+     *
+     * Les construire ici plutôt que dans le `try` est ce qui permet de les
+     * mettre en file telles quelles quand le réseau manque : la file rejoue
+     * exactement ce que le technicien a validé, sans relire un état d'écran
+     * qui a pu changer entre-temps.
+     */
+    const inspectionPayload: OutboxInspection | null = job.inspection
+      ? null
+      : {
+          workOrderId: job.id,
+          kind: kindFor(job),
+          summary: report.description,
+          items: checklistFor(job).map((checkName, index) => ({
+            checkName,
+            result: checks[index] as CheckResult,
+            ...(jobPhotos[index] ? { photoUrl: jobPhotos[index] } : {}),
+          })),
+          ...(signature
+            ? { signatures: [{ role: "TECHNICIAN", ...signature }] }
+            : {}),
+        };
+
+    const orderPayload: Record<string, unknown> = {
+      status: "PENDING_APPROVAL",
+      /**
+       * The description is written onto the order as well as into the
+       * report, and this is the one duplication in the flow. The two are
+       * not the same record: the report's summary is the evidence filed at
+       * the moment of completion and is never rewritten, while `notes` is
+       * the current account of the job that the office can correct while
+       * validating it. Keeping only the first would freeze a typo; keeping
+       * only the second would leave an approved order whose report says
+       * something else.
+       */
+      notes: report.description,
+      partsReplaced: report.parts,
+      isBillable: report.isBillable,
+      invoiceAmount: report.isBillable ? report.invoiceAmount : null,
+    };
+
+    try {
+      if (inspectionPayload) {
         const res = await fetch("/api/inspection-reports", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            workOrderId: job.id,
-            kind: kindFor(job),
-            summary: report.description,
-            items: checklistFor(job).map((checkName, index) => ({
-              checkName,
-              result: checks[index] as CheckResult,
-              ...(jobPhotos[index] ? { photoUrl: jobPhotos[index] } : {}),
-            })),
-            ...(signature
-              ? { signatures: [{ role: "TECHNICIAN", ...signature }] }
-              : {}),
-          }),
+          body: JSON.stringify(inspectionPayload),
         });
         if (!res.ok) {
           const json = await res.json().catch(() => ({}));
@@ -894,23 +1217,7 @@ export default function TechnicianPage() {
       const res = await fetch(`/api/work-orders?id=${job.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: "PENDING_APPROVAL",
-          /**
-           * The description is written onto the order as well as into the
-           * report, and this is the one duplication in the flow. The two are
-           * not the same record: the report's summary is the evidence filed at
-           * the moment of completion and is never rewritten, while `notes` is
-           * the current account of the job that the office can correct while
-           * validating it. Keeping only the first would freeze a typo; keeping
-           * only the second would leave an approved order whose report says
-           * something else.
-           */
-          notes: report.description,
-          partsReplaced: report.parts,
-          isBillable: report.isBillable,
-          invoiceAmount: report.isBillable ? report.invoiceAmount : null,
-        }),
+        body: JSON.stringify(orderPayload),
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -919,14 +1226,38 @@ export default function TechnicianPage() {
         );
       }
 
+      clearDraft(job.id);
       setReportFor(null);
       await load();
     } catch (e) {
-      setReportError(
-        e instanceof Error
-          ? e.message
-          : "Échec de l'envoi du rapport au bureau"
-      );
+      /**
+       * Le rapport validé au fond d'une cage devient une écriture en attente.
+       *
+       * Le technicien a coché chaque point, décrit les travaux et appuyé sur
+       * « Valider » : ce geste ne se reperd pas parce qu'il n'y a pas de
+       * réseau. La file le rejoue dans l'ordre (rapport d'inspection, puis
+       * remise au bureau) et supprime le brouillon local une fois transmis.
+       */
+      if (isConnectivityFailure(e)) {
+        enqueue({
+          kind: "completion",
+          workOrderId: job.id,
+          label: `Rapport ${job.orderNumber}`,
+          inspection: inspectionPayload,
+          order: orderPayload,
+        });
+        setPendingWrites(outboxCount());
+        setOfflineNotice(
+          `Rapport de ${job.orderNumber} conservé sur cet appareil. Il sera envoyé au bureau dès le retour du réseau.`
+        );
+        setReportFor(null);
+      } else {
+        setReportError(
+          e instanceof Error
+            ? e.message
+            : "Échec de l'envoi du rapport au bureau"
+        );
+      }
     } finally {
       setBusyId(null);
     }
@@ -989,6 +1320,29 @@ export default function TechnicianPage() {
         ? "Valider & Clôturer"
         : "Étape suivante";
 
+  /**
+   * Le brouillon du rapport en cours, relu à l'ouverture.
+   *
+   * Il prime sur le bon lui-même : ce que le technicien a commencé à taper sur
+   * cet appareil et n'a pas encore validé est plus récent que ce que le
+   * serveur connaît. Une durée ou un montant illisible retombe sur la valeur
+   * du bon plutôt que d'afficher `NaN`.
+   */
+  const reportDraft = reportFor ? readDraft(reportFor.id)?.report : undefined;
+  const reportDraftAmount =
+    reportDraft && reportDraft.amount.trim() !== ""
+      ? Number(reportDraft.amount.replace(",", "."))
+      : null;
+  const reportDraftParts = reportDraft
+    ? reportDraft.parts.map((line) => ({
+        name: line.name,
+        ...(line.partNumber.trim()
+          ? { partNumber: line.partNumber }
+          : {}),
+        qty: Number(line.qty.replace(",", ".")) || 1,
+      }))
+    : null;
+
   return (
     <div className="space-y-6 max-w-2xl mx-auto pb-28">
       {/* En-tête mobile : identité, présence, contact bureau, cloche. */}
@@ -1035,6 +1389,53 @@ export default function TechnicianPage() {
       {error && (
         <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
           {error}
+        </p>
+      )}
+
+      {/*
+        L'état hors-ligne rendu visible, et jamais alarmant.
+
+        Un technicien dans une cage d'ascenseur n'a pas à se demander si son
+        pointage a été perdu. Tant que la file n'est pas vide, la bannière
+        reste ; le bouton n'apparaît que si une tentative peut aboutir.
+      */}
+      {(!online || pendingWrites > 0) && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <CloudOff className="mt-0.5 h-5 w-5 flex-none" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold">
+              {online ? "Synchronisation en attente" : "Hors ligne — travail conservé"}
+            </p>
+            <p className="mt-0.5 text-xs">
+              {online
+                ? `${pendingWrites} écriture${
+                    pendingWrites > 1 ? "s" : ""
+                  } en attente d'envoi.`
+                : "Vos saisies et vos pointages sont enregistrés sur cet appareil et partiront au retour du réseau."}
+            </p>
+          </div>
+          {online && pendingWrites > 0 && (
+            <button
+              type="button"
+              onClick={() => void syncNow()}
+              className="inline-flex flex-none items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              Synchroniser
+            </button>
+          )}
+        </div>
+      )}
+
+      {offlineNotice && (
+        <p
+          role="status"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+        >
+          {offlineNotice}
         </p>
       )}
 
@@ -1197,24 +1598,72 @@ export default function TechnicianPage() {
                   is the fact the waiting customer is told about.
                 */}
                 {job.arrivedAt ? (
-                  <p className="mt-3 inline-flex items-start gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-                    <MapPin
-                      className="mt-0.5 h-4 w-4 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span>
-                      Arrivée pointée à{" "}
-                      {new Date(job.arrivedAt).toLocaleTimeString("fr-FR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                      {job.checkInNotes && (
-                        <span className="block font-normal">
-                          {job.checkInNotes}
+                  <div className="mt-3 space-y-2">
+                    <p className="inline-flex items-start gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                      <MapPin
+                        className="mt-0.5 h-4 w-4 shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>
+                        Arrivée pointée à{" "}
+                        {new Date(job.arrivedAt).toLocaleTimeString("fr-FR", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                        {job.checkInNotes && (
+                          <span className="block font-normal">
+                            {job.checkInNotes}
+                          </span>
+                        )}
+                      </span>
+                    </p>
+
+                    {/*
+                      La pointeuse, deuxième temps.
+
+                      La durée est celle passée sur site, entre l'arrivée et
+                      la sortie — pas entre l'arrivée et la validation du
+                      bureau. C'est ce que l'office facture et ce qu'un client
+                      conteste, donc le chiffre doit venir des deux gestes du
+                      technicien, et de rien d'autre.
+                    */}
+                    {job.departedAt ? (
+                      <p className="inline-flex items-start gap-1.5 rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-800 dark:bg-gray-800 dark:text-gray-200">
+                        <LogOut
+                          className="mt-0.5 h-4 w-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          Fin pointée à{" "}
+                          {new Date(job.departedAt).toLocaleTimeString("fr-FR", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                          <span className="block font-normal text-gray-600 dark:text-gray-400">
+                            Durée de main-d&apos;œuvre :{" "}
+                            {formatSpan(job.arrivedAt, job.departedAt)}
+                          </span>
                         </span>
-                      )}
-                    </span>
-                  </p>
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void checkOut(job.id)}
+                          disabled={busyId === job.id}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+                        >
+                          <LogOut className="h-4 w-4" aria-hidden="true" />
+                          {busyId === job.id
+                            ? "Pointage…"
+                            : "Pointer la fin d'intervention"}
+                        </button>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          Sur site depuis {formatSpan(job.arrivedAt, null)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1440,7 +1889,19 @@ export default function TechnicianPage() {
                             ).toLocaleTimeString("fr-FR", {
                               hour: "2-digit",
                               minute: "2-digit",
-                            })}`
+                            })}${
+                              job.departedAt
+                                ? ` · fin à ${new Date(
+                                    job.departedAt
+                                  ).toLocaleTimeString("fr-FR", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })} (${formatSpan(
+                                    job.arrivedAt,
+                                    job.departedAt
+                                  )} sur site)`
+                                : ""
+                            }`
                           : "Présence enregistrée"
                       }
                     />
@@ -1944,11 +2405,17 @@ export default function TechnicianPage() {
             building: reportFor.building,
           }}
           initialDescription={
-            notes[reportFor.id] ?? reportFor.notes ?? ""
+            reportDraft?.description ?? notes[reportFor.id] ?? reportFor.notes ?? ""
           }
-          initialParts={reportFor.partsReplaced}
-          initialIsBillable={reportFor.isBillable}
-          initialAmount={reportFor.invoiceAmount}
+          initialParts={reportDraftParts ?? reportFor.partsReplaced}
+          initialIsBillable={reportDraft?.isBillable ?? reportFor.isBillable}
+          initialAmount={
+            reportDraft
+              ? reportDraftAmount !== null && Number.isFinite(reportDraftAmount)
+                ? reportDraftAmount
+                : null
+              : reportFor.invoiceAmount
+          }
           busy={busyId === reportFor.id}
           serverError={reportError}
           onCancel={() => {
@@ -1956,6 +2423,9 @@ export default function TechnicianPage() {
             setReportError("");
           }}
           onSubmit={(report) => submitCompletionReport(reportFor, report)}
+          onDraftChange={(draft: CompletionReportDraft) =>
+            saveDraft(reportFor.id, { report: draft })
+          }
         />
       )}
 

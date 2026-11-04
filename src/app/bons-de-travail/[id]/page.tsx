@@ -21,6 +21,7 @@ import {
   Navigation,
   Package,
   Receipt,
+  Timer,
   Undo2,
   User,
   Wrench,
@@ -93,6 +94,8 @@ interface WorkOrderDetail {
   completedAt: string | null;
   startedAt: string | null;
   arrivedAt: string | null;
+  /** Sortie du site pointée par le technicien — l'autre bout de la durée. */
+  departedAt: string | null;
   actualHours: number | null;
   elevator: {
     id: string;
@@ -616,6 +619,27 @@ export default function WorkOrderDetailPage() {
               icon={Clock}
               label="Arrivée sur site"
               value={formatDateTime(data.arrivedAt)}
+            />
+          )}
+          {data.departedAt && (
+            <Fact
+              icon={Clock}
+              label="Fin d'intervention"
+              value={formatDateTime(data.departedAt)}
+            />
+          )}
+          {/*
+            La durée de main-d'œuvre, calculée au pointage de fin.
+
+            Affichée même quand `actualHours` a été corrigé à la main par le
+            bureau : c'est la valeur qui fait foi sur le bon, et la relire ici
+            évite que deux écrans donnent deux durées.
+          */}
+          {data.actualHours !== null && (
+            <Fact
+              icon={Timer}
+              label="Durée de main-d'œuvre"
+              value={`${data.actualHours.toLocaleString("fr-FR")} h`}
             />
           )}
           {reception && (

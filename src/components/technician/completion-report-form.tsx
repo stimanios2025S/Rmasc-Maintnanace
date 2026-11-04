@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Plus, Trash2, X } from "lucide-react";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { parseDzdInput } from "@/lib/ui/money";
@@ -59,6 +59,13 @@ export function completionActionLabel(type: string): string {
 
 const DESCRIPTION_MAX = 5000;
 
+export interface CompletionReportDraft {
+  description: string;
+  parts: Array<{ name: string; partNumber: string; qty: string }>;
+  isBillable: boolean;
+  amount: string;
+}
+
 export function CompletionReportForm({
   job,
   initialDescription,
@@ -69,6 +76,7 @@ export function CompletionReportForm({
   serverError,
   onCancel,
   onSubmit,
+  onDraftChange,
 }: {
   job: CompletionReportJob;
   initialDescription: string;
@@ -79,6 +87,14 @@ export function CompletionReportForm({
   serverError: string;
   onCancel: () => void;
   onSubmit: (report: CompletionReport) => void;
+  /**
+   * Appelé à chaque frappe, pour que le brouillon survive à une coupure.
+   *
+   * Le formulaire ne sait pas où il est sauvegardé — un `localStorage` ici,
+   * autre chose demain — et c'est délibéré : il rapporte ce que l'utilisateur
+   * a tapé, l'appelant décide de ce qu'il en fait.
+   */
+  onDraftChange?: (draft: CompletionReportDraft) => void;
 }) {
   const [description, setDescription] = useState(initialDescription);
   const [parts, setParts] = useState<PartLine[]>(() =>
@@ -93,6 +109,22 @@ export function CompletionReportForm({
     initialAmount === null ? "" : String(initialAmount)
   );
   const [error, setError] = useState("");
+
+  /**
+   * Le brouillon part à chaque modification, sans debounce.
+   *
+   * `localStorage.setItem` sur quelques kilo-octets est synchrone et
+   * négligeable devant une frappe ; attendre ajouterait une fenêtre pendant
+   * laquelle une coupure efface le dernier mot tapé.
+   */
+  useEffect(() => {
+    onDraftChange?.({
+      description,
+      parts,
+      isBillable,
+      amount,
+    });
+  }, [description, parts, isBillable, amount, onDraftChange]);
 
   const heading = completionActionLabel(job.type);
 

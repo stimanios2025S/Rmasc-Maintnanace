@@ -1,0 +1,940 @@
+<title>Audit Administration RMASC</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap">
+<style>
+  /* Plan : charbon/acier + orange sécurité, grille de rapport, cartes de module.
+     Deux thèmes, mêmes tokens, aucun composant ne code une couleur en dur. */
+  :root {
+    --bg: #f2f3f0;
+    --surface: #ffffff;
+    --surface-2: #f7f8f6;
+    --ink: #14191d;
+    --muted: #5c686f;
+    --line: #dfe4e2;
+    --line-strong: #c6ceca;
+    --accent: #d95f1e;
+    --accent-soft: #fbe9df;
+    --ok: #1f7a4d;
+    --ok-soft: #e5f3ea;
+    --warn: #9a5b00;
+    --warn-soft: #fdf1dc;
+    --bad: #a52a22;
+    --bad-soft: #fbe8e6;
+    --info: #2c5f86;
+    --info-soft: #e7f0f7;
+    --shadow: 0 1px 0 rgba(20, 25, 29, 0.04), 0 10px 30px rgba(20, 25, 29, 0.05);
+    --radius: 14px;
+    --max: 1160px;
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1316;
+      --surface: #151c20;
+      --surface-2: #1b2328;
+      --ink: #edf2f3;
+      --muted: #a3b0b5;
+      --line: #29343a;
+      --line-strong: #3a474e;
+      --accent: #ff8a4c;
+      --accent-soft: #3a2116;
+      --ok: #6fd39e;
+      --ok-soft: #123328;
+      --warn: #f0b45c;
+      --warn-soft: #332513;
+      --bad: #ff8c81;
+      --bad-soft: #3a1a18;
+      --info: #8fc5ea;
+      --info-soft: #152b3a;
+      --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 18px 50px rgba(0, 0, 0, 0.35);
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0e1316;
+    --surface: #151c20;
+    --surface-2: #1b2328;
+    --ink: #edf2f3;
+    --muted: #a3b0b5;
+    --line: #29343a;
+    --line-strong: #3a474e;
+    --accent: #ff8a4c;
+    --accent-soft: #3a2116;
+    --ok: #6fd39e;
+    --ok-soft: #123328;
+    --warn: #f0b45c;
+    --warn-soft: #332513;
+    --bad: #ff8c81;
+    --bad-soft: #3a1a18;
+    --info: #8fc5ea;
+    --info-soft: #152b3a;
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 18px 50px rgba(0, 0, 0, 0.35);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 0 56px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Source Sans 3", "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: var(--max);
+    margin: 0 auto;
+  }
+
+  h1, h2, h3, .display {
+    font-family: "Archivo", "Segoe UI", sans-serif;
+    text-wrap: balance;
+    letter-spacing: -0.02em;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(2.05rem, 4.6vw, 3.35rem);
+    line-height: 1.04;
+    font-weight: 700;
+  }
+
+  h2 {
+    margin: 0 0 14px;
+    font-size: clamp(1.2rem, 2vw, 1.48rem);
+    line-height: 1.2;
+    font-weight: 600;
+  }
+
+  h3 {
+    margin: 0;
+    font-size: 1.02rem;
+    line-height: 1.3;
+    font-weight: 600;
+  }
+
+  p { margin: 0; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .eyebrow::before {
+    content: "";
+    width: 18px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(220px, 0.7fr);
+    gap: 28px;
+    align-items: end;
+    padding: 46px 0 30px;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .hero p.lede {
+    max-width: 62ch;
+    margin-top: 14px;
+    color: var(--muted);
+    font-size: 1.03rem;
+  }
+
+  .meta {
+    display: grid;
+    gap: 10px;
+    padding: 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .meta div {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    font-size: 0.86rem;
+  }
+
+  .meta dt { color: var(--muted); }
+  .meta dd { margin: 0; font-weight: 600; text-align: right; }
+
+  .verdict {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 18px;
+    align-items: center;
+    margin: 28px 0 0;
+    padding: 20px 22px;
+    border: 1px solid var(--line-strong);
+    border-left: 5px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .verdict strong { font-family: "Archivo", sans-serif; font-size: 1.06rem; }
+  .verdict p { margin-top: 4px; color: var(--muted); font-size: 0.94rem; }
+
+  .verdict-badge {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 154px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: var(--warn-soft);
+    color: var(--warn);
+    text-align: center;
+  }
+
+  .verdict-badge span {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .verdict-badge b {
+    display: block;
+    margin-top: 2px;
+    font-family: "Archivo", sans-serif;
+    font-size: 1.02rem;
+  }
+
+  .section {
+    padding-top: 38px;
+  }
+
+  .section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .section-head p {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .stat {
+    padding: 15px 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .stat .value {
+    display: block;
+    font-family: "Archivo", sans-serif;
+    font-size: 1.7rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat .label {
+    display: block;
+    margin-top: 5px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .meter {
+    display: flex;
+    height: 8px;
+    margin-top: 14px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--line);
+  }
+
+  .meter span:nth-child(1) { background: var(--ok); }
+  .meter span:nth-child(2) { background: var(--warn); }
+  .meter span:nth-child(3) { background: var(--line-strong); }
+
+  .modules {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .module {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    min-width: 0;
+    padding: 17px 18px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+
+  .module-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .module h3 { max-width: 26ch; }
+
+  .module p {
+    color: var(--muted);
+    font-size: 0.89rem;
+  }
+
+  .module ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 0.86rem;
+  }
+
+  .module li + li { margin-top: 3px; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .pill::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  .pill.info { background: var(--info-soft); color: var(--info); }
+
+  .note {
+    margin-top: 12px;
+    padding: 11px 13px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.86rem;
+  }
+
+  .columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .panel {
+    min-width: 0;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .panel h3 { margin-bottom: 8px; }
+
+  .checklist {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .checklist li {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+
+  .checklist .mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .mark.ok { background: var(--ok-soft); color: var(--ok); }
+  .mark.bad { background: var(--bad-soft); color: var(--bad); }
+  .mark.warn { background: var(--warn-soft); color: var(--warn); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  table {
+    width: 100%;
+    min-width: 660px;
+    border-collapse: collapse;
+    font-size: 0.87rem;
+  }
+
+  caption {
+    padding: 12px 14px;
+    color: var(--muted);
+    font-size: 0.82rem;
+    text-align: left;
+  }
+
+  th, td {
+    padding: 10px 13px;
+    border-top: 1px solid var(--line);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: var(--surface-2);
+  }
+
+  td code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.86em;
+  }
+
+  .priority-list {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: priority;
+  }
+
+  .priority-list li {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .priority-list li::before {
+    counter-increment: priority;
+    content: counter(priority);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 0.86rem;
+  }
+
+  .priority-list strong {
+    display: block;
+    font-family: "Archivo", sans-serif;
+    font-size: 0.96rem;
+  }
+
+  .priority-list p {
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+
+  .priority-list .pill { margin-top: 7px; }
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+    gap: 16px;
+  }
+
+  .callout {
+    padding: 15px 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .callout h3 { margin-bottom: 7px; }
+  .callout p, .callout li { color: var(--muted); font-size: 0.88rem; }
+  .callout ul { margin: 0; padding-left: 17px; }
+  .callout li + li { margin-top: 5px; }
+
+  footer {
+    margin-top: 42px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line-strong);
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+
+  footer p + p { margin-top: 6px; }
+
+  @media (max-width: 860px) {
+    .hero { grid-template-columns: 1fr; align-items: start; padding-top: 32px; }
+    .meta { max-width: 420px; }
+    .modules, .columns, .split { grid-template-columns: 1fr; }
+    .verdict { grid-template-columns: 1fr; }
+    .verdict-badge { justify-self: start; min-width: 0; flex-direction: row; gap: 8px; }
+    .verdict-badge b { margin-top: 0; }
+  }
+
+  @media (max-width: 520px) {
+    .stats { grid-template-columns: 1fr; }
+    .hero { padding-top: 24px; }
+    h1 { font-size: 2rem; }
+    .module-top { flex-direction: column; }
+    .module h3 { max-width: none; }
+  }
+</style>
+
+<div class="page">
+  <header class="hero">
+    <div>
+      <span class="eyebrow">Audit pré-production · GMAO / Back-office</span>
+      <h1>Administration RMASC</h1>
+      <p class="lede">
+        Bilan de la partie Administration avant mise en service : état réel des
+        modules, qualité de l’interface, sécurité, base de données et points
+        bloquants. L’audit s’appuie sur le code, le schéma Prisma, un contrôle
+        TypeScript et un build de production, pas sur un test de charge.
+      </p>
+    </div>
+    <dl class="meta">
+      <div><dt>Date</dt><dd>4 novembre 2026</dd></div>
+      <div><dt>Périmètre</dt><dd>Administration, GMAO, back-office</dd></div>
+      <div><dt>Stack</dt><dd>Next.js 14 · Prisma · PostgreSQL</dd></div>
+      <div><dt>Vérifications</dt><dd>tsc · build · API</dd></div>
+    </dl>
+  </header>
+
+  <section class="verdict" aria-labelledby="verdict-title">
+    <div>
+      <strong id="verdict-title">Verdict : GO conditionnel pour la recette, NO-GO production en l’état.</strong>
+      <p>
+        Les huit rubriques administratives sont branchées sur de vraies routes et
+        une vraie base. Quatre d’entre elles restent partielles ou dépendent d’un
+        correctif, et quatre correctifs bloquants doivent être traités avant
+        l’ouverture.
+      </p>
+    </div>
+    <div class="verdict-badge">
+      <span>Pré-requis</span>
+      <b>4 P0 · 1 P1</b>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="synthese-title">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Synthèse</span>
+        <h2 id="synthese-title">Ce que dit l’audit en un coup d’œil</h2>
+      </div>
+      <p>État des huit modules administratifs</p>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="value">4</span>
+        <span class="label">Modules 100 % fonctionnels</span>
+      </div>
+      <div class="stat">
+        <span class="value">4</span>
+        <span class="label">Modules partiels, à compléter</span>
+      </div>
+      <div class="stat">
+        <span class="value">0</span>
+        <span class="label">Module en mock en production</span>
+      </div>
+    </div>
+    <div class="meter" role="img" aria-label="4 modules complets sur 8, 4 partiels">
+      <span style="width:50%"></span>
+      <span style="width:50%"></span>
+    </div>
+    <p class="note">
+      Les fixtures de démonstration existent, mais elles sont désactivées en
+      production : <code>DEMO_DATA</code> et <code>OPEN_ACCESS</code> sont forcés
+      à <code>false</code> dès que <code>NODE_ENV=production</code>. Une base
+      injoignable produit donc un 503, jamais un écran inventé.
+    </p>
+  </section>
+
+  <section class="section" aria-labelledby="modules-title">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">1 · Modules</span>
+        <h2 id="modules-title">État des modules d’administration</h2>
+      </div>
+      <p>Fonctionnel · Partiel · Limites connues</p>
+    </div>
+
+    <div class="modules">
+      <article class="module">
+        <div class="module-top">
+          <h3>Tableau de bord</h3>
+          <span class="pill ok">100 %</span>
+        </div>
+        <p>KPIs parc, santé, charge, alertes, graphiques et activité récente.</p>
+        <ul>
+          <li><code>/api/dashboard</code> agrège la base réelle, avec portée par rôle.</li>
+          <li>Rafraîchissement toutes les 30 s ; télémétrie, alertes et bons récents.</li>
+          <li>Repli de démonstration uniquement en développement.</li>
+        </ul>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Interventions &amp; Dispatching</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Création, adresse exacte, affectation dynamique, pointage et suivi.</p>
+        <ul>
+          <li>Création et transition de statut via <code>/api/work-orders</code>.</li>
+          <li>Affectation manuelle ou automatique, charge technicien en temps réel.</li>
+          <li>Pointage manuel fonctionnel ; le GPS navigateur est actuellement bloqué par l’en-tête <code>Permissions-Policy</code>.</li>
+        </ul>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Parc &amp; Audits de reprise</h3>
+          <span class="pill ok">100 %</span>
+        </div>
+        <p>Processus WO-AUD, blocage de l’étape 3, contournement administrateur.</p>
+        <ul>
+          <li>Reprise d’appareil, bon d’inspection, validation et QR.</li>
+          <li>Validation impossible tant que le bon d’audit est ouvert.</li>
+          <li>« Forcer l’intégration au parc » réservé à l’admin, clôture le WO-AUD.</li>
+        </ul>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Fiches techniques hors contrat</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Création manuelle admin, complétion technique, jeu de démonstration.</p>
+        <ul>
+          <li>Modale « Nouvelle fiche technique » avec les 4 champs d’identification.</li>
+          <li>Édition de la marque, du modèle, de la charge, des étages et du variateur.</li>
+          <li>Nom du client, immeuble et adresse non modifiables après création ; pas d’upload de pièces.</li>
+        </ul>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Stock &amp; Magasin</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Catalogue, demandes de pièces, seuils critiques et décrémentation.</p>
+        <ul>
+          <li>8 références seedées, 3 demandes de démonstration, badge « Stock critique ».</li>
+          <li>Nouvelle référence via <code>POST /api/stock</code> ; catégorie et prix DZD.</li>
+          <li>Pas d’édition/suppression d’article, pas d’historique de mouvements, liaison magasin central non éprouvée.</li>
+        </ul>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Devis &amp; Facturation</h3>
+          <span class="pill warn">Partiel</span>
+        </div>
+        <p>Devis, décision client, facture, PDF et statut de règlement.</p>
+        <ul>
+          <li>Devis : création, chiffrage, envoi, acceptation/refus, PDF.</li>
+          <li>Facture émise depuis un bon clôturé, PDF, statut Émise / Réglée / Annulée.</li>
+          <li>Pas de règlement partiel ni de journal d’encaissement ; mentions légales à configurer.</li>
+        </ul>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Équipe &amp; Clients</h3>
+          <span class="pill ok">100 %</span>
+        </div>
+        <p>Comptes, rôles, statuts, accès client et garde-fous.</p>
+        <ul>
+          <li>Personnel : création, édition, désactivation, rôles et spécialités.</li>
+          <li>Clients : création, type contractuel, activation, invitation et parc.</li>
+          <li>Le dernier administrateur actif ne peut pas être retiré ; pas de suppression de compte.</li>
+        </ul>
+      </article>
+
+      <article class="module">
+        <div class="module-top">
+          <h3>Notifications &amp; carte</h3>
+          <span class="pill ok">100 %</span>
+        </div>
+        <p>Cloche, pastille rouge, panne client et redirection cartographique.</p>
+        <ul>
+          <li>Notification pour panne escaladée et panne résolue par le client.</li>
+          <li>Lien <code>/carte?site=…&amp;elevator=…&amp;incident=…</code>.</li>
+          <li>Centrage, fiche rouge de panne et assignation rapide.</li>
+        </ul>
+      </article>
+    </div>
+
+    <p class="note">
+      Les statuts « 100 % » décrivent le périmètre administratif demandé, pas
+      une garantie sans limite : les tests automatisés restent insuffisants et
+      les intégrations externes (WhatsApp, magasin central) ne sont pas
+      prouvées de bout en bout.
+    </p>
+  </section>
+
+  <section class="section" aria-labelledby="ux-title">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">2 · UI / UX</span>
+        <h2 id="ux-title">Interface, fond animé et sidebar</h2>
+      </div>
+      <p>Lisibilité, verre dépoli, responsive</p>
+    </div>
+
+    <div class="columns">
+      <div class="panel">
+        <h3>Arrière-plan GIF</h3>
+        <ul class="checklist">
+          <li><span class="mark ok">✓</span><span><strong>Intégré</strong> via <code>AppBackground</code> sur <code>(dashboard)</code>, <code>technicien</code>, <code>ascenseurs</code>, <code>bons-de-travail</code>, <code>carte</code> et <code>fiches-techniques</code>.</span></li>
+          <li><span class="mark ok">✓</span><span>GIF89a réel, 640 × 360, 2 images, 99 Ko ; couche fixe <code>cover</code> + overlay clair/sombre.</span></li>
+          <li><span class="mark ok">✓</span><span>Cartes, tableaux et textes conservent un fond lisible ; le défilement n’étire pas l’image.</span></li>
+          <li><span class="mark warn">!</span><span>Asset de 640 × 360 agrandi sur grand écran : prévoir une version 1920 × 1080 avant la vitrine commerciale.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Sidebar Glassmorphism</h3>
+        <ul class="checklist">
+          <li><span class="mark ok">✓</span><span><code>bg-white/75</code> / <code>dark:bg-slate-950/75</code> + <code>backdrop-blur-md</code> ; bordures translucides.</span></li>
+          <li><span class="mark ok">✓</span><span>Onglet actif : <code>bg-blue-500/10</code>, texte bleu et bordure gauche ; zone profil séparée et lisible.</span></li>
+          <li><span class="mark warn">!</span><span>Sidebar fixe de 250 px, sans tiroir mobile automatique : à tester et corriger sur petit écran.</span></li>
+          <li><span class="mark warn">!</span><span><code>backdrop-blur</code> sur sidebar, header et overlay : vérifier le coût GPU sur mobiles anciens.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="security-title">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">3 · Sécurité, base &amp; performance</span>
+        <h2 id="security-title">Contrôles techniques</h2>
+      </div>
+      <p>Ce qui est prouvé, ce qui reste ouvert</p>
+    </div>
+
+    <div class="split">
+      <div class="panel">
+        <h3>Points validés</h3>
+        <ul class="checklist">
+          <li><span class="mark ok">✓</span><span><strong>TypeScript</strong> : <code>tsc --noEmit</code> sans erreur.</span></li>
+          <li><span class="mark ok">✓</span><span><strong>Build production</strong> : <code>next build</code> réussi ; routes et pages générées.</span></li>
+          <li><span class="mark ok">✓</span><span><strong>Schéma Prisma</strong> valide : 51 index et 23 contraintes uniques recensés.</span></li>
+          <li><span class="mark ok">✓</span><span><strong>Rôles</strong> : middleware + <code>requireRole</code> ; portée client par immeuble.</span></li>
+          <li><span class="mark ok">✓</span><span><strong>Mots de passe</strong> : bcrypt 12 tours ; comparaison factice pour ne pas révéler un compte.</span></li>
+          <li><span class="mark ok">✓</span><span><strong>Santé</strong> : <code>/api/health</code> teste PostgreSQL avec timeout et renvoie 503 en panne.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Points ouverts</h3>
+        <ul class="checklist">
+          <li><span class="mark bad">!</span><span><strong>Géolocalisation bloquée</strong> : <code>Permissions-Policy: geolocation=()</code> désactive le GPS du portail technicien.</span></li>
+          <li><span class="mark bad">!</span><span><strong>Mots de passe de démo</strong> : <code>prisma/seed.ts</code> crée <code>password123</code> ; <code>diagnose-auth.ts --fix</code> les remet sans garde.</span></li>
+          <li><span class="mark bad">!</span><span><strong>Aucune migration Prisma</strong> : <code>prisma/migrations/</code> absent, déploiement par <code>db push</code>.</span></li>
+          <li><span class="mark bad">!</span><span><strong>IoT non authentifié</strong> si <code>IOT_INGEST_TOKEN</code> est vide ; avertissement seulement au démarrage.</span></li>
+          <li><span class="mark warn">!</span><span><strong>Pas de limitation de tentatives</strong> sur la connexion, pas de CSP, pas de tests automatisés/CI.</span></li>
+          <li><span class="mark warn">!</span><span><strong>Performances</strong> : tableau de bord 252 Ko de first-load, polling 30–60 s, carte chargée en entier ; à valider avec la taille réelle du parc.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="note">
+      Le build de production est passé, mais il ne remplace ni un test de charge,
+      ni un test d’intrusion, ni une recette métier sur une base anonymisée.
+      Ces trois campagnes restent à planifier.
+    </p>
+  </section>
+
+  <section class="section" aria-labelledby="checklist-title">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">4 · Avant mise en production</span>
+        <h2 id="checklist-title">Checklist d’ouverture</h2>
+      </div>
+      <p>Seeds, environnement, priorités</p>
+    </div>
+
+    <div class="columns">
+      <div class="panel">
+        <h3>Scripts à conserver / retirer</h3>
+        <ul class="checklist">
+          <li><span class="mark bad">×</span><span><code>prisma/seed.ts</code> — données de démonstration et mot de passe commun : jamais en production.</span></li>
+          <li><span class="mark bad">×</span><span><code>scripts/seed-stock.ts</code> — catalogue et demandes <code>DP-DEMO-*</code> : développement uniquement.</span></li>
+          <li><span class="mark bad">×</span><span><code>scripts/diagnose-auth.ts --fix</code> — remet <code>password123</code> : à garder hors production ou à neutraliser.</span></li>
+          <li><span class="mark ok">✓</span><span><code>scripts/contracts-rollover.ts</code> — batch de reconduction : à planifier (cron/PM2).</span></li>
+          <li><span class="mark ok">✓</span><span><code>scripts/contracts-check.ts</code> — harnais de règles : à brancher en CI.</span></li>
+          <li><span class="mark ok">✓</span><span><code>scripts/rotate-demo-passwords.ts</code> — rotation de sécurité : à exécuter une fois puis archiver.</span></li>
+          <li><span class="mark warn">!</span><span><code>scripts/backfill-incident-positions.ts</code> — réparation ponctuelle : runbook, pas de tâche récurrente.</span></li>
+          <li><span class="mark warn">!</span><span><code>simulate-iot.ts</code>, <code>e2e-scenarios.ts</code>, <code>stock-e2e.ts</code>, <code>pdf-golden.ts</code> — outils de développement/test : hors image de production.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Variables d’environnement requises</h3>
+        <ul class="checklist">
+          <li><span class="mark ok">✓</span><span><code>NODE_ENV=production</code>, <code>DATABASE_URL</code>, <code>NEXTAUTH_URL</code>, <code>NEXTAUTH_SECRET</code> (≥ 16 caractères).</span></li>
+          <li><span class="mark bad">!</span><span><code>IOT_INGEST_TOKEN</code> — sans lui, <code>POST /api/telemetry</code> accepte des écritures non authentifiées.</span></li>
+          <li><span class="mark warn">!</span><span><code>ADMIN_PHONE_NUMBER</code> et le trio Evolution ou Twilio pour les alertes WhatsApp.</span></li>
+          <li><span class="mark warn">!</span><span><code>STOCK_API_URL</code>, <code>STOCK_API_KEY</code>, <code>STOCK_API_SECRET</code> pour le magasin central.</span></li>
+          <li><span class="mark bad">!</span><span><code>INVOICE_COMPANY_*</code> : nom, adresse, RC, NIF, NIS, AI, banque, RIB, mentions, logo et cachet.</span></li>
+          <li><span class="mark ok">✓</span><span><code>OPEN_ACCESS=false</code> et <code>DEMO_DATA=false</code> ; de toute façon forcés en production.</span></li>
+        </ul>
+        <p class="note">
+          Le <code>.env</code> local contient la base, NextAuth, le jeton IoT et le
+          nom de société. Les variables WhatsApp, stock et identité légale
+          complète n’y sont pas encore renseignées.
+        </p>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h3>Top 5 des priorités avant ouverture</h3>
+      <ol class="priority-list">
+        <li>
+          <div>
+            <strong>Corriger la politique de géolocalisation</strong>
+            <p>Remplacer <code>geolocation=()</code> par <code>geolocation=(self)</code>, puis tester le pointage, le suivi et le placement de site sur un téléphone réel.</p>
+            <span class="pill bad">Bloquant</span>
+          </div>
+        </li>
+        <li>
+          <div>
+            <strong>Neutraliser les identifiants de démonstration</strong>
+            <p>Retirer <code>diagnose-auth.ts --fix</code> de la production, ne jamais lancer <code>prisma/seed.ts</code> sur la base réelle, désactiver les comptes de démo et faire tourner les mots de passe.</p>
+            <span class="pill bad">Bloquant</span>
+          </div>
+        </li>
+        <li>
+          <div>
+            <strong>Adopter les migrations Prisma</strong>
+            <p>Créer un baseline <code>prisma migrate dev</code>, le versionner, puis déployer avec <code>prisma migrate deploy</code>. Sans historique, aucun retour arrière fiable.</p>
+            <span class="pill bad">Bloquant</span>
+          </div>
+        </li>
+        <li>
+          <div>
+            <strong>Compléter la configuration de production</strong>
+            <p>Jeton IoT, identité légale des factures, coordonnées bancaires, canal WhatsApp, intégration stock, sauvegardes et supervision.</p>
+            <span class="pill bad">Bloquant</span>
+          </div>
+        </li>
+        <li>
+          <div>
+            <strong>Installer une CI et une recette minimale</strong>
+            <p>Exécuter <code>tsc</code>, le build, ESLint et <code>contracts-check</code> à chaque changement ; ajouter des scénarios API sur les rôles, les transitions et le stock.</p>
+            <span class="pill warn">Élevé</span>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="limits-title">
+    <div class="section-head">
+      <div>
+        <span class="eyebrow">Méthode &amp; limites</span>
+        <h2 id="limits-title">Ce que cet audit ne couvre pas</h2>
+      </div>
+    </div>
+    <div class="split">
+      <div class="callout">
+        <h3>Périmètre vérifié</h3>
+        <ul>
+          <li>Lecture des pages et routes de la partie administration.</li>
+          <li><code>tsc --noEmit</code>, <code>next build</code>, validation du schéma Prisma.</li>
+          <li>Contrôles de rôle, politiques d’environnement, structure des layouts.</li>
+          <li>Smoke tests API sur le stock, les fiches techniques, la carte et les incidents.</li>
+        </ul>
+      </div>
+      <div class="callout">
+        <h3>À planifier</h3>
+        <ul>
+          <li>Recette métier sur une base anonymisée et un parc représentatif.</li>
+          <li>Test de charge et test d’intrusion.</li>
+          <li>Validation des intégrations WhatsApp et magasin central.</li>
+          <li>Plan de sauvegarde, restauration et supervision 24/7.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p><strong>Audit Administration RMASC</strong> — rapport interne pré-production, 4 novembre 2026.</p>
+    <p>Sources : code source, schéma Prisma, <code>next build</code>, <code>tsc --noEmit</code>, routes API et documentation du dépôt. Les valeurs de disponibilité décrivent le périmètre fonctionnel, pas une garantie de service.</p>
+  </footer>
+</div>

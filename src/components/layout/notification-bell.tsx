@@ -10,10 +10,14 @@ import {
   Eye,
   Loader2,
   MapPin,
+  Navigation,
   Zap,
 } from "lucide-react";
 import { DispatchModal } from "@/components/admin/dispatch-modal";
-import { coordinatesOf } from "@/lib/map/directions";
+import {
+  coordinatesOf,
+  googleMapsDirectionsUrl,
+} from "@/lib/map/directions";
 
 /**
  * The user's own notification tray.
@@ -431,9 +435,11 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                   row.message;
                 const building = workOrder?.elevator.building;
                 const accessCode = building?.accessCode ?? null;
-                const canMap =
-                  canSeeMap &&
-                  coordinatesOf(building?.latitude, building?.longitude) !== null;
+                const mapPoint = coordinatesOf(
+                  building?.latitude,
+                  building?.longitude
+                );
+                const canMap = canSeeMap && mapPoint !== null;
 
                 return (
                   <li
@@ -481,6 +487,11 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                                 </span>
                               )}
                             </span>
+                            {building?.address && (
+                              <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                                {building.address}
+                              </span>
+                            )}
                             <span className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                               <MapPin
                                 className="h-3.5 w-3.5 flex-none"
@@ -557,6 +568,21 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                             <MapPin className="h-3 w-3" aria-hidden="true" />
                             Voir sur la carte
                           </button>
+                        )}
+                        {workOrder && canMap && mapPoint && (
+                          <a
+                            href={googleMapsDirectionsUrl(
+                              mapPoint.latitude,
+                              mapPoint.longitude
+                            )}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => markRead(row)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+                          >
+                            <Navigation className="h-3 w-3" aria-hidden="true" />
+                            Itinéraire GPS
+                          </a>
                         )}
                       </div>
                     </div>

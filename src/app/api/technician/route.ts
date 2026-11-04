@@ -193,6 +193,13 @@ export async function GET(request: NextRequest) {
            */
           arrivedAt: wo.arrivedAt,
           checkInNotes: wo.checkInNotes,
+          /**
+           * L'autre bout de la pointeuse. Le portail l'affiche après un
+           * rechargement — sans lui, le bouton « Pointer la fin » reviendrait
+           * sur un bon déjà clôturé et un second appui serait refusé, ce qui
+           * se lit comme une action perdue.
+           */
+          departedAt: wo.departedAt,
           notes: wo.notes,
           partsReplaced: wo.partsReplaced,
           /**
