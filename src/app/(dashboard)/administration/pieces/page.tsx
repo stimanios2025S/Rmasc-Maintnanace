@@ -101,6 +101,34 @@ interface StockRow {
   updatedAt: string;
 }
 
+/** Une ligne du journal des mouvements de la réserve. */
+interface StockMovementRow {
+  id: string;
+  type: "ENTRY" | "EXIT" | "RESERVATION" | "ADJUSTMENT";
+  quantity: number;
+  reason: string | null;
+  createdAt: string;
+  stockItem: { id: string; reference: string; name: string };
+  user: { id: string; name: string } | null;
+}
+
+const MOVEMENT_LABEL: Record<StockMovementRow["type"], string> = {
+  ENTRY: "Entrée",
+  EXIT: "Sortie",
+  RESERVATION: "Réservation",
+  ADJUSTMENT: "Ajustement",
+};
+
+const MOVEMENT_TONE: Record<StockMovementRow["type"], string> = {
+  ENTRY:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300",
+  EXIT: "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300",
+  RESERVATION:
+    "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300",
+  ADJUSTMENT:
+    "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+};
+
 /**
  * Les onglets, dans l'ordre du travail.
  *
@@ -153,7 +181,9 @@ export default function PiecesAFournirPage() {
    * lisent ensemble — une demande ne se réserve que contre une quantité — mais
    * ce sont deux questions, donc deux onglets.
    */
-  const [tab, setTab] = useState<"requests" | "stock">("requests");
+  const [tab, setTab] = useState<"requests" | "stock" | "movements">(
+    "requests"
+  );
   const [stockItems, setStockItems] = useState<StockRow[]>([]);
   const [stockLoading, setStockLoading] = useState(false);
   const [stockError, setStockError] = useState("");
@@ -170,6 +200,19 @@ export default function PiecesAFournirPage() {
     unitPrice: "",
     location: "",
   });
+
+  /** Journal des mouvements, chargé à l'ouverture de son onglet. */
+  const [movementRows, setMovementRows] = useState<StockMovementRow[]>([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
+  const [movementsError, setMovementsError] = useState("");
+  const [movementsLoaded, setMovementsLoaded] = useState(false);
+
+  /** L'article en cours de réapprovisionnement et la quantité reçue. */
+  const [restockTarget, setRestockTarget] = useState<StockRow | null>(null);
+  const [restockQuantity, setRestockQuantity] = useState("1");
+  const [restockReason, setRestockReason] = useState("");
+  const [restockSaving, setRestockSaving] = useState(false);
+  const [restockError, setRestockError] = useState("");
 
   const [status, setStatus] = useState("");
   const [rows, setRows] = useState<PartRow[]>([]);
@@ -240,6 +283,35 @@ export default function PiecesAFournirPage() {
       cancelled = true;
     };
   }, [tab, stockItems.length]);
+
+  // L'historique n'est chargé qu'à l'ouverture de son onglet.
+  useEffect(() => {
+    if (tab !== "movements" || movementsLoaded) return;
+
+    let cancelled = false;
+    setMovementsLoading(true);
+    setMovementsError("");
+
+    fetch("/api/stock/movements?limit=100")
+      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
+      .then((payload) => {
+        if (cancelled) return;
+        setMovementRows(Array.isArray(payload?.data) ? payload.data : []);
+        setMovementsLoaded(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMovementsError("Impossible de charger l'historique des flux.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMovementsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, movementsLoaded]);
 
   async function decide(
     row: PartRow,
@@ -425,6 +497,19 @@ export default function PiecesAFournirPage() {
       >
         Réception &amp; Réserve physique
       </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "movements"}
+        onClick={() => setTab("movements")}
+        className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold transition-colors ${
+          tab === "movements"
+            ? "border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-400"
+            : "border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+        }`}
+      >
+        Historique des flux
+      </button>
     </div>
   );
 
@@ -508,6 +593,184 @@ export default function PiecesAFournirPage() {
     } finally {
       setStockSaving(false);
     }
+  }
+
+  /**
+   * Réception de nouvelles unités sur une référence existante.
+   *
+   * `PATCH /api/stock` avec un `delta` positif : pas de création, donc pas de
+   * 409 de doublon. La ligne locale est remplacée par la réponse, ce qui garde
+   * la quantité, le seuil et l'emplacement à jour sans relire toute la réserve.
+   */
+  async function restock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!restockTarget) return;
+
+    setRestockError("");
+    const quantity = Number.parseInt(restockQuantity, 10);
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      setRestockError(
+        "La quantité reçue doit être un entier supérieur à zéro."
+      );
+      return;
+    }
+
+    setRestockSaving(true);
+    try {
+      const res = await fetch("/api/stock", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: restockTarget.id,
+          delta: quantity,
+          reason: restockReason.trim() || "Réception au magasin",
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message =
+          typeof payload?.error === "string"
+            ? payload.error
+            : payload?.error?.message;
+        throw new Error(message ?? `La réception a échoué (${res.status}).`);
+      }
+
+      const updated = payload?.data as StockRow | undefined;
+      if (updated) {
+        setStockItems((current) =>
+          current.map((item) => (item.id === updated.id ? updated : item))
+        );
+      }
+      setStockNotice(
+        `${restockTarget.reference} : +${quantity} unité(s) ajoutée(s) à la réserve.`
+      );
+      setRestockTarget(null);
+      setRestockQuantity("1");
+      setRestockReason("");
+      // Le prochain passage sur l'onglet doit relire le journal.
+      setMovementsLoaded(false);
+    } catch (err) {
+      setRestockError(
+        err instanceof Error ? err.message : "La réception a échoué."
+      );
+    } finally {
+      setRestockSaving(false);
+    }
+  }
+
+  if (tab === "movements") {
+    return (
+      <div className="space-y-6">
+        {tabsBar}
+
+        <Card className="p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Historique des flux
+              </h2>
+              <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                Entrées, sorties, réservations et corrections d&apos;inventaire
+                de la réserve physique, du plus récent au plus ancien.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMovementsLoaded(false)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Actualiser
+            </button>
+          </div>
+
+          {movementsLoading ? (
+            <p className="mt-4 text-sm text-gray-500">
+              Chargement de l&apos;historique…
+            </p>
+          ) : movementsError ? (
+            <p
+              role="alert"
+              className="mt-4 text-sm font-medium text-red-700 dark:text-red-400"
+            >
+              {movementsError}
+            </p>
+          ) : movementRows.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+              Aucun mouvement enregistré pour le moment.
+            </p>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-800">
+                    {[
+                      "Date",
+                      "Type",
+                      "Article",
+                      "Quantité",
+                      "Motif",
+                      "Auteur",
+                    ].map((header) => (
+                      <th
+                        key={header}
+                        className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                      >
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {movementRows.map((movement) => (
+                    <tr key={movement.id}>
+                      <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-500">
+                        {format(new Date(movement.createdAt), "dd/MM/yyyy HH:mm", {
+                          locale: fr,
+                        })}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                            MOVEMENT_TONE[movement.type]
+                          }`}
+                        >
+                          {MOVEMENT_LABEL[movement.type]}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-sm">
+                        <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                          {movement.stockItem.reference}
+                        </span>
+                        <span className="block text-gray-500 dark:text-gray-400">
+                          {movement.stockItem.name}
+                        </span>
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-sm font-bold tabular-nums ${
+                          movement.quantity > 0
+                            ? "text-emerald-700 dark:text-emerald-300"
+                            : "text-red-700 dark:text-red-300"
+                        }`}
+                      >
+                        {movement.quantity > 0 ? "+" : ""}
+                        {movement.quantity}
+                      </td>
+                      <td className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                        {movement.reason ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                        {movement.user?.name ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+    );
   }
 
   if (tab === "stock") {
@@ -755,6 +1018,111 @@ export default function PiecesAFournirPage() {
             </div>
           )}
 
+          {restockTarget && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="restock-titre"
+              onClick={() => setRestockTarget(null)}
+            >
+              <div
+                className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-800 dark:bg-gray-900"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2
+                      id="restock-titre"
+                      className="text-lg font-semibold text-gray-900 dark:text-white"
+                    >
+                      Réapprovisionner
+                    </h2>
+                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      {restockTarget.reference} — {restockTarget.name}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      En réserve : {restockTarget.quantity} · seuil{" "}
+                      {restockTarget.reorderThreshold}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRestockTarget(null)}
+                    aria-label="Fermer"
+                    className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <form onSubmit={restock} className="space-y-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                      Quantité reçue <span className="text-red-500">*</span>
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      required
+                      value={restockQuantity}
+                      onChange={(event) =>
+                        setRestockQuantity(event.target.value)
+                      }
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                      Motif
+                    </span>
+                    <input
+                      value={restockReason}
+                      onChange={(event) => setRestockReason(event.target.value)}
+                      placeholder="Réception fournisseur, retour magasin…"
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    />
+                  </label>
+
+                  {restockError && (
+                    <p
+                      role="alert"
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                    >
+                      {restockError}
+                    </p>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setRestockTarget(null)}
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={restockSaving}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {restockSaving ? (
+                        <Loader2
+                          className="h-4 w-4 animate-spin"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <Plus className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      Ajouter au stock
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
           {stockLoading ? (
             <p className="mt-4 text-sm text-gray-500">Chargement de la réserve…</p>
           ) : stockError ? (
@@ -783,6 +1151,7 @@ export default function PiecesAFournirPage() {
                       "Prix unitaire",
                       "Emplacement",
                       "État",
+                      "Action",
                     ].map((h) => (
                       <th
                         key={h}
@@ -842,6 +1211,21 @@ export default function PiecesAFournirPage() {
                                   ? "Stock bas"
                                   : "En réserve"}
                           </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRestockTarget(item);
+                              setRestockQuantity("1");
+                              setRestockReason("");
+                              setRestockError("");
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                          >
+                            <Plus className="h-3 w-3" aria-hidden="true" />
+                            Réapprovisionner
+                          </button>
                         </td>
                       </tr>
                     );

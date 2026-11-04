@@ -45,7 +45,9 @@ export type NotificationType =
   /// Message du canal dispatch ↔ terrain.
   | "DISPATCH"
   /// Réponse du magasin à une demande de pièce (réservée, commandée, refusée).
-  | "part_requirement";
+  | "part_requirement"
+  /// Alerte de stock bas après une réservation ou une sortie.
+  | "stock";
 
 export interface NotifyInput {
   userId: string;

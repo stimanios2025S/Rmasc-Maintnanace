@@ -25,6 +25,7 @@ import {
 import { MANAGEMENT_ROLES, requireRole } from "@/lib/api/guard";
 import { shouldServeDemoData } from "@/lib/demo/mode";
 import { STOCK_DEMO_ARTICLES } from "@/lib/stock/demo";
+import { notifyLowStock, recordStockMovement } from "@/lib/stock/movements";
 
 export const dynamic = "force-dynamic";
 
@@ -55,9 +56,15 @@ const UpdateStockSchema = z
   .object({
     id: z.string().trim().min(1).optional(),
     reference: z.string().trim().min(1).max(80).optional(),
+    name: z.string().trim().min(1).max(200).optional(),
+    category: z.string().trim().max(100).nullable().optional(),
     quantity: z.number().int().min(0).max(100_000).optional(),
     delta: z.number().int().min(-100_000).max(100_000).optional(),
     reorderThreshold: z.number().int().min(0).max(100_000).optional(),
+    unitPrice: z.number().min(0).max(99_999_999.99).nullable().optional(),
+    location: z.string().trim().max(200).nullable().optional(),
+    /** Motif du mouvement, pour le journal des flux. */
+    reason: z.string().trim().max(500).optional(),
   })
   .strict()
   .refine((value) => Boolean(value.id) !== Boolean(value.reference), {
@@ -72,9 +79,13 @@ const UpdateStockSchema = z
   )
   .refine(
     (value) =>
+      value.name !== undefined ||
+      value.category !== undefined ||
       value.quantity !== undefined ||
       value.delta !== undefined ||
-      value.reorderThreshold !== undefined,
+      value.reorderThreshold !== undefined ||
+      value.unitPrice !== undefined ||
+      value.location !== undefined,
     { message: "Aucune modification demandée." }
   );
 
@@ -216,7 +227,7 @@ export async function PATCH(request: NextRequest) {
   let submitted: z.infer<typeof UpdateStockSchema> | null = null;
 
   try {
-    await requireRole(...MANAGEMENT_ROLES);
+    const session = await requireRole(...MANAGEMENT_ROLES);
     const parsed = UpdateStockSchema.parse(await readJson(request));
     submitted = parsed;
 
@@ -224,52 +235,107 @@ export async function PATCH(request: NextRequest) {
       ? { id: parsed.id }
       : { reference: parsed.reference as string };
 
-    const existing = await prisma.stockItem.findUnique({
-      where,
-      select: { id: true, quantity: true },
-    });
-    if (!existing) {
-      throw notFound("Article introuvable dans la réserve.");
-    }
-
-    const data: Prisma.StockItemUpdateInput = {};
-
-    if (parsed.reorderThreshold !== undefined) {
-      data.reorderThreshold = parsed.reorderThreshold;
-    }
-
-    if (parsed.quantity !== undefined) {
-      data.quantity = parsed.quantity;
-    } else if (parsed.delta !== undefined && parsed.delta >= 0) {
-      data.quantity = { increment: parsed.delta };
-    } else if (parsed.delta !== undefined) {
-      const removed = -parsed.delta;
-      const claimed = await prisma.stockItem.updateMany({
-        where: { id: existing.id, quantity: { gte: removed } },
-        data: { quantity: { increment: parsed.delta } },
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.stockItem.findUnique({
+        where,
+        select: {
+          id: true,
+          reference: true,
+          name: true,
+          quantity: true,
+          reorderThreshold: true,
+        },
       });
-
-      if (claimed.count === 0) {
-        throw conflict(
-          `Stock insuffisant : ${existing.quantity} en réserve, ` +
-            `${removed} demandé(s) en moins.`
-        );
+      if (!existing) {
+        throw notFound("Article introuvable dans la réserve.");
       }
+
+      const fields: Prisma.StockItemUpdateInput = {};
+      if (parsed.name !== undefined) fields.name = parsed.name;
+      if (parsed.category !== undefined) fields.category = parsed.category;
+      if (parsed.reorderThreshold !== undefined) {
+        fields.reorderThreshold = parsed.reorderThreshold;
+      }
+      if (parsed.unitPrice !== undefined) fields.unitPrice = parsed.unitPrice;
+      if (parsed.location !== undefined) fields.location = parsed.location;
+
+      let item;
+      let movement:
+        | { type: "ENTRY" | "EXIT" | "ADJUSTMENT"; quantity: number }
+        | null = null;
+
+      if (parsed.quantity !== undefined) {
+        item = await tx.stockItem.update({
+          where: { id: existing.id },
+          data: { ...fields, quantity: parsed.quantity },
+          select: STOCK_SELECT,
+        });
+        const difference = parsed.quantity - existing.quantity;
+        if (difference !== 0) {
+          movement = {
+            type: difference > 0 ? "ENTRY" : "ADJUSTMENT",
+            quantity: difference,
+          };
+        }
+      } else if (parsed.delta !== undefined) {
+        const claimed = await tx.stockItem.updateMany({
+          where: {
+            id: existing.id,
+            ...(parsed.delta < 0 ? { quantity: { gte: -parsed.delta } } : {}),
+          },
+          data: { ...fields, quantity: { increment: parsed.delta } },
+        });
+
+        if (claimed.count === 0) {
+          throw conflict(
+            `Stock insuffisant : ${existing.quantity} en réserve, ` +
+              `${-parsed.delta} demandé(s) en moins.`
+          );
+        }
+
+        item = await tx.stockItem.findUniqueOrThrow({
+          where: { id: existing.id },
+          select: STOCK_SELECT,
+        });
+
+        if (parsed.delta !== 0) {
+          movement = {
+            type: parsed.delta > 0 ? "ENTRY" : "EXIT",
+            quantity: parsed.delta,
+          };
+        }
+      } else {
+        item = await tx.stockItem.update({
+          where: { id: existing.id },
+          data: fields,
+          select: STOCK_SELECT,
+        });
+      }
+
+      if (movement) {
+        await recordStockMovement(tx, {
+          stockItemId: existing.id,
+          type: movement.type,
+          quantity: movement.quantity,
+          reason:
+            parsed.reason ?? `Ajustement manuel de ${existing.reference}`,
+          userId: session.user.id ?? null,
+        });
+      }
+
+      return { item, previousQuantity: existing.quantity };
+    });
+
+    if (result.item.quantity < result.previousQuantity) {
+      await notifyLowStock({
+        reference: result.item.reference,
+        name: result.item.name,
+        quantity: result.item.quantity,
+        reorderThreshold: result.item.reorderThreshold,
+      });
     }
 
-    const item =
-      Object.keys(data).length > 0
-        ? await prisma.stockItem.update({
-            where: { id: existing.id },
-            data,
-            select: STOCK_SELECT,
-          })
-        : await prisma.stockItem.findUniqueOrThrow({
-            where: { id: existing.id },
-            select: STOCK_SELECT,
-          });
-
-    return NextResponse.json({ data: item });
+    return NextResponse.json({ data: result.item });
   } catch (error) {
     if (submitted && shouldServeDemoData(error)) {
       return NextResponse.json({

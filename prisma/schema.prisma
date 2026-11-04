@@ -330,6 +330,18 @@ enum PartRequirementStatus {
   REJECTED
 }
 
+/// Le sens d'un mouvement de la réserve locale.
+enum StockMovementType {
+  /// Réapprovisionnement, ou correction positive.
+  ENTRY
+  /// Sortie manuelle, ou pose d'une pièce non réservée.
+  EXIT
+  /// Pièce mise de côté pour une demande : la quantité quitte la réserve.
+  RESERVATION
+  /// Correction d'inventaire : la quantité est posée, pas ajoutée.
+  ADJUSTMENT
+}
+
 // ─── USERS & AUTH ───────────────────────────────────────────
 
 model User {
@@ -444,6 +456,9 @@ model User {
   partRequestDecisions PartRequirement[]   @relation("PartRequestDecisions")
   /// Et celles qu'il a transmises au magasin central, quand c'est son rôle.
   partRequestTransmissions PartRequirement[] @relation("PartRequestTransmissions")
+
+  /// Les mouvements de stock dont ce compte est l'auteur.
+  stockMovements StockMovement[] @relation("StockMovements")
 
   /// Les devis demandés *par* ce compte client, et ceux qu'il a décidés côté
   /// entreprise. Trois arêtes nommées, comme pour les factures : un devis a un
@@ -1027,6 +1042,13 @@ model PartRequirement {
   faultyPartReference   String? @map("faulty_part_reference")
   replacementPartName   String  @map("replacement_part_name")
   replacementPartReference String? @map("replacement_part_reference")
+  /// L'article de la réserve locale associé à cette demande.
+  ///
+  /// La correspondance initiale se fait par texte (référence puis nom), mais
+  /// l'identifiant est conservé dès qu'il est connu : renommer un article ne
+  /// casse plus le lien, et une réservation sait exactement quelle ligne
+  /// décrémenter.
+  stockItemId           String? @map("stock_item_id")
   quantity              Int     @default(1)
 
   urgency PartUrgency @default(PREVENTIVE)
@@ -1101,11 +1123,16 @@ model PartRequirement {
   /// raison que les deux autres : le départ d'un salarié ne doit pas effacer
   /// l'historique d'un envoi, seulement son auteur.
   stockSentBy       User?     @relation("PartRequestTransmissions", fields: [stockSentById], references: [id], onDelete: SetNull)
+  /// L'article de réserve associé, une fois connu. `SetNull` : supprimer un
+  /// article ne doit pas effacer la demande, seulement son lien.
+  stockItem         StockItem? @relation(fields: [stockItemId], references: [id], onDelete: SetNull)
 
   /// La seule requête de l'écran : « les demandes de ce bon, du plus récent ».
   @@index([workOrderId, createdAt])
   /// Et celle du tableau du bureau : « ce qui attend une décision ».
   @@index([status, urgency])
+  /// La réservation retrouve l'article par son identifiant, pas par son nom.
+  @@index([stockItemId])
   @@map("part_requirements")
 }
 
@@ -1139,8 +1166,40 @@ model StockItem {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  /// Les demandes de pièce qui pointent vers cet article.
+  partRequirements PartRequirement[]
+  /// Le journal des entrées, sorties, réservations et corrections.
+  movements        StockMovement[]
+
   @@index([quantity])
   @@map("stock_items")
+}
+
+/// Le journal des mouvements de la réserve locale.
+///
+/// Chaque ligne est un fait signé : une entrée positive, une sortie ou une
+/// réservation négative. La quantité de `StockItem` reste la valeur de lecture
+/// rapide ; ce journal est la trace de ce qui l'a fait bouger, et la somme de
+/// ses lignes pour un article reconstitue sa quantité courante.
+model StockMovement {
+  id          String            @id @default(cuid())
+  stockItemId String            @map("stock_item_id")
+  type        StockMovementType
+  /// Signé : positif pour une entrée, négatif pour une sortie ou une
+  /// réservation. `ADJUSTMENT` porte la différence corrigée.
+  quantity    Int
+  /// Ce qui explique le mouvement : « Réception fournisseur », « Pose sur le
+  /// bon WO-… », « Réservation DP-… ».
+  reason      String?
+  userId      String?           @map("user_id")
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+  user      User?     @relation("StockMovements", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([stockItemId, createdAt])
+  @@index([type, createdAt])
+  @@map("stock_movements")
 }
 
 /// Une facture émise pour un bon de travail clos.

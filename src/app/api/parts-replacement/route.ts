@@ -46,6 +46,7 @@ import {
 import { generatePartRequestNumber } from "@/lib/ids";
 import { transitionRefusal } from "@/lib/parts/status";
 import { notify } from "@/lib/notifications/service";
+import { notifyLowStock, recordStockMovement } from "@/lib/stock/movements";
 import { shouldServeDemoData, warnDemoFallbackOnce } from "@/lib/demo/mode";
 import { demoPartRequirements } from "@/lib/demo/responses";
 import { PART_REQUIREMENT_STATUSES, PART_URGENCIES } from "@/types";
@@ -83,6 +84,7 @@ const LIST_SELECT = {
   statusChangedAt: true,
   fulfilledAt: true,
   workOrderId: true,
+  stockItemId: true,
   requestedBy: { select: { id: true, name: true } },
   statusChangedBy: { select: { id: true, name: true } },
   /**
@@ -145,8 +147,12 @@ function scopeFor(
 }
 
 interface StockHit {
+  id: string;
   quantity: number;
   location: string | null;
+  reference: string;
+  name: string;
+  reorderThreshold: number;
 }
 
 /**
@@ -158,16 +164,61 @@ interface StockHit {
  */
 async function loadStockIndex(): Promise<Map<string, StockHit>> {
   const items = await prisma.stockItem.findMany({
-    select: { reference: true, name: true, quantity: true, location: true },
+    select: {
+      id: true,
+      reference: true,
+      name: true,
+      quantity: true,
+      location: true,
+      reorderThreshold: true,
+    },
   });
 
   const index = new Map<string, StockHit>();
   for (const item of items) {
-    const hit: StockHit = { quantity: item.quantity, location: item.location };
+    const hit: StockHit = {
+      id: item.id,
+      quantity: item.quantity,
+      location: item.location,
+      reference: item.reference,
+      name: item.name,
+      reorderThreshold: item.reorderThreshold,
+    };
     index.set(item.reference.trim().toLowerCase(), hit);
     index.set(item.name.trim().toLowerCase(), hit);
   }
   return index;
+}
+
+/** Les articles liés par identifiant, pour ne pas dépendre d'un texte renommé. */
+async function loadStockByIds(ids: readonly string[]): Promise<Map<string, StockHit>> {
+  if (ids.length === 0) return new Map();
+
+  const items = await prisma.stockItem.findMany({
+    where: { id: { in: [...new Set(ids)] } },
+    select: {
+      id: true,
+      reference: true,
+      name: true,
+      quantity: true,
+      location: true,
+      reorderThreshold: true,
+    },
+  });
+
+  return new Map(
+    items.map((item) => [
+      item.id,
+      {
+        id: item.id,
+        quantity: item.quantity,
+        location: item.location,
+        reference: item.reference,
+        name: item.name,
+        reorderThreshold: item.reorderThreshold,
+      },
+    ])
+  );
 }
 
 function stockFor(
@@ -223,10 +274,20 @@ export async function GET(request: NextRequest) {
     });
 
     const stock = await loadStockIndex();
+    const linked = await loadStockByIds(
+      rows.flatMap((row) => (row.stockItemId ? [row.stockItemId] : []))
+    );
 
     return NextResponse.json({
       data: rows.map((row) => {
-        const hit = stockFor(row, stock);
+        /**
+         * L'identifiant d'abord : c'est le lien durable. Le rapprochement par
+         * texte ne sert plus qu'aux demandes créées avant que la colonne
+         * n'existe, ou aux pièces qui n'ont pas encore d'article en réserve.
+         */
+        const hit =
+          (row.stockItemId ? linked.get(row.stockItemId) : null) ??
+          stockFor(row, stock);
         return {
           ...row,
           /** Quantité réellement en réserve, ou null si la pièce est inconnue. */
@@ -307,6 +368,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    /**
+     * Le lien durable vers la réserve, quand la pièce y est déjà connue.
+     *
+     * Le rapprochement de départ reste le texte — c'est ce que le technicien
+     * saisit — mais l'identifiant est conservé tout de suite. Si le magasin
+     * renomme ensuite l'article, la demande continuera de désigner la bonne
+     * ligne au lieu de chercher un nom qui n'existe plus.
+     */
+    const stock = await loadStockIndex();
+    const linkedStock = stockFor(
+      {
+        replacementPartName: body.replacementPartName,
+        replacementPartReference: body.replacementPartReference ?? null,
+      },
+      stock
+    );
+
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const created = await prisma.partRequirement.create({
@@ -318,6 +396,7 @@ export async function POST(request: NextRequest) {
             faultyPartReference: body.faultyPartReference,
             replacementPartName: body.replacementPartName,
             replacementPartReference: body.replacementPartReference,
+            stockItemId: linkedStock?.id ?? null,
             quantity: body.quantity,
             urgency: body.urgency,
             notes: body.notes,
@@ -400,6 +479,7 @@ export async function PATCH(request: NextRequest) {
         quantity: true,
         replacementPartName: true,
         replacementPartReference: true,
+        stockItemId: true,
         workOrder: {
           select: { orderNumber: true, elevator: { select: { elevatorCode: true } } },
         },
@@ -443,7 +523,26 @@ export async function PATCH(request: NextRequest) {
 
       if (parsed.action === "reserve") {
         const index = await loadStockIndex();
-        const hit = stockFor(existing, index);
+        /**
+         * L'identifiant lié d'abord : une référence renommée au magasin ne
+         * doit pas rendre la demande introuvable. Le texte reste le repli des
+         * demandes ouvertes avant que la colonne n'existe.
+         */
+        const linkedHit = existing.stockItemId
+          ? await prisma.stockItem.findUnique({
+              where: { id: existing.stockItemId },
+              select: {
+                id: true,
+                reference: true,
+                name: true,
+                quantity: true,
+                location: true,
+                reorderThreshold: true,
+              },
+            })
+          : null;
+        const hit = linkedHit ?? stockFor(existing, index);
+
         if (!hit) {
           throw conflict(
             `Aucune réserve connue pour « ${
@@ -464,20 +563,16 @@ export async function PATCH(request: NextRequest) {
          * filtré sur `quantity >= demandé` est le verrou — s'il ne touche
          * aucune ligne, quelqu'un est passé entre-temps et l'on refuse.
          */
-        updated = await prisma.$transaction(async (tx) => {
-          const key =
-            existing.replacementPartReference?.trim() ||
-            existing.replacementPartName.trim();
-
+        const result = await prisma.$transaction(async (tx) => {
           const item = await tx.stockItem.findFirst({
-            where: {
-              OR: [
-                { reference: { equals: key, mode: "insensitive" } },
-                { name: { equals: existing.replacementPartName.trim(), mode: "insensitive" } },
-              ],
-              quantity: { gte: existing.quantity },
+            where: { id: hit.id, quantity: { gte: existing.quantity } },
+            select: {
+              id: true,
+              reference: true,
+              name: true,
+              quantity: true,
+              reorderThreshold: true,
             },
-            select: { id: true },
           });
 
           if (!item) {
@@ -496,7 +591,17 @@ export async function PATCH(request: NextRequest) {
             );
           }
 
-          return tx.partRequirement.update({
+          await recordStockMovement(tx, {
+            stockItemId: item.id,
+            type: "RESERVATION",
+            quantity: -existing.quantity,
+            reason: `Réservation de la demande ${existing.number}`,
+            userId: session.user.id ?? null,
+          });
+
+          const remaining = item.quantity - existing.quantity;
+
+          const requirement = await tx.partRequirement.update({
             where: { id: parsed.id },
             data: {
               status: "RESERVED",
@@ -504,10 +609,29 @@ export async function PATCH(request: NextRequest) {
               statusChangedById: session.user.id ?? null,
               reservedAt: now,
               decisionNote: null,
+              stockItemId: item.id,
             },
             select: LIST_SELECT,
           });
+
+          return {
+            requirement,
+            lowStock:
+              remaining <= item.reorderThreshold
+                ? {
+                    reference: item.reference,
+                    name: item.name,
+                    quantity: remaining,
+                    reorderThreshold: item.reorderThreshold,
+                  }
+                : null,
+          };
         });
+
+        updated = result.requirement;
+        if (result.lowStock) {
+          await notifyLowStock(result.lowStock);
+        }
       } else {
         updated = await prisma.partRequirement.update({
           where: { id: parsed.id },
@@ -593,7 +717,10 @@ export async function PATCH(request: NextRequest) {
     const consumesStock =
       parsed.status === "FULFILLED" && existing.status !== "RESERVED";
 
-    const applyTransition = async (tx: Prisma.TransactionClient) =>
+    const applyTransition = async (
+      tx: Prisma.TransactionClient,
+      stockItemId?: string
+    ) =>
       tx.partRequirement.update({
         where: { id: parsed.id },
         data: {
@@ -608,48 +735,114 @@ export async function PATCH(request: NextRequest) {
            * montée.
            */
           fulfilledAt: parsed.status === "FULFILLED" ? now : null,
+          ...(stockItemId ? { stockItemId } : {}),
         },
         select: LIST_SELECT,
       });
 
-    const updated = consumesStock
+    const transition = consumesStock
       ? await prisma.$transaction(async (tx) => {
-          const key =
-            existing.replacementPartReference?.trim() ||
-            existing.replacementPartName.trim();
-
-          const item = await tx.stockItem.findFirst({
-            where: {
-              OR: [
-                { reference: { equals: key, mode: "insensitive" } },
-                {
-                  name: {
-                    equals: existing.replacementPartName.trim(),
-                    mode: "insensitive",
-                  },
+          const item = existing.stockItemId
+            ? await tx.stockItem.findFirst({
+                where: {
+                  id: existing.stockItemId,
+                  quantity: { gte: existing.quantity },
                 },
-              ],
-              quantity: { gte: existing.quantity },
-            },
-            select: { id: true },
-          });
+                select: {
+                  id: true,
+                  reference: true,
+                  name: true,
+                  quantity: true,
+                  reorderThreshold: true,
+                },
+              })
+            : await tx.stockItem.findFirst({
+                where: {
+                  OR: [
+                    {
+                      reference: {
+                        equals:
+                          existing.replacementPartReference?.trim() ||
+                          existing.replacementPartName.trim(),
+                        mode: "insensitive",
+                      },
+                    },
+                    {
+                      name: {
+                        equals: existing.replacementPartName.trim(),
+                        mode: "insensitive",
+                      },
+                    },
+                  ],
+                  quantity: { gte: existing.quantity },
+                },
+                select: {
+                  id: true,
+                  reference: true,
+                  name: true,
+                  quantity: true,
+                  reorderThreshold: true,
+                },
+              });
 
           if (item) {
-            await tx.stockItem.updateMany({
+            const claimed = await tx.stockItem.updateMany({
               where: { id: item.id, quantity: { gte: existing.quantity } },
               data: { quantity: { decrement: existing.quantity } },
             });
-          } else {
-            console.warn(
-              `[parts] pose de ${existing.number} : aucune réserve suffisante pour ${key}, quantité laissée inchangée`
-            );
+
+            if (claimed.count === 0) {
+              throw conflict(
+                "Le stock a changé pendant la pose. Rechargez l'écran et réessayez."
+              );
+            }
+
+            await recordStockMovement(tx, {
+              stockItemId: item.id,
+              type: "EXIT",
+              quantity: -existing.quantity,
+              reason: `Pose de la demande ${existing.number}`,
+              userId: session.user.id ?? null,
+            });
+
+            const remaining = item.quantity - existing.quantity;
+            const requirement = await applyTransition(tx, item.id);
+
+            return {
+              requirement,
+              lowStock:
+                remaining <= item.reorderThreshold
+                  ? {
+                      reference: item.reference,
+                      name: item.name,
+                      quantity: remaining,
+                      reorderThreshold: item.reorderThreshold,
+                    }
+                  : null,
+            };
           }
 
-          return applyTransition(tx);
-        })
-      : await prisma.$transaction(applyTransition);
+          console.warn(
+            `[parts] pose de ${existing.number} : aucune réserve suffisante pour ` +
+              `${existing.replacementPartReference ?? existing.replacementPartName}, ` +
+              "quantité laissée inchangée"
+          );
 
-    return jsonOk(updated);
+          return {
+            requirement: await applyTransition(tx),
+            lowStock: null,
+          };
+        })
+      : {
+          requirement: await prisma.$transaction((tx) => applyTransition(tx)),
+          lowStock: null,
+        };
+
+    if (transition.lowStock) {
+      await notifyLowStock(transition.lowStock);
+    }
+
+    return jsonOk(transition.requirement);
   } catch (error) {
     return handleRouteError(error);
   }
