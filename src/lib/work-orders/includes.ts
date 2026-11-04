@@ -92,6 +92,13 @@ export const WORK_ORDER_DETAIL_INCLUDE = {
           city: true,
           contactPerson: true,
           contactPhone: true,
+          /**
+           * Les coordonnées du site, pour le bouton « Itinéraire GPS » de la
+           * fiche. Sans elles, le bouton n'existe pas : un guidage routier
+           * vers une adresse non géocodée ouvrirait une carte au hasard.
+           */
+          latitude: true,
+          longitude: true,
         },
       },
     },

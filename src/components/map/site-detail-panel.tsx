@@ -22,6 +22,7 @@ import {
   Ruler,
   ArrowUpRight,
   Crosshair,
+  Navigation,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -34,6 +35,7 @@ import {
 import type { FleetMapElevator, FleetMapSite } from "@/lib/map/types";
 import { enumLabel } from "@/lib/ui/enum-labels";
 import { formatDistance } from "@/lib/geo/geofence";
+import { googleMapsDirectionsUrl } from "@/lib/map/directions";
 import { cn } from "@/lib/utils";
 
 export interface SiteDetailPanelProps {
@@ -101,6 +103,15 @@ export function SiteDetailPanel({
                 {site.address}, {site.city}
               </span>
             </p>
+            <a
+              href={googleMapsDirectionsUrl(site.latitude, site.longitude)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
+            >
+              <Navigation className="h-3 w-3" aria-hidden="true" />
+              Itinéraire GPS
+            </a>
           </div>
           <button
             type="button"

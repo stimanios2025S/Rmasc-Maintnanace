@@ -33,6 +33,7 @@ import {
   AlertTriangle,
   Check,
   MapPinOff,
+  Navigation,
   RefreshCw,
   Undo2,
   X,
@@ -47,6 +48,7 @@ import { Card } from "@/components/ui/card";
 import { ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { filterSites, useFleetMap } from "@/lib/map/use-fleet-map";
 import { ATTENTION_STYLES } from "@/lib/map/attention";
+import { googleMapsDirectionsUrl } from "@/lib/map/directions";
 import { SectionTabs, PARC_TABS } from "@/components/layout/section-tabs";
 import type { AttentionFilter, FleetMapSite } from "@/lib/map/types";
 import type { Coordinates } from "@/lib/geo/geofence";
@@ -196,6 +198,26 @@ export default function CartePage() {
       const siteParam = params.get("site");
       const elevatorParam = params.get("elevator");
       const incidentParam = params.get("incident");
+      /**
+       * Le point de centrage explicite.
+       *
+       * La notification envoie aussi `workOrderId` et les coordonnées de
+       * l'immeuble. Les paramètres `site`/`elevator`/`incident` suffisent à
+       * sélectionner l'épingle ; `lat`/`lng` garantissent un centrage même
+       * quand le site n'est pas encore dans la couche cartographiée.
+       */
+      const latParam = params.get("lat");
+      const lngParam = params.get("lng");
+      const requestedLatitude = latParam === null ? NaN : Number(latParam);
+      const requestedLongitude = lngParam === null ? NaN : Number(lngParam);
+      const requestedPoint =
+        Number.isFinite(requestedLatitude) &&
+        Number.isFinite(requestedLongitude)
+          ? {
+              latitude: requestedLatitude,
+              longitude: requestedLongitude,
+            }
+          : null;
 
       const siteFromElevator = elevatorParam
         ? payload.sites.find((site) =>
@@ -234,11 +256,11 @@ export default function CartePage() {
         // déjà fait par la sélection, et un second `flyTo` vers le même point
         // ne ferait que rejouer l'animation. C'est la notification de panne,
         // qui désigne un appareil ou un signalement, qui a besoin du point.
-        if (elevatorParam || incidentParam) {
+        if (elevatorParam || incidentParam || requestedPoint) {
           setFocusPoint(
             fault
               ? { latitude: fault.latitude, longitude: fault.longitude }
-              : {
+              : requestedPoint ?? {
                   latitude: requestedSite.latitude,
                   longitude: requestedSite.longitude,
                 }
@@ -266,6 +288,17 @@ export default function CartePage() {
        * aucun site cartographié. Le dire vaut mieux que d'ouvrir la carte sur
        * Alger et laisser croire que la panne est là.
        */
+      /**
+       * Aucun site ni aucune panne retrouvés, mais l'URL porte un point : on
+       * centre dessus. C'est le cas d'un immeuble qui n'a pas encore été placé
+       * dans la couche cartographiée, ou d'un lien qui ne connaît que les
+       * coordonnées.
+       */
+      if (requestedPoint) {
+        setFocusPoint(requestedPoint);
+        return;
+      }
+
       const unlocated = siteParam
         ? payload.unlocated.find((site) => site.id === siteParam)
         : null;
@@ -613,6 +646,18 @@ export default function CartePage() {
                     Assigner un technicien
                   </button>
                 )}
+                <a
+                  href={googleMapsDirectionsUrl(
+                    selectedFault.latitude,
+                    selectedFault.longitude
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-red-700 px-3 py-2 text-xs font-bold text-white hover:bg-red-800"
+                >
+                  <Navigation className="h-3.5 w-3.5" aria-hidden="true" />
+                  Itinéraire GPS
+                </a>
                 <Link
                   href={
                     canDispatch

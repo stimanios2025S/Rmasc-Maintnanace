@@ -90,13 +90,17 @@ export async function GET(request: NextRequest) {
               description: true,
               elevator: {
                 select: {
+                  id: true,
                   elevatorCode: true,
                   building: {
                     select: {
+                      id: true,
                       name: true,
                       city: true,
                       address: true,
                       accessCode: true,
+                      latitude: true,
+                      longitude: true,
                     },
                   },
                 },

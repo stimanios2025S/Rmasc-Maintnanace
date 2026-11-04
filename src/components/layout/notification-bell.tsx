@@ -13,6 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 import { DispatchModal } from "@/components/admin/dispatch-modal";
+import { coordinatesOf } from "@/lib/map/directions";
 
 /**
  * The user's own notification tray.
@@ -42,12 +43,16 @@ interface NotificationRow {
     title: string;
     description: string | null;
     elevator: {
+      id: string;
       elevatorCode: string;
       building: {
+        id: string;
         name: string;
         city: string;
         address: string;
         accessCode: string | null;
+        latitude: number | null;
+        longitude: number | null;
       };
     };
     incident: {
@@ -162,6 +167,16 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
    * que la route refusera.
    */
   const canDispatch = role === "ADMIN" || role === "MAINTENANCE_MANAGER";
+  /**
+   * Les rôles qui peuvent ouvrir la fiche du bon : le bureau et le terrain.
+   * Un compte client garde son lien de suivi, pas l'écran interne.
+   */
+  const canSeeWorkOrder =
+    role === "ADMIN" ||
+    role === "MAINTENANCE_MANAGER" ||
+    role === "FIELD_TECHNICIAN";
+  /** La carte est un écran interne ; le portail client n'y mène pas. */
+  const canSeeMap = canSeeWorkOrder;
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
@@ -246,19 +261,50 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
     }).catch(() => undefined);
   }
 
-  /** Ouvre directement le bon de travail sur le portail du terrain. */
-  function startMission(row: NotificationRow) {
-    markRead(row);
-    setOpen(false);
-    const id = row.workOrder?.id;
-    router.push(id ? `/technicien?mission=${id}` : "/technicien");
-  }
-
-  /** Ouvre la fiche du bon, vue bureau. */
+  /**
+   * Ouvre la fiche du bon, avec la route du rôle.
+   *
+   * Le terrain a son propre écran d'intervention ; le bureau lit la fiche
+   * complète. La notification est marquée lue avant la navigation, y compris
+   * quand la fiche est atteinte par un lien direct.
+   */
   function viewWorkOrder(row: NotificationRow) {
     markRead(row);
     setOpen(false);
-    if (row.workOrder) router.push(`/bons-de-travail/${row.workOrder.id}`);
+    const id = row.workOrder?.id;
+    if (!id) return;
+    router.push(
+      isTechnician
+        ? `/technicien/interventions/${id}`
+        : `/bons-de-travail/${id}`
+    );
+  }
+
+  /**
+   * Ouvre la carte centrée sur l'immeuble, avec l'incident en surbrillance.
+   *
+   * `workOrderId` est porté par l'URL comme demandé ; `site`, `elevator` et
+   * `incident` permettent à la carte de sélectionner le bon panneau, et
+   * `lat`/`lng` servent de point de centrage de secours.
+   */
+  function openMap(row: NotificationRow) {
+    markRead(row);
+    setOpen(false);
+
+    const workplace = row.workOrder;
+    const building = workplace?.elevator.building;
+    const point = coordinatesOf(building?.latitude, building?.longitude);
+    if (!workplace || !building || !point) return;
+
+    const params = new URLSearchParams({
+      workOrderId: workplace.id,
+      lat: String(point.latitude),
+      lng: String(point.longitude),
+      site: building.id,
+      elevator: workplace.elevator.id,
+    });
+    if (workplace.incident?.id) params.set("incident", workplace.incident.id);
+    router.push(`/carte?${params.toString()}`);
   }
 
   /**
@@ -385,6 +431,9 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                   row.message;
                 const building = workOrder?.elevator.building;
                 const accessCode = building?.accessCode ?? null;
+                const canMap =
+                  canSeeMap &&
+                  coordinatesOf(building?.latitude, building?.longitude) !== null;
 
                 return (
                   <li
@@ -467,18 +516,19 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                             Marquer comme lu
                           </button>
                         )}
-                        {workOrder && isTechnician && (
+                        {workOrder && canSeeWorkOrder && (
                           <button
                             type="button"
-                            onClick={() => startMission(row)}
+                            onClick={() => viewWorkOrder(row)}
                             className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-blue-700"
                           >
-                            🚀 Démarrer la mission
+                            <Eye className="h-3 w-3" aria-hidden="true" />
+                            Voir le bon
                           </button>
                         )}
                         {workOrder &&
                           canDispatch &&
-                          (workOrder.incident?.status === "ESCALATED" ? (
+                          workOrder.incident?.status === "ESCALATED" && (
                             <button
                               type="button"
                               onClick={() => dispatchFromBell(row)}
@@ -487,17 +537,8 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                               <Zap className="h-3 w-3" aria-hidden="true" />
                               Dispatcher en 1-clic
                             </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => viewWorkOrder(row)}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-blue-700"
-                            >
-                              <Eye className="h-3 w-3" aria-hidden="true" />
-                              Voir le bon
-                            </button>
-                          ))}
-                        {workOrder && !isTechnician && !canDispatch && (
+                          )}
+                        {workOrder && !canSeeWorkOrder && (
                           <button
                             type="button"
                             onClick={() => void openRow(row)}
@@ -505,6 +546,16 @@ export function NotificationBell({ enabled }: { enabled: boolean }) {
                           >
                             <Eye className="h-3 w-3" aria-hidden="true" />
                             Voir le détail
+                          </button>
+                        )}
+                        {workOrder && canMap && (
+                          <button
+                            type="button"
+                            onClick={() => openMap(row)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                          >
+                            <MapPin className="h-3 w-3" aria-hidden="true" />
+                            Voir sur la carte
                           </button>
                         )}
                       </div>

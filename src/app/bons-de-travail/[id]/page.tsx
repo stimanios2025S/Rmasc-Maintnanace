@@ -18,6 +18,7 @@ import {
   History,
   Loader2,
   MapPin,
+  Navigation,
   Package,
   Receipt,
   Undo2,
@@ -28,6 +29,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState, ErrorState, LoadingSkeleton } from "@/components/ui/states";
 import { PartRequirementsPanel } from "@/components/maintenance/part-requirements-panel";
 import { enumLabel } from "@/lib/ui/enum-labels";
+import { coordinatesOf, googleMapsDirectionsUrl } from "@/lib/map/directions";
 import { formatDzd, parseDzdInput } from "@/lib/ui/money";
 import { MANAGEMENT_ROLES } from "@/types";
 
@@ -107,6 +109,8 @@ interface WorkOrderDetail {
       city: string;
       contactPerson: string;
       contactPhone: string | null;
+      latitude: number | null;
+      longitude: number | null;
     };
   };
   assignedTo: { id: string; name: string | null; email: string | null } | null;
@@ -491,6 +495,10 @@ export default function WorkOrderDetailPage() {
   const closure = formatDateTime(data.completedAt);
   const amountLabel = formatDzd(data.invoiceAmount);
   const parts = data.partsReplaced ?? [];
+  const sitePoint = coordinatesOf(
+    data.elevator.building.latitude,
+    data.elevator.building.longitude
+  );
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
@@ -544,6 +552,20 @@ export default function WorkOrderDetailPage() {
                 <span className="block text-xs text-gray-500 dark:text-gray-400">
                   {data.elevator.building.address}, {data.elevator.building.city}
                 </span>
+                {sitePoint && (
+                  <a
+                    href={googleMapsDirectionsUrl(
+                      sitePoint.latitude,
+                      sitePoint.longitude
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    <Navigation className="h-3 w-3" aria-hidden="true" />
+                    Itinéraire GPS
+                  </a>
+                )}
               </>
             }
           />
